@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "packages": { "python": "3.12" },
+  "buildAptPackages": ["curl", "unzip", "ca-certificates"],
+  "steps": {
+    "xray": {
+      "commands": [
+        "curl -fsSL https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o /tmp/xray.zip",
+        "mkdir -p bin",
+        "unzip -o /tmp/xray.zip xray -d bin",
+        "chmod +x bin/xray",
+        "bin/xray version"
+      ],
+      "deployOutputs": ["bin"]
+    }
+  },
+  "deploy": {
+    "startCommand": "python3 -u panel.py",
+    "aptPackages": ["nginx", "curl", "ca-certificates", "tzdata"],
+    "variables": {
+      "TZ": "UTC",
+      "PYTHONUNBUFFERED": "1"
+    }
+  }
+}

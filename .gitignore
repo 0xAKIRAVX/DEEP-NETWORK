@@ -1,0 +1,5 @@
+/data/
+bin/
+_js_check/
+*.log
+__pycache__/
