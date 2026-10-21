@@ -1,8 +1,15 @@
 {
   "$schema": "https://schema.railpack.com",
   "provider": "python",
-  "packages": { "python": "3.12" },
-  "buildAptPackages": ["curl", "unzip", "ca-certificates"],
+  "packages": {
+    "python": "3.12"
+  },
+  "buildAptPackages": [
+    "...",
+    "curl",
+    "unzip",
+    "ca-certificates"
+  ],
   "steps": {
     "xray": {
       "commands": [
@@ -12,12 +19,24 @@
         "chmod +x bin/xray",
         "bin/xray version"
       ],
-      "deployOutputs": ["bin"]
+      "deployOutputs": [
+        {
+          "include": [
+            "bin"
+          ]
+        }
+      ]
     }
   },
   "deploy": {
     "startCommand": "python3 -u panel.py",
-    "aptPackages": ["nginx", "curl", "ca-certificates", "tzdata"],
+    "aptPackages": [
+      "...",
+      "nginx",
+      "curl",
+      "ca-certificates",
+      "tzdata"
+    ],
     "variables": {
       "TZ": "UTC",
       "PYTHONUNBUFFERED": "1"
