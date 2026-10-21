@@ -1676,12 +1676,18 @@ function randCfIP(cidr) {
 }
 let scanStop = false, lastTargets = [];
 
+// CAUTION: never combine mode:'no-cors' with redirect:'manual' here — the fetch
+// spec rejects that combo and Chrome fails the request INSTANTLY, without
+// touching the network, so every IP (even dead ones) returned a fake ~0ms
+// "alive" result. Plain no-cors is what works: reachable IPs resolve to an
+// opaque response; IPs whose TLS cert misses the bare-IP hostname reject
+// right after the handshake (dt well below timeout) — a valid latency sample.
 async function probeOne(ip, port, timeout) {
   const t0 = performance.now();
   const ctl = new AbortController();
   const to = setTimeout(() => ctl.abort(), timeout);
   try {
-    await fetch(`https://${ip}:${port}/cdn-cgi/trace`, { mode: 'no-cors', cache: 'no-store', redirect: 'manual', signal: ctl.signal });
+    await fetch(`https://${ip}:${port}/cdn-cgi/trace`, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal });
     clearTimeout(to);
     return Math.round(performance.now() - t0);
   } catch (e) {
@@ -1727,14 +1733,65 @@ function wireIpRows() {
   $$('#ipRes [data-copyip]').forEach(b => b.onclick = () => copy(b.dataset.copyip));
   $$('#ipRes [data-apply]').forEach(b => b.onclick = () => applyCleanIp(b.dataset.apply));
 }
+// ── Cloudflare-membership helpers (for the apply-dialog safety check) ──
+function cfHasIp(ip) {
+  const p = ip.split('.').map(Number);
+  if (p.length !== 4 || p.some(x => isNaN(x) || x < 0 || x > 255)) return false;
+  const n = (((p[0] * 256 + p[1]) * 256 + p[2]) * 256 + p[3]) >>> 0;
+  return CF_RANGES.some(c => {
+    const [base, bits] = c.split('/');
+    const b = base.split('.').map(Number);
+    const bn = (((b[0] * 256 + b[1]) * 256 + b[2]) * 256 + b[3]) >>> 0;
+    const mask = (+bits) === 0 ? 0 : ((0xFFFFFFFF << (32 - +bits)) >>> 0);
+    return ((n & mask) >>> 0) === ((bn & mask) >>> 0);
+  });
+}
+// Resolve via DNS-over-HTTPS (browser-side, CORS-enabled) whether the SNI domain
+// is actually fronted by Cloudflare. true/false = verified, null = lookup failed.
+async function domainBehindCf(name) {
+  const dom = String(name || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+  if (!dom) return null;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(dom)) return cfHasIp(dom);
+  try {
+    const r = await fetch('https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(dom) + '&type=A',
+      { headers: { Accept: 'application/dns-json' }, cache: 'no-store' });
+    const d = await r.json();
+    const ips = (d.Answer || []).filter(a => a.type === 1).map(a => a.data);
+    return ips.length ? ips.some(cfHasIp) : false;
+  } catch { return null; }
+}
 function applyCleanIp(ip) {
   const cur = (S.settings.sni_override || S.host || '').trim();
   const m = openModal('اعمال آی‌پی تمیز روی کانفیگ‌ها', `
     <div class="field"><label>آی‌پی تمیز (آدرس اتصال)</label><input class="in ltr" id="ipF" value="${esc(ip)}" readonly></div>
     <div class="field"><label>SNI / Host — دامنه‌ای که گواهی TLS برای آن معتبر است</label><input class="in ltr" id="domF" value="${esc(cur)}">
       <small>پیش‌فرض همین دامنه سرویس است. اگر دامنه اختصاصی روی Cloudflare دارید که به این سرویس اشاره می‌کند، همان را وارد کنید.</small></div>
+    <div id="cfWarn" hidden style="margin-top:10px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.9"></div>
     <p class="sub">اتصال به <bdi class="ltr">${esc(ip)}</bdi> می‌رود ولی هویت TLS روی دامنه می‌ماند؛ هم کانفیگ وصل می‌شود و هم فیلترِ IP مستقیم دور می‌ماند.</p>`,
     `<button class="btn gold" id="ipGo">اعمال روی همه کانفیگ‌ها</button>`);
+  const checkCf = async () => {
+    const box = $('#cfWarn'); if (!box) return;
+    const dom = $('#domF').value.trim();
+    if (!dom) { box.hidden = true; return; }
+    box.hidden = false;
+    box.style.background = 'rgba(255,255,255,.04)';
+    box.style.border = '1px solid rgba(255,255,255,.15)';
+    box.textContent = 'در حال بررسی دامنه در Cloudflare …';
+    const res = await domainBehindCf(dom);
+    if (res === true) {
+      box.style.background = 'rgba(0,200,90,.08)';
+      box.style.border = '1px solid rgba(0,200,90,.4)';
+      box.innerHTML = '✓ دامنه <bdi class="ltr">' + esc(dom) + '</bdi> پشت Cloudflare است — اعمال IP تمیز روی آن کار می‌کند.';
+    } else if (res === false) {
+      box.style.background = 'rgba(255,80,80,.08)';
+      box.style.border = '1px solid rgba(255,80,80,.45)';
+      box.innerHTML = '⚠ هشدار مهم: دامنه <bdi class="ltr">' + esc(dom) + '</bdi> پشت Cloudflare <b>نیست</b>. Cloudflare فقط برای دامنه‌های خودش ترافیک را جلو می‌برد؛ با این IP، TLS روی این دامنه برقرار نمی‌شود و <b>کانفیگ‌ها بعد از اعمال وصل نمی‌شوند</b>.<br>راه‌حل: یک دامنه بخرید، در Cloudflare اضافه کنید (پروکسی نارنجی روشن) و رکورد آن را به همین دامنه سرویس وصل کنید؛ سپس دامنه خودتان را در این فیلد بگذارید.';
+    } else {
+      box.hidden = true;
+    }
+  };
+  $('#domF').oninput = () => { const b = $('#cfWarn'); if (b) b.hidden = true; };
+  checkCf();
   $('#ipGo').onclick = async () => {
     try {
       await api('settings', { address: ip, sni_override: $('#domF').value.trim() });
