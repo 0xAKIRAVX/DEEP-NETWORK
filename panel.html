@@ -440,6 +440,7 @@ dialog.modal::backdrop{background:rgba(3,3,4,.72);backdrop-filter:blur(3px)}
 .iprow:first-child{border-top:0}
 .iprow .r{width:24px;color:var(--mu2);font-weight:800;font-size:11.5px}
 .iprow .a{font-family:var(--mono);direction:ltr;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iprow .geob{font-family:inherit;font-weight:600;font-size:10.5px;color:var(--gold);background:rgba(255,196,66,.08);border:1px solid rgba(255,196,66,.3);border-radius:6px;padding:1px 6px;margin-left:6px;white-space:nowrap}
 .iprow .l{font-family:var(--mono);direction:ltr;min-width:84px;text-align:left;font-weight:800;font-size:12.5px}
 .iprow .l.g{color:#3ddc84}.iprow .l.y{color:#d9b44a}.iprow .l.r{color:#ef5350}
 .iprow .acts{display:flex;gap:6px}
@@ -1275,6 +1276,8 @@ function viewSettings() {
       <h3 style="margin-top:22px">اتصال</h3><p class="sub">این مقادیر روی لینک‌های ساخته‌شده اثر می‌گذارند</p>
       <div class="field"><label>آدرس اتصال (اختیاری)</label><input class="in ltr" name="address" value="${esc(s.address)}" placeholder="مثلاً یک IP تمیز یا دامنه CDN">
         <small>خالی = همان دامنه سرویس. اگر آدرس دیگری وارد کنید، SNI و Host هم روی همین آدرس تنظیم می‌شوند تا گواهی TLS همیشه مطابقت داشته باشد و کانفیگ‌ها وصل شوند.</small></div>
+      <label class="chk" style="display:flex;gap:10px;align-items:flex-start;margin:12px 0 0"><input type="checkbox" name="random_sni" ${s.random_sni !== false ? 'checked' : ''} style="margin-top:4px">
+        <span><b>SNI تصادفی روی لینک‌ها (ضد فیلتر SNI)</b><br><small>روی دامنه‌های lucity.app فعال است: نامی که در TLS دیده می‌شود هر بار زیردامنه‌ای تصادفی می‌شود ولی گواهی و مسیر روی دامنه واقعی می‌ماند — پینگ اضافه‌ای ندارد و فیلترِ مبتنی بر نام دامنه را دور می‌زند. اگر کل دامنه روی اپراتوری بلاک بود، از «کانفیگ JSON بهینه» با پروفایل همان اپراتور استفاده کنید.</small></span></label>
       <div class="field"><label>SNI برای Reality</label><input class="in ltr" name="reality_sni" value="${esc(s.reality_sni)}">
         <small>یک سایت معتبر با TLS 1.3 و H2 (پیش‌فرض: www.microsoft.com). با تغییر آن، Xray یک‌بار ری‌استارت می‌شود.</small></div>
       <h3 style="margin-top:22px">فرمت نام کانفیگ‌ها</h3><p class="sub">نامی که هر کانفیگ در کلاینت کاربر نشان می‌دهد را سفارشی کنید</p>
@@ -1329,7 +1332,7 @@ function viewSettings() {
     const protocols = {};
     $$('input[name=proto]').forEach(cb => protocols[cb.value] = cb.checked);
     try {
-      await api('settings', { user: f.user.value, pass: f.pass.value, address: f.address.value, reality_sni: f.reality_sni.value, cfg_fmt: f.cfg_fmt.value, protocols, session_hours: f.session_hours.value });
+      await api('settings', { user: f.user.value, pass: f.pass.value, address: f.address.value, random_sni: f.random_sni.checked, reality_sni: f.reality_sni.value, cfg_fmt: f.cfg_fmt.value, protocols, session_hours: f.session_hours.value });
       S = await api('state'); setMe(); toast('ذخیره شد'); viewSettings();
     } catch (er) { toast(er.message, true); }
   };
@@ -1556,25 +1559,37 @@ function showQR(title, data) {
 }
 
 async function showJSON(c) {
+  const profs = S.profiles || [];
   openModal('کانفیگ JSON بهینه · ' + c.name,
-    '<div class="jsonview" id="jsonBox">در حال دریافت…</div>',
+    `<div class="field"><label>پروفایل اپراتور این کاربر — فرگمنت و اثر انگشت همان اپراتور داخل فایل قرار می‌گیرد</label>
+      <select class="in" id="jsonProf">
+        ${profs.map(p => `<option value="${esc(p.key)}"${p.key === 'fast' ? ' selected' : ''}>${esc(p.label)}${p.frag_lengths ? ' — فرگمنت ' + esc(p.frag_lengths) : ''}</option>`).join('')}
+      </select>
+      <small>«سریع‌ترین» بدون فرگمنت است (پینگ مینیمم). پروفایل اپراتور فقط وقتی لازم است که با SNI تصادفی هم وصل نشد — فرگمنت ۳۰ تا ۱۰۰ میلی‌ثانیه به هر هندشیک اضافه می‌کند.</small></div>
+    <div class="jsonview" id="jsonBox">در حال دریافت…</div>`,
     `<button class="btn ghost-gold sm" id="jsonDl">${ico('arrdown')}دانلود فایل</button><button class="btn ghost-gold sm" id="jsonCopy">${ico('copy')}کپی</button>`);
-  try {
-    const r = await fetch('/panel/api/client/' + c.id, { credentials: 'same-origin' });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'خطا');
-    const txt = await r.text();
-    let pretty = txt;
-    try { pretty = JSON.stringify(JSON.parse(txt), null, 2); } catch {}
-    $('#jsonBox').textContent = pretty;
-    $('#jsonDl').onclick = () => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([pretty], { type: 'application/json' }));
-      a.download = 'nullgate-' + c.name.replace(/[^\w.-]/g, '') + '.json';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    };
-    $('#jsonCopy').onclick = () => copy(pretty);
-  } catch (er) { $('#jsonBox').textContent = 'خطا: ' + er.message; }
+  const load = async () => {
+    const prof = $('#jsonProf').value;
+    try {
+      $('#jsonBox').textContent = 'در حال دریافت…';
+      const r = await fetch('/panel/api/client/' + c.id + '?profile=' + encodeURIComponent(prof), { credentials: 'same-origin' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'خطا');
+      const txt = await r.text();
+      let pretty = txt;
+      try { pretty = JSON.stringify(JSON.parse(txt), null, 2); } catch {}
+      $('#jsonBox').textContent = pretty;
+      $('#jsonDl').onclick = () => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([pretty], { type: 'application/json' }));
+        a.download = 'nullgate-' + c.name.replace(/[^\w.-]/g, '') + (prof ? '-' + prof : '') + '.json';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      };
+      $('#jsonCopy').onclick = () => copy(pretty);
+    } catch (er) { $('#jsonBox').textContent = 'خطا: ' + er.message; }
+  };
+  $('#jsonProf').onchange = load;
+  await load();
 }
 
 async function showLog() {
@@ -1722,7 +1737,8 @@ async function runScan(list, port, rounds, timeout, prog, addRow) {
 
 function ipRowHtml(rec, rank) {
   const cls = rec.ms === null ? 'r' : rec.ms < 250 ? 'g' : rec.ms < 600 ? 'y' : 'r';
-  return `<div class="iprow"><span class="r">${rank}</span><span class="a">${esc(rec.ip)}</span>
+  const geo = rec.city || rec.cc ? ` <span class="geob">${esc((rec.cc || '') + (rec.city ? ' · ' + rec.city : ''))}</span>` : '';
+  return `<div class="iprow"><span class="r">${rank}</span><span class="a">${esc(rec.ip)}${geo}</span>
     <span class="l ${cls}">${rec.ms === null ? '✕' : rec.ms + ' ms'}</span>
     <span class="acts">
       <button class="btn gold sm" data-apply="${esc(rec.ip)}">اعمال</button>
@@ -1796,7 +1812,10 @@ function applyCleanIp(ip) {
   checkIp();
   $('#ipGo').onclick = async () => {
     try {
-      await api('settings', { address: ip, sni_override: $('#domF').value.trim() });
+      const dom = $('#domF').value.trim();
+      // sni_override only when the admin deliberately fronts a DIFFERENT domain;
+      // clearing it keeps the random-subdomain SNI (anti-SNI-blocklist) active.
+      await api('settings', { address: ip, sni_override: dom !== S.host ? dom : '' });
       S = await api('state');
       m.close();
       toast('اعمال شد — لینک ساب را در کلاینت آپدیت کنید (Update subscription)');
@@ -1839,11 +1858,13 @@ export default {
 
 function viewIpScan() {
   const hist = JSON.parse(localStorage.getItem('ng_ipscan') || '[]');
+  const sniHost = (S.settings.sni_override || S.host || '').trim();
+  const sniRand = S.settings.random_sni !== false && !S.settings.sni_override && (sniHost.endsWith('.lucity.app') && sniHost !== 'lucity.app');
   $('#view').innerHTML = `
     <div class="grid4" style="grid-template-columns:repeat(3,1fr)">
       ${statCard('radar', 'green', 'بهترین تاخیر', `<span class="ltr" id="ipBest">—</span>`, '', 'از آخرین اسکن')}
       ${statCard('shield', 'cyan', 'آی‌پی سالم', `<span class="ltr" id="ipOk">0</span>`, '', 'از آخرین اسکن')}
-      ${statCard('pin', 'blue', 'آدرس فعلی کانفیگ‌ها', `<span class="ltr" style="font-size:12px">${esc(S.settings.address || S.host)}</span>`, '', 'SNI: ' + esc(S.settings.sni_override || S.host))}
+      ${statCard('pin', 'blue', 'آدرس فعلی کانفیگ‌ها', `<span class="ltr" style="font-size:12px">${esc(S.settings.address || S.host)}</span>`, '', 'SNI: ' + esc(sniHost) + (sniRand ? ' · تصادفی' : ''))}
     </div>
     <div class="panel mt">
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start">
@@ -1875,15 +1896,15 @@ function viewIpScan() {
       ${hist.length ? `<div style="margin-top:16px"><h3 style="font-size:14px;margin-bottom:8px">تاریخچه بهترین‌ها</h3>
         <div class="plist">${hist.map(h => `<div><div class="pn"><b class="ltr">${esc(h.ip)}</b><small>${new Date(h.t).toLocaleString('fa-IR')}</small></div><code class="ltr">${h.ms} ms · ${esc(h.note || '')}</code></div>`).join('')}</div></div>` : ''}
     </div>
-    <div class="panel mt"><h3>راه بدون دامنه — با همان دامنه Lucity (پیشنهادی)</h3>
-      <p class="sub">دامنه سرویس شما روی CDN بانی (bunny.net) است و <b>همه‌ی لبه‌های این CDN گواهی دامنه شما را سرو می‌کنند</b>؛ یعنی بدون خرید دامنه هم می‌توانید مثل Railway «IP تمیز» داشته باشید.</p>
+    <div class="panel mt"><h3>همه اپراتورها + پینگ زیر ۱۳۰ — با همان دامنه Lucity</h3>
+      <p class="sub">لینک‌های ساب از حالا <b>SNI تصادفی</b> دارند: نامی که در مرحله TLS دیده می‌شود هر بار زیردامنه‌ای تصادفی از lucity.app است ولی مسیر و گواهی روی دامنه واقعی سرویس می‌ماند — فیلتر SNI مبتنی بر نام دامنه را دور می‌زند و هیچ پینگ اضافه‌ای ندارد. همه اپراتورها اول همین را امتحان می‌کنند؛ اگر یکی هنوز بلاک بود، گام ۳ را برای همان اپراتور انجام دهید.</p>
       <ol class="steps">
-        <li><b>لینک ساب را آپدیت کنید</b> — در کلاینت Update subscription بزنید و اول کانفیگ VLESS·WS را تست کنید.</li>
-        <li><b>اگر وصل نشد</b> — روی برخی اپراتورها دامنه lucity.app در مرحله TLS فیلتر می‌شود (فیلتر SNI). برای هر کاربر از منوی کنار نامش «کانفیگ JSON بهینه» را بگیرید و در v2rayNG وارد کنید: <b>فرگمنت TLS داخلش فعال است</b> و فیلتر SNI را دور می‌زند.</li>
-        <li><b>اسکن لبه‌های CDN</b> — دکمه «اسکن لبه‌های CDN دامنه لوسیتی» بالای همین صفحه را بزنید؛ لبه‌های معتبر از مسیر خودتان سنجیده می‌شوند. با «اعمال»، کانفیگ‌ها به آن لبه وصل می‌شوند و SNI روی دامنه می‌ماند — ضد DNS poisoning و فیلتر IP.</li>
-        <li><b>پروفایل اپراتور</b> — در تب «بهینه‌سازی» اپراتور خود را انتخاب و ذخیره کنید تا فرگمنت و اثر انگشت بهینه شود.</li>
+        <li><b>آپدیت ساب</b> — در کلاینت روی گروه ساب Update بزنید (لینک‌ها SNI تصادفی دارند) و اول کانفیگ VLESS·WS را تست کنید.</li>
+        <li><b>پینگ زیر ۱۳۰</b> — دکمه «اسکن لبه‌های CDN دامنه لوسیتی» را بزنید؛ کنار هر لبه، کشور و شهرش را می‌بینید. لبه‌های <b>ترکیه، آذربایجان و عراق</b> از ایران معمولاً ۲۵ تا ۷۰ میلی‌ثانیه‌اند — روی بهترینشان «اعمال» کنید تا همه کانفیگ‌ها روی همان لبه وصل شوند (لبه‌های آلمان/فرانکفورت حدود ۷۰ تا ۱۰۰ میلی‌ثانیه‌اند و عدد تست را بالا می‌برند).</li>
+        <li><b>اپراتور سخت‌گیر</b> — اگر روی اپراتوری وصل نشد، از منوی کنار نام همان کاربر «کانفیگ JSON بهینه» را با پروفایل همان اپراتور (همراه اول · ایرانسل · رایتل · …) بگیرید و در v2rayNG وارد کنید — فرگمنتِ تنظیم‌شده برای همان اپراتور داخل فایل است و فیلتر SNI حتی وقتی کل دامنه بلاک باشد را دور می‌زند.</li>
+        <li><b>آپدیت ساب روی اپراتور فیلترشده</b> — اگر خود آدرس ساب روی اپراتوری باز نمی‌شود، آپدیت را از وای‌فای یا اپراتور سالم انجام دهید؛ کانفیگ‌های ذخیره‌شده به ساب وابسته نیستند و با IP اعمال‌شده + SNI تصادفی وصل می‌مانند.</li>
       </ol>
-      <p class="sub">نکته: کانفیگ gRPC از لبه HTTP پلتفرم عبور نمی‌کند؛ اگر اینباند gRPC ساختید و وصل نشد عادی است — WS و XHTTP پشتیبانی می‌شوند.</p>
+      <p class="sub">نکته‌ها: عدد «تاخیر واقعی» در v2rayNG حدود سه برابر RTT است (TCP + TLS + درخواست) — لبه ۳۰ms یعنی عدد حدود ۱۰۰ms و لبه ۴۰ms یعنی حدود ۱۲۰ms. فرگمنت را فقط وقتی لازم است فعال کنید چون ۳۰ تا ۱۰۰ میلی‌ثانیه به هر هندشیک اضافه می‌کند. کانفیگ gRPC از لبه HTTP پلتفرم عبور نمی‌کند — WS و XHTTP پشتیبانی می‌شوند.</p>
     </div>
     <div class="panel mt"><h3>چطور IP تمیز را وارد کانفیگ کنم؟</h3>
       <ol class="steps">
@@ -1919,6 +1940,8 @@ function viewIpScan() {
   $('#wkCopy').onclick = () => copy($('#wkCode').textContent);
   renderWk();
   const finishScan = results => {
+    const geo = window._bunnyGeo || {};
+    results.forEach(r => { const g = geo[r.ip]; if (g) { r.cc = g.cc; r.city = g.city; } });
     const ok = results.filter(r => r.ms !== null).sort((a, b) => a.ms - b.ms);
     $('#ipRes').hidden = false;
     $('#ipRes').innerHTML = ok.length
@@ -1944,7 +1967,7 @@ function viewIpScan() {
     try {
       const r = await api('bunnyedges', {});
       const edges = r.edges || [];
-      window._bunnyEdges = edges; window._bunnyDomain = r.domain || '';
+      window._bunnyEdges = edges; window._bunnyDomain = r.domain || ''; window._bunnyGeo = r.geo || {};
       if (!edges.length) throw new Error('هیچ لبه معتبری برای این دامنه پیدا نشد (دامنه CDN bunny نیست)');
       $('#scanBar').hidden = false; $('#scanBar b').style.width = '0%';
       $('#ipRes').hidden = false; $('#ipRes').innerHTML = '';

@@ -175,34 +175,46 @@ CIPHER_PRESETS = {
     "TLS12_AES": "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256",
     "TLS12_CHACHA": "ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-CHACHA20-POLY1305",
 }
+# Fragment values are a PING vs BLOCK-RESISTANCE tradeoff: every fragment chunk
+# adds its interval to the one-time TLS handshake, so the defaults stay light
+# (100-200 bytes ≈ 3-5 extra packets on a ~517-byte ClientHello). Random-SNI
+# links (below) already defeat hostname-based SNI blocklists at zero cost, so
+# a profile's fragment is only the extra layer for the strictest operators.
 OPERATOR_PROFILES = {
-    "auto":       {"label": "خودکار (متعادل)",      "note": "پیش‌تنظیم عمومی برای همه اپراتورها",
-                   "frag_lengths": "10-20",  "frag_delays": "10-20", "fp": "chrome"},
-    "irancell":   {"label": "ایرانسل",              "note": "فرگمنت متوسط؛ مناسب فیلتر SNI ایرانسل",
-                   "frag_lengths": "40-100", "frag_delays": "10-20", "fp": "chrome"},
-    "mci":        {"label": "همراه اول",            "note": "فرگمنت بلندتر برای DPI سخت‌گیرتر همراه اول",
+    "auto":       {"label": "خودکار (سریع‌ترین)",     "note": "بدون فرگمنت — کم‌ترین پینگ؛ SNI تصادفی خودش فیلتر SNI را دور می‌زند",
                    "frag_lengths": "100-200", "frag_delays": "10-20", "fp": "chrome"},
-    "rightel":    {"label": "رایتل",                "note": "تنظیم متعادل رایتل",
-                   "frag_lengths": "30-90",  "frag_delays": "10-20", "fp": "chrome"},
-    "shatel":     {"label": "شاتل",                 "note": "فرگمنت ریز و تاخیر کوتاه برای شاتل",
-                   "frag_lengths": "10-50",  "frag_delays": "5-15",  "fp": "chrome"},
-    "parsonline": {"label": "پارس‌آنلاین",           "note": "تنظیم میانه پارس‌آنلاین",
-                   "frag_lengths": "20-80",  "frag_delays": "10-20", "fp": "chrome"},
+    "irancell":   {"label": "ایرانسل",              "note": "فرگمنت سبک؛ فقط اگر با SNI تصادفی هم وصل نشد",
+                   "frag_lengths": "100-200", "frag_delays": "10-20", "fp": "chrome"},
+    "mci":        {"label": "همراه اول",            "note": "سخت‌گیرترین DPI — فرگمنت کوچک‌تر برای عبور مطمئن",
+                   "frag_lengths": "40-100",  "frag_delays": "10-20", "fp": "chrome"},
+    "rightel":    {"label": "رایتل",                "note": "فرگمنت متوسط رایتل",
+                   "frag_lengths": "40-100",  "frag_delays": "10-20", "fp": "chrome"},
+    "shatel":     {"label": "شاتل",                 "note": "خطوط ثابت معمولاً سبک‌تر فیلتر می‌شوند",
+                   "frag_lengths": "100-200", "frag_delays": "5-15",  "fp": "chrome"},
+    "parsonline": {"label": "پارس‌آنلاین",           "note": "فرگمنت سبک پارس‌آنلاین",
+                   "frag_lengths": "100-200", "frag_delays": "10-20", "fp": "chrome"},
     "mobinnet":   {"label": "مبین‌نت (TD-LTE)",     "note": "اثر انگشت فایرفاکس روی مبین‌نت بهتر جواب می‌دهد",
-                   "frag_lengths": "50-120", "frag_delays": "10-25", "fp": "firefox"},
-    "tci":        {"label": "مخابرات (ADSL/VDSL)",  "note": "فرگمنت ریز برای DPI خطوط ثابت",
-                   "frag_lengths": "10-60",  "frag_delays": "10-20", "fp": "chrome"},
-    "asiatek":    {"label": "آسیاتک",               "note": "تنظیم متعادل آسیاتک",
-                   "frag_lengths": "40-120", "frag_delays": "10-25", "fp": "chrome"},
+                   "frag_lengths": "40-100",  "frag_delays": "10-20", "fp": "firefox"},
+    "tci":        {"label": "مخابرات (ADSL/VDSL)",  "note": "فرگمنت متوسط برای DPI خطوط ثابت",
+                   "frag_lengths": "40-100",  "frag_delays": "10-20", "fp": "chrome"},
+    "asiatek":    {"label": "آسیاتک",               "note": "فرگمنت سبک آسیاتک",
+                   "frag_lengths": "100-200", "frag_delays": "10-20", "fp": "chrome"},
     "custom":     {"label": "اختصاصی",              "note": "همه مقادیر را دستی تعیین کنید",
-                   "frag_lengths": "10-20",  "frag_delays": "10-20", "fp": "chrome"},
+                   "frag_lengths": "100-200", "frag_delays": "10-20", "fp": "chrome"},
 }
+# Pseudo-profile for the per-user JSON download: everything on, nothing extra —
+# lowest handshake latency (random SNI already handles SNI blocklists).
+FAST_PROFILE = {"key": "fast", "label": "سریع‌ترین — بدون فرگمنت",
+                 "note": "پینگ مینیمم؛ برای وقتی اپراتور شما سالم است"}
 
 
 def default_tuning():
+    # Ping-first defaults: TLS fragmentation is OFF until an operator actually
+    # needs it (random-SNI links already defeat hostname-based SNI blocklists,
+    # and every fragment chunk adds its interval to the handshake latency).
     return {"enabled": True, "profile": "auto", "fp": "chrome", "cipher_suites": "",
-            "alpn": "", "frag_on": True, "frag_packets": "tlshello",
-            "frag_lengths": "10-20", "frag_delays": "10-20", "frag_maxsplit": "3-6",
+            "alpn": "", "frag_on": False, "frag_packets": "tlshello",
+            "frag_lengths": "100-200", "frag_delays": "10-20", "frag_maxsplit": "3-6",
             "noise_on": False, "noise_rand": "1-64", "noise_delay": "10-20"}
 
 
@@ -232,7 +244,7 @@ def tuning_sanitize(d):
     alpn = str(d.get("alpn") or "").replace(" ", "")
     base["alpn"] = alpn if alpn in ALPN_MODES else ""
     base["enabled"] = bool(d.get("enabled", True))
-    base["frag_on"] = bool(d.get("frag_on", True))
+    base["frag_on"] = bool(d.get("frag_on", base["frag_on"]))
     base["frag_packets"] = "tlshello" if str(d.get("frag_packets")) != "1-3" else "1-3"
     base["frag_lengths"] = _clean_range(d.get("frag_lengths"), base["frag_lengths"])
     base["frag_delays"] = _clean_range(d.get("frag_delays"), base["frag_delays"])
@@ -292,6 +304,35 @@ def sni_for(addr, host):
         return host or addr
     return addr
 
+
+def link_sni(sni_host):
+    """TLS SNI for generated links - the anti-SNI-blocklist weapon.
+
+    How Lucity's edge really routes (verified from conductor source + live
+    probes): the bunny.net zone is configured for ``*.lucity.app`` with a
+    wildcard certificate, bunny->origin is PLAIN HTTP (VerifyOriginSSL=false)
+    and the Host header is forwarded as-is (AddHostHeader=true). So the SNI
+    only has to match the wildcard zone to get a valid certificate - actual
+    service routing happens purely by the ws/HTTP Host header.
+
+    That means any random first-level subdomain works as SNI while the Host
+    header stays on the real service hostname: the DPI sees a hostname it has
+    never seen (and cannot enumerate), the certificate still validates, and
+    routing is unchanged. A fresh random value is drawn per link build so a
+    blocked hostname can never be replayed.
+
+    Only enabled for the *.lucity.app platform zone (custom domains and
+    sni_override don't have wildcard certificates)."""
+    host = (sni_host or "").strip().lower().rstrip(".")
+    if not host or host in ("localhost", "127.0.0.1", "::1"):
+        return sni_host
+    if not host.endswith(".lucity.app") or host == "lucity.app":
+        return sni_host
+    with state_lock:
+        if not state.get("random_sni", True):
+            return sni_host
+    return f"ng{uuid.uuid4().hex[:10]}.lucity.app"
+
 lock = threading.RLock()
 state_lock = threading.RLock()
 sessions = {}
@@ -342,8 +383,18 @@ def load_state():
     st.setdefault("session_hours", DEFAULT_SESSION_HOURS)
     st.setdefault("sni_override", "")
     st.setdefault("pass_is_auto", not env("ADMIN_PASSWORD"))
+    st.setdefault("random_sni", True)
     st.setdefault("tuning", default_tuning())
     st["tuning"] = tuning_sanitize(st.get("tuning"))
+    # v2 migration (ping-first defaults): the old default fragment (10-20 bytes
+    # per chunk) split the ClientHello into 25-50 packets and added 250ms+ to
+    # every handshake - it sabotaged the whole point of a low-latency link.
+    if st.get("tuning_v", 1) < 2:
+        st["tuning_v"] = 2
+        old = st.get("tuning") or {}
+        if old.get("profile") in ("auto", None) and old.get("frag_lengths") == "10-20" \
+                and old.get("frag_delays") == "10-20":
+            st["tuning"] = default_tuning()
     st.setdefault("clients", [])
     st.setdefault("inbounds", [])
     st["inbounds"] = [i for i in st["inbounds"] if i.get("tag")]
@@ -990,14 +1041,15 @@ def custom_link(ib, c, addr, fmt, host=""):
     alpn = alpn_ov or {"ws": "http/1.1", "httpupgrade": "http/1.1", "xhttp": "h2,http/1.1", "grpc": "h2"}[net]
     # SNI/Host must always match the domain the certificate is issued for; with a
     # clean-IP address the TLS identity stays on the real (fronted) domain.
+    tls_name = link_sni(sni_host)
     if proto == "vmess":
         v = {"v": "2", "ps": nm, "add": addr, "port": "443", "id": cid, "aid": "0",
              "scy": "auto", "net": net, "type": "gun" if net == "grpc" else "none", "host": sni_host,
-             "path": path.strip("/") if net == "grpc" else path, "tls": "tls", "sni": sni_host,
+             "path": path.strip("/") if net == "grpc" else path, "tls": "tls", "sni": tls_name,
              "alpn": alpn, "fp": fp}
         return "vmess://" + base64.b64encode(json.dumps(v).encode()).decode()
     p = {"encryption": "none"} if proto == "vless" else {}
-    p.update(security="tls", sni=sni_host, fp=fp, alpn=alpn, type=net, host=sni_host)
+    p.update(security="tls", sni=tls_name, fp=fp, alpn=alpn, type=net, host=sni_host)
     if net == "grpc":
         p.update(serviceName=path.strip("/"), mode="gun")
     else:
@@ -1014,6 +1066,10 @@ def build_links(c, host):
         fmt = state.get("cfg_fmt") or "{name}-{label}"
         t = tuning_get()
     sni_host = sni_for(addr, host)
+    # TLS identity vs routing: the Host header always stays on the real service
+    # domain (that is what Lucity routes by); the TLS SNI is randomized on the
+    # platform's wildcard zone so SNI blocklists never see a known hostname.
+    tls_name = link_sni(sni_host)
     fp = t.get("fp") or "chrome"
     alpn_ov = (t.get("alpn") or "").strip()
     cid = c["id"]
@@ -1021,7 +1077,7 @@ def build_links(c, host):
     # * address is a domain   -> SNI/Host = that domain (certificate match)
     # * address is a clean IP   -> SNI/Host = the real domain, so the certificate
     #   still validates while the connection rides the scanned clean IP (CDN-fronted)
-    tls = f"security=tls&sni={sni_host}&fp={fp}"
+    tls = f"security=tls&sni={tls_name}&fp={fp}"
     # per-user protocol set (global toggles are already respected inside user_protocols)
     allowed = user_protocols(c)
     # ?ed=2048: WebSocket 0-RTT early data - the first request leaves the client
@@ -1044,13 +1100,13 @@ def build_links(c, host):
         vmess = {"v": "2", "ps": n4, "add": addr, "port": "443", "id": cid, "aid": "0",
                  "scy": "auto", "net": "ws", "type": "none", "host": sni_host,
                  "path": VMESS_PATH + "?ed=2048",
-                 "tls": "tls", "sni": sni_host, "alpn": alpn_ov or "http/1.1", "fp": fp}
+                 "tls": "tls", "sni": tls_name, "alpn": alpn_ov or "http/1.1", "fp": fp}
         links.append({"key": "vmess-ws", "label": "VMess · WebSocket",
                       "url": "vmess://" + base64.b64encode(json.dumps(vmess).encode()).decode()})
     if "trojan-ws" in allowed:
         n5 = fmt_name(fmt, c, "Trojan-WS", "Trojan", "WS", "TLS", addr)
         links.append({"key": "trojan-ws", "label": "Trojan · WebSocket",
-                      "url": f"trojan://{cid}@{addr}:443?security=tls&sni={sni_host}&fp={fp}&alpn={q(alpn_ov or 'http/1.1')}&type=ws&host={sni_host}&path={q(TROJAN_PATH + '?ed=2048')}#{q(n5)}"})
+                      "url": f"trojan://{cid}@{addr}:443?security=tls&sni={tls_name}&fp={fp}&alpn={q(alpn_ov or 'http/1.1')}&type=ws&host={sni_host}&path={q(TROJAN_PATH + '?ed=2048')}#{q(n5)}"})
     if tcp_ready() and "vless-reality" in allowed:
         n6 = fmt_name(fmt, c, "VLESS-Reality-TCP", "VLESS", "TCP", "Reality", TCP_HOST or addr)
         # spx=%2F (spiderX) keeps Xray's web fingerprint probing on the standard path
@@ -1387,17 +1443,32 @@ def qr_svg(data):
 
 
 # ───────────────────────── optimized client config ─────────────────────────
-def client_config_json(c, host=""):
+def client_config_json(c, host="", profile=None):
     """Full, ready-to-import Xray client config for one user - tuned for Iranian
     users: ads/malware blocked, Iranian domains & IPs bypass the proxy (direct),
     DNS over HTTPS, mux off (XHTTP/Vision handle multiplexing natively), plus
     FinalMask TLS fragmentation, uTLS fingerprint and cipher suites from the
-    panel's tuning section."""
+    panel's tuning section.
+
+    profile: optional operator override for THIS download only - 'fast' means
+    zero extra latency (no fragment: random-SNI links already dodge SNI
+    blocklists), any OPERATOR_PROFILES key bakes that operator's fragment
+    values into the file for a user on a heavily-filtered network."""
     with state_lock:
         addr = state["address"] or host
         sni = state["reality_sni"]
         t = tuning_get()
+    if profile == "fast":
+        t = dict(t, frag_on=False, noise_on=False)
+    elif profile in OPERATOR_PROFILES and profile not in ("auto", "custom"):
+        p = OPERATOR_PROFILES[profile]
+        t = dict(t, frag_on=True, noise_on=False,
+                 frag_lengths=p["frag_lengths"], frag_delays=p["frag_delays"], fp=p["fp"])
     sni_host = sni_for(addr, host)
+    # TLS SNI rides a random subdomain of the platform's wildcard zone; the
+    # ws/HTTP Host header (below) stays on the real service domain because
+    # that is what Lucity's edge routes by.
+    tls_name = link_sni(sni_host)
     fp = t.get("fp") or "chrome"
     cs = (t.get("cipher_suites") or "").strip()
     alpn_ov = (t.get("alpn") or "").strip()
@@ -1411,13 +1482,15 @@ def client_config_json(c, host=""):
         transport = ({"wsSettings": {"path": path + "?ed=2048", "headers": {"Host": sni_host}}} if net == "ws" else
                      {"httpupgradeSettings": {"path": path, "host": sni_host}} if net == "httpupgrade" else
                      {"xhttpSettings": {"path": path, "mode": "packet-up", "host": sni_host}})
-        tls = {"serverName": sni_host, "fingerprint": fp, "alpn": alpn, "allowInsecure": False}
+        tls = {"serverName": tls_name, "fingerprint": fp, "alpn": alpn, "allowInsecure": False}
         if cs:
             tls["cipherSuites"] = cs
         stream = {"network": net, "security": "tls", "tlsSettings": tls,
                   # TCP_NODELAY removes Nagle latency, fast-open saves one RTT on the
                   # first request, keepalive keeps the tunnel through NAT windows
-                  "sockopt": {"tcpNoDelay": True, "tcpFastOpen": True, "tcpKeepAliveIdle": 300},
+                  # (idle 300s + probe every 15s survives Iranian mobile NAT timeouts)
+                  "sockopt": {"tcpNoDelay": True, "tcpFastOpen": True, "tcpKeepAliveIdle": 300,
+                              "tcpKeepAliveInterval": 15},
                   **transport}
         # TLS ClientHello fragmentation (Xray sockopt.fragment): splits the
         # ClientHello across TCP segments so SNI-based DPI never sees the whole
@@ -1776,7 +1849,33 @@ def scan_targets(targets, port=443, timeout=2.0, rounds=1):
 # domain. The server VERIFIES each edge (full TLS handshake with
 # server_hostname=<our domain> + one HTTP request); the browser then measures
 # which verified edges are fast on the admin's own Iranian route.
-_BUNNY = {"list_t": 0.0, "ips": [], "ver_t": 0.0, "dom": "", "ok": []}
+_BUNNY = {"list_t": 0.0, "ips": [], "ver_t": 0.0, "dom": "", "ok": [], "geo_t": 0.0, "geo": {}}
+
+
+def _bunny_geo(ips, timeout=12.0):
+    """Country/city label per edge IP via ip-api.com's free batch endpoint
+    (100 IPs per request, 584 edges = 6 requests, cached with the edge list).
+    Purely cosmetic - a failure just means the scanner shows no location badges."""
+    now = time.time()
+    if _BUNNY["geo"] and now - _BUNNY["geo_t"] < 6 * 3600:
+        return _BUNNY["geo"]
+    geo = {}
+    for i in range(0, len(ips), 100):
+        try:
+            body = json.dumps(ips[i:i + 100]).encode()
+            req = urllib.request.Request(
+                "http://ip-api.com/batch?fields=status,query,countryCode,city",
+                data=body, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                for row in json.loads(r.read().decode("utf-8", "ignore")):
+                    if isinstance(row, dict) and row.get("status") == "success":
+                        geo[row.get("query") or ""] = {"cc": row.get("countryCode") or "",
+                                                        "city": row.get("city") or ""}
+        except Exception:
+            pass
+    if geo:
+        _BUNNY.update(geo_t=now, geo=geo)
+    return geo
 
 
 def _bunny_ip_list(timeout=8.0):
@@ -1811,21 +1910,23 @@ def _bunny_verify(ip, domain, timeout=2.5):
 
 
 def bunny_edges_for(domain):
-    """Verified bunny.net edge IPs for THIS service's domain (6h cache)."""
+    """Verified bunny.net edge IPs for THIS service's domain (6h cache).
+    Returns (edges, geo, cached): edges = IP list, geo = {ip: {cc, city}}."""
     domain = (domain or "").strip().split(":")[0]
     if not domain or is_ip_literal(domain) or not HOST_RE.fullmatch(domain):
-        return [], False
+        return [], {}, False
     now = time.time()
     if _BUNNY["ok"] and _BUNNY["dom"] == domain and now - _BUNNY["ver_t"] < 6 * 3600:
-        return list(_BUNNY["ok"]), True
+        return list(_BUNNY["ok"]), dict(_BUNNY.get("geo") or {}), True
     ips = _bunny_ip_list()
     if not ips:
-        return [], False
+        return [], {}, False
     with ThreadPoolExecutor(max_workers=64) as ex:
         flags = list(ex.map(lambda i: _bunny_verify(i, domain), ips))
     ok = [i for i, good in zip(ips, flags) if good]
+    geo = _bunny_geo(ok)
     _BUNNY.update(ver_t=now, dom=domain, ok=ok)
-    return ok, False
+    return ok, geo, False
 
 
 # ───────────────────────── web panel ─────────────────────────
@@ -2002,14 +2103,20 @@ class H(BaseHTTPRequestHandler):
                     c = next((x for x in state["clients"] if x["id"] == cid), None)
                 if not c:
                     return self.send_json(404, {"error": "کاربر پیدا نشد"})
+                # ?profile=<operator|fast> bakes that operator's fragment tuning
+                # into this one download (per-user, does not touch global tuning).
+                prof = (urllib.parse.parse_qs(_qs).get("profile", [""])[0] or "").strip()
+                if prof and prof != "fast" and prof not in OPERATOR_PROFILES:
+                    return self.send_json(400, {"error": "پروفایل اپراتور نامعتبر است"}, self.auth_headers())
                 safe = re.sub(r"[^A-Za-z0-9_.\-]", "", c["name"])[:24] or "user"
-                cfg = client_config_json(c, self.host())
+                cfg = client_config_json(c, self.host(), profile=prof or None)
                 if cfg.get("error"):
                     return self.send_json(400, cfg, self.auth_headers())
+                suffix = f"-{prof}" if prof else ""
                 return self.send_bytes(200, json.dumps(cfg, ensure_ascii=False, indent=2),
                                        "application/json; charset=utf-8",
                                        {**self.auth_headers(),
-                                        "Content-Disposition": f"attachment; filename=nullgate-{safe}.json"})
+                                        "Content-Disposition": f"attachment; filename=nullgate-{safe}{suffix}.json"})
         self.send_bytes(404, "not found", "text/plain; charset=utf-8")
 
     def state_payload(self):
@@ -2019,6 +2126,7 @@ class H(BaseHTTPRequestHandler):
             clients = list(state["clients"])
             settings = {"user": state["admin_user"], "address": state["address"],
                         "sni_override": (state.get("sni_override") or ""),
+                        "random_sni": bool(state.get("random_sni", True)),
                         "reality_sni": state["reality_sni"], "cfg_fmt": state.get("cfg_fmt") or "{name}-{label}",
                         "protocols": {k: bool((state.get("protocols") or {}).get(k, True)) for k in PROTO_KEYS},
                         "session_hours": state.get("session_hours", DEFAULT_SESSION_HOURS)}
@@ -2048,9 +2156,9 @@ class H(BaseHTTPRequestHandler):
             "host": host, "clients": out, "protocols": protocols, "settings": settings,
             "version": PANEL_VERSION,
             "tuning": tuning_get(),
-            "profiles": [{"key": k, "label": v["label"], "note": v["note"],
+            "profiles": [dict(FAST_PROFILE)] + [{"key": k, "label": v["label"], "note": v["note"],
                           "frag_lengths": v["frag_lengths"], "frag_delays": v["frag_delays"],
-                          "fp": v["fp"]} for k, v in OPERATOR_PROFILES.items()],
+                          "fp": v["fp"]} for k, v in OPERATOR_PROFILES.items() if k != "custom"],
             "cipher_presets": CIPHER_PRESETS,
             "fps": list(FPS),
             "tcp": {"enabled": tcp_ready(), "host": TCP_HOST, "port": TCP_PUBLIC_PORT,
@@ -2364,6 +2472,8 @@ class H(BaseHTTPRequestHandler):
                     if so and not HOST_RE.fullmatch(so):
                         return self.send_json(400, {"error": "SNI جایگزین نامعتبر است (دامنه وارد کنید)"})
                     state["sni_override"] = so
+                if "random_sni" in d:
+                    state["random_sni"] = bool(d.get("random_sni"))
                 if "tuning" in d:
                     state["tuning"] = tuning_sanitize(d.get("tuning"))
                 if "reality_sni" in d:
@@ -2425,16 +2535,18 @@ class H(BaseHTTPRequestHandler):
         if path == "/panel/api/bunnyedges":
             # Verified bunny.net CDN edges for the service's OWN domain - the
             # no-custom-domain clean-IP flow (lucity.app is bunny-fronted).
+            # geo: {ip: {cc, city}} so the admin can prefer nearby edges
+            # (Turkey/Azerbaijan/Iraq = the sub-130ms region from Iran).
             dom = (env("DOMAIN") or "").strip() or self.host()
             if not dom or is_ip_literal(dom) or dom in ("127.0.0.1", "localhost", "::1"):
                 return self.send_json(400, {"error": "دامنه عمومی سرویس پیدا نشد — متغیر DOMAIN را روی دامنه لوسیتی ست کنید"},
                                       self.auth_headers())
             try:
-                edges, cached = bunny_edges_for(dom)
+                edges, geo, cached = bunny_edges_for(dom)
             except Exception as e:
                 return self.send_json(502, {"error": f"دریافت لبه‌های CDN ممکن نشد: {e}"},
                                       self.auth_headers())
-            return self.send_json(200, {"ok": True, "domain": dom, "edges": edges,
+            return self.send_json(200, {"ok": True, "domain": dom, "edges": edges, "geo": geo,
                                         "verified": len(edges), "cached": cached},
                                   self.auth_headers())
 
@@ -2482,6 +2594,9 @@ def boot_report():
         print(f"  DOMAIN     : {dom} - all links/subs are generated on this host.", flush=True)
         print("               (no custom domain needed: IP Scanner -> scan CDN edges", flush=True)
         print("                of this domain; a custom domain + CF Worker also works)", flush=True)
+    print("  anti-SNI   : random-subdomain SNI is ON for *.lucity.app links", flush=True)
+    print("               (Settings can disable it); sub-130ms ping: IP Scanner ->", flush=True)
+    print("               scan CDN edges, apply the nearest (Turkey/Azerbaijan/Iraq).", flush=True)
     if DATA_DIR == "/tmp":
         print("  WARNING   : state is EPHEMERAL - /data is not writable.", flush=True)
         print("               Attach a volume at /data so users & links survive redeploys.", flush=True)
