@@ -1746,52 +1746,54 @@ function cfHasIp(ip) {
     return ((n & mask) >>> 0) === ((bn & mask) >>> 0);
   });
 }
-// Resolve via DNS-over-HTTPS (browser-side, CORS-enabled) whether the SNI domain
-// is actually fronted by Cloudflare. true/false = verified, null = lookup failed.
-async function domainBehindCf(name) {
+// ── DNS-over-HTTPS A-record lookup (browser-side, CORS-enabled) ──
+async function dohA(name) {
   const dom = String(name || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
-  if (!dom) return null;
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(dom)) return cfHasIp(dom);
+  if (!dom) return [];
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(dom)) return [dom];
   try {
     const r = await fetch('https://cloudflare-dns.com/dns-query?name=' + encodeURIComponent(dom) + '&type=A',
       { headers: { Accept: 'application/dns-json' }, cache: 'no-store' });
     const d = await r.json();
-    const ips = (d.Answer || []).filter(a => a.type === 1).map(a => a.data);
-    return ips.length ? ips.some(cfHasIp) : false;
-  } catch { return null; }
+    return (d.Answer || []).filter(a => a.type === 1).map(a => a.data);
+  } catch { return []; }
+}
+// Resolve via DNS-over-HTTPS whether the SNI domain is actually fronted by
+// Cloudflare. true/false = verified, null = lookup failed.
+async function domainBehindCf(name) {
+  const ips = await dohA(name);
+  return ips.length ? ips.some(cfHasIp) : null;
 }
 function applyCleanIp(ip) {
   const cur = (S.settings.sni_override || S.host || '').trim();
   const m = openModal('اعمال آی‌پی تمیز روی کانفیگ‌ها', `
     <div class="field"><label>آی‌پی تمیز (آدرس اتصال)</label><input class="in ltr" id="ipF" value="${esc(ip)}" readonly></div>
     <div class="field"><label>SNI / Host — دامنه‌ای که گواهی TLS برای آن معتبر است</label><input class="in ltr" id="domF" value="${esc(cur)}">
-      <small>پیش‌فرض همین دامنه سرویس است. اگر دامنه اختصاصی روی Cloudflare دارید که به این سرویس اشاره می‌کند، همان را وارد کنید.</small></div>
+      <small>پیش‌فرض دامنه همین سرویس است — لبه‌های CDN همین دامنه گواهی آن را سرو می‌کنند.</small></div>
     <div id="cfWarn" hidden style="margin-top:10px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.9"></div>
     <p class="sub">اتصال به <bdi class="ltr">${esc(ip)}</bdi> می‌رود ولی هویت TLS روی دامنه می‌ماند؛ هم کانفیگ وصل می‌شود و هم فیلترِ IP مستقیم دور می‌ماند.</p>`,
     `<button class="btn gold" id="ipGo">اعمال روی همه کانفیگ‌ها</button>`);
-  const checkCf = async () => {
-    const box = $('#cfWarn'); if (!box) return;
+  const okBox = html => { const b = $('#cfWarn'); b.hidden = false; b.style.background = 'rgba(0,200,90,.08)'; b.style.border = '1px solid rgba(0,200,90,.4)'; b.innerHTML = html; };
+  const badBox = html => { const b = $('#cfWarn'); b.hidden = false; b.style.background = 'rgba(255,80,80,.08)'; b.style.border = '1px solid rgba(255,80,80,.45)'; b.innerHTML = html; };
+  const waitBox = () => { const b = $('#cfWarn'); b.hidden = false; b.style.background = 'rgba(255,255,255,.04)'; b.style.border = '1px solid rgba(255,255,255,.15)'; b.textContent = 'در حال بررسی تطابق IP با دامنه …'; };
+  // An applied IP is only safe if the CDN edge it points at actually serves
+  // the certificate of the SNI domain. Three valid cases: (1) it is one of the
+  // A records of the domain itself, (2) it is a server-verified CDN edge of
+  // this domain (bunny scan), (3) CF-fronted custom domain + CF-range IP.
+  const checkIp = async () => {
     const dom = $('#domF').value.trim();
-    if (!dom) { box.hidden = true; return; }
-    box.hidden = false;
-    box.style.background = 'rgba(255,255,255,.04)';
-    box.style.border = '1px solid rgba(255,255,255,.15)';
-    box.textContent = 'در حال بررسی دامنه در Cloudflare …';
-    const res = await domainBehindCf(dom);
-    if (res === true) {
-      box.style.background = 'rgba(0,200,90,.08)';
-      box.style.border = '1px solid rgba(0,200,90,.4)';
-      box.innerHTML = '✓ دامنه <bdi class="ltr">' + esc(dom) + '</bdi> پشت Cloudflare است — اعمال IP تمیز روی آن کار می‌کند.';
-    } else if (res === false) {
-      box.style.background = 'rgba(255,80,80,.08)';
-      box.style.border = '1px solid rgba(255,80,80,.45)';
-      box.innerHTML = '⚠ هشدار مهم: دامنه <bdi class="ltr">' + esc(dom) + '</bdi> پشت Cloudflare <b>نیست</b>. Cloudflare فقط برای دامنه‌های خودش ترافیک را جلو می‌برد؛ با این IP، TLS روی این دامنه برقرار نمی‌شود و <b>کانفیگ‌ها بعد از اعمال وصل نمی‌شوند</b>.<br>راه‌حل: طبق «راهنمای کامل CDN» در همین صفحه عمل کنید — دامنه بخرید و در Cloudflare با یک Worker به همین سرویس وصل کنید؛ سپس دامنه خودتان را در این فیلد بگذارید.';
-    } else {
-      box.hidden = true;
-    }
+    if (!dom) { $('#cfWarn').hidden = true; return; }
+    waitBox();
+    const ips = await dohA(dom);
+    if (ips.includes(ip)) { okBox('✓ این IP رکورد A خودِ دامنه <bdi class="ltr">' + esc(dom) + '</bdi> است — کاملاً معتبر.'); return; }
+    if ((window._bunnyEdges || []).includes(ip)) { okBox('✓ این IP یکی از لبه‌های راستی‌آزمایی‌شده CDN همین دامنه است — گواهی TLS آن را سرو می‌کند و اعمالش بی‌خطر است.'); return; }
+    const cf = await domainBehindCf(dom);
+    if (cf === true && cfHasIp(ip)) { okBox('✓ دامنه پشت Cloudflare است و این IP هم در محدوده CF است — الگوی Railway با دامنه اختصاصی.'); return; }
+    if (cf === true) { badBox('⚠ دامنه پشت Cloudflare است ولی این IP در محدوده IPهای CF نیست؛ یک IP تمیز Cloudflare انتخاب کنید.'); return; }
+    badBox('⚠ این IP گواهی TLS دامنه <bdi class="ltr">' + esc(dom) + '</bdi> را سرو نمی‌کند — بعد از اعمال، کانفیگ‌ها وصل نمی‌شوند. برای دامنه لوسیتی از «اسکن لبه‌های CDN» بالای همین صفحه استفاده کنید؛ برای دامنه اختصاصی، راهنمای Worker پایین صفحه را ببینید.');
   };
   $('#domF').oninput = () => { const b = $('#cfWarn'); if (b) b.hidden = true; };
-  checkCf();
+  checkIp();
   $('#ipGo').onclick = async () => {
     try {
       await api('settings', { address: ip, sni_override: $('#domF').value.trim() });
@@ -1848,14 +1850,15 @@ function viewIpScan() {
         <div><h3>اسکنر آی‌پی تمیز</h3>
         <p class="sub">اسکن داخل مرورگر شما اجرا می‌شود؛ یعنی مسیر واقعی اینترنتِ خودتان تا هر IP سنجیده می‌شود — معیارِ درستِ «تمیز بودن» برای شما.</p></div>
         <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap">
-          <button class="btn gold" id="scanStart">${ico('radar')}شروع اسکن مرورگر</button>
+          <button class="btn gold" id="scanBunny">${ico('radar')}اسکن لبه‌های CDN دامنه لوسیتی</button>
+          <button class="btn ghost-gold" id="scanStart">${ico('radar')}اسکن آزاد مرورگر</button>
           <button class="btn ghost-gold" id="scanSrv">${ico('server')}اسکن از سرور</button>
           <button class="btn bad" id="scanStopBtn" hidden>${ico('xray')}توقف</button>
         </div>
       </div>
       <div class="ipctl">
-        <div class="field"><label>تعداد IP تصادفی Cloudflare</label>
-          <select class="in" id="scanCount"><option value="0">فقط هدف‌های دستی</option><option>30</option><option selected>60</option><option>100</option><option>160</option></select></div>
+        <div class="field"><label>IP تصادفی Cloudflare (فقط برای دامنه اختصاصی Worker)</label>
+          <select class="in" id="scanCount"><option value="0" selected>هیچ — فقط هدف‌های دستی</option><option>30</option><option>60</option><option>100</option><option>160</option></select></div>
         <div class="field"><label>پورت</label>
           <select class="in ltr" id="scanPort"><option value="443" selected>443</option><option value="2053">2053</option><option value="2083">2083</option><option value="2087">2087</option><option value="2096">2096</option><option value="8443">8443</option></select></div>
         <div class="field"><label>تلاش برای هر IP</label>
@@ -1865,12 +1868,22 @@ function viewIpScan() {
       </div>
       <div class="field"><label>هدف‌های دلخواه (اختیاری — IP یا دامنه، با کاما یا خط جدید جدا کنید)</label>
         <textarea class="in ltr" id="scanCustom" rows="2" placeholder="104.17.1.1&#10;speed.cloudflare.com" style="resize:vertical"></textarea>
-        <small>این هدف‌ها همراه IPهای تصادفی Cloudflare اسکن می‌شوند.</small></div>
+        <small>این هدف‌ها (IP یا دامنه) جدا از لبه‌های CDN اسکن می‌شوند.</small></div>
       <div class="scanbar" id="scanBar" hidden><b></b></div>
       <p class="sub" id="scanStat" style="margin-top:10px"></p>
       <div class="ipres" id="ipRes" hidden></div>
       ${hist.length ? `<div style="margin-top:16px"><h3 style="font-size:14px;margin-bottom:8px">تاریخچه بهترین‌ها</h3>
         <div class="plist">${hist.map(h => `<div><div class="pn"><b class="ltr">${esc(h.ip)}</b><small>${new Date(h.t).toLocaleString('fa-IR')}</small></div><code class="ltr">${h.ms} ms · ${esc(h.note || '')}</code></div>`).join('')}</div></div>` : ''}
+    </div>
+    <div class="panel mt"><h3>راه بدون دامنه — با همان دامنه Lucity (پیشنهادی)</h3>
+      <p class="sub">دامنه سرویس شما روی CDN بانی (bunny.net) است و <b>همه‌ی لبه‌های این CDN گواهی دامنه شما را سرو می‌کنند</b>؛ یعنی بدون خرید دامنه هم می‌توانید مثل Railway «IP تمیز» داشته باشید.</p>
+      <ol class="steps">
+        <li><b>لینک ساب را آپدیت کنید</b> — در کلاینت Update subscription بزنید و اول کانفیگ VLESS·WS را تست کنید.</li>
+        <li><b>اگر وصل نشد</b> — روی برخی اپراتورها دامنه lucity.app در مرحله TLS فیلتر می‌شود (فیلتر SNI). برای هر کاربر از منوی کنار نامش «کانفیگ JSON بهینه» را بگیرید و در v2rayNG وارد کنید: <b>فرگمنت TLS داخلش فعال است</b> و فیلتر SNI را دور می‌زند.</li>
+        <li><b>اسکن لبه‌های CDN</b> — دکمه «اسکن لبه‌های CDN دامنه لوسیتی» بالای همین صفحه را بزنید؛ لبه‌های معتبر از مسیر خودتان سنجیده می‌شوند. با «اعمال»، کانفیگ‌ها به آن لبه وصل می‌شوند و SNI روی دامنه می‌ماند — ضد DNS poisoning و فیلتر IP.</li>
+        <li><b>پروفایل اپراتور</b> — در تب «بهینه‌سازی» اپراتور خود را انتخاب و ذخیره کنید تا فرگمنت و اثر انگشت بهینه شود.</li>
+      </ol>
+      <p class="sub">نکته: کانفیگ gRPC از لبه HTTP پلتفرم عبور نمی‌کند؛ اگر اینباند gRPC ساختید و وصل نشد عادی است — WS و XHTTP پشتیبانی می‌شوند.</p>
     </div>
     <div class="panel mt"><h3>چطور IP تمیز را وارد کانفیگ کنم؟</h3>
       <ol class="steps">
@@ -1879,10 +1892,10 @@ function viewIpScan() {
         <li>بعد از اعمال، همه لینک‌ها و ساب‌ها به آن IP می‌روند و SNI/Host روی دامنه اصلی می‌ماند تا گواهی TLS مطابقت کند.</li>
         <li>در کلاینت، لینک ساب را آپدیت کنید (Update subscription) — همه کانفیگ‌ها خودکار عوض می‌شوند.</li>
       </ol>
-      <p class="sub">این الگو (IP تمیز + دامنه پشت CDN) فقط زمانی کامل و بی‌خطر است که دامنه‌تان روی Cloudflare پروکسی شده و به این سرویس وصل باشد؛ با دامنه پیش‌فرض پلتفرم، IP تمیز Cloudflare اعمال نکنید چون TLS برقرار نمی‌شود.</p>
+      <p class="sub">اعمال IP فقط با IPهایی امن است که گواهی دامنه را سرو می‌کنند: لبه‌های CDN همین دامنه (دکمه اسکن لبه‌ها)، رکورد A خود دامنه، یا IP تمیز Cloudflare وقتی دامنه اختصاصی پشت Worker است. اعمال IP، مسیر و DNS را عوض می‌کند ولی اگر فیلتر SNI فعال باشد، راه نجات «کانفیگ JSON با فرگمنت» است.</p>
     </div>
-    <div class="panel mt"><h3>مثل Railway از فیلترینگ عبور کنید — راهنمای کامل CDN</h3>
-      <p class="sub">راز Railway همین است: دامنه‌هایش پشت Cloudflare هستند؛ کلاینت به IPهای CF وصل می‌شود (قابل اسکن و جایگزینی با IP تمیز) و فیلترینگ نمی‌تواند کل Cloudflare را قفل کند. دامنه پیش‌فرض این سرویس مستقیم روی CDN پلتفرم است و یک IP ثابت دارد؛ با دامنه اختصاصی + Worker زیر، همان ساختار Railway برای این سرویس ساخته می‌شود و مقاومت فیلترینگ چند برابر می‌شود.</p>
+    <details class="panel mt" style="padding:14px 16px"><summary style="cursor:pointer;font-weight:700">گزینه پیشرفته: دامنه اختصاصی + Cloudflare Worker (اگر بعداً لازم شد)</summary>
+      <p class="sub" style="margin-top:10px">راز Railway همین است: دامنه‌هایش پشت Cloudflare هستند؛ کلاینت به IPهای CF وصل می‌شود و فیلترینگ نمی‌تواند کل Cloudflare را قفل کند. اگر روزی دامنه لوسیتی در اپراتور شما فیلتر شد و فرگمنت هم کمکی نکرد، با دامنه اختصاصی + Worker زیر، همان ساختار Railway برای این سرویس ساخته می‌شود.</p>
       <ol class="steps">
         <li><b>دامنه بخرید</b> — از ثبت‌کننده ایرانی (پرداخت ریالی) یا خارجی؛ حتی ارزان‌ترین پسوند مثل <bdi class="ltr">.xyz</bdi> کافی است.</li>
         <li><b>حساب رایگان Cloudflare</b> — در <bdi class="ltr">dash.cloudflare.com</b> حساب بسازید، دامنه را Add کنید و دو Nameserver داده‌شده را در ثبت‌کننده جایگزین کنید تا وضعیت Active شود.</li>
@@ -1899,7 +1912,7 @@ function viewIpScan() {
         <pre class="jprev ltr" id="wkCode" style="margin-top:10px;max-height:340px;overflow:auto;user-select:all"></pre>
       </div>
       <p class="sub">نکته‌ها: ۱) دامنه رایگان <bdi class="ltr">workers.dev</b> معمولاً در ایران فیلتر است — حتماً Custom domain بدهید. ۲) کانفیگ‌های WS و XHTTP از Cloudflare عبور می‌کنند؛ اگر کانفیگ HTTPUpgrade وصل نشد، آن را حذف کنید. ۳) چرا پروکسی نارنجی مستقیم روی دامنه اختصاصی Lucity کار نمی‌کند؟ چون Lucity باید CNAME را ببیند و پروکسی CF آن را مخفی می‌کند؛ Worker این محدودیت را دور می‌زند چون Lucity فقط دامنه خودش را می‌بیند. ۴) بعد از هر تغییر، لینک ساب را در کلاینت Update کنید.</p>
-    </div>`;
+    </details>`;
   const setStat = t => $('#scanStat').textContent = t;
   const renderWk = () => { $('#wkCode').textContent = workerCode(($('#wkHost').value || '').trim() || location.hostname); };
   $('#wkHost').addEventListener('input', renderWk);
@@ -1922,6 +1935,28 @@ function viewIpScan() {
       h.unshift({ t: Date.now(), ip: ok[0].ip, ms: ok[0].ms, note: `${ok.length} از ${results.length} سالم` });
       localStorage.setItem('ng_ipscan', JSON.stringify(h.slice(0, 5)));
     }
+  };
+  $('#scanBunny').onclick = async () => {
+    scanStop = false;
+    const rounds = Math.max(1, +$('#scanRounds').value), timeout = +$('#scanTimeout').value;
+    $('#scanBunny').disabled = true; $('#scanStart').disabled = true; $('#scanStopBtn').hidden = false;
+    setStat('سرور در حال راستی‌آزمایی لبه‌های CDN دامنه سرویس … (بار اول چند ثانیه طول می‌کشد)');
+    try {
+      const r = await api('bunnyedges', {});
+      const edges = r.edges || [];
+      window._bunnyEdges = edges; window._bunnyDomain = r.domain || '';
+      if (!edges.length) throw new Error('هیچ لبه معتبری برای این دامنه پیدا نشد (دامنه CDN bunny نیست)');
+      $('#scanBar').hidden = false; $('#scanBar b').style.width = '0%';
+      $('#ipRes').hidden = false; $('#ipRes').innerHTML = '';
+      setStat(`${edges.length} لبه معتبر پیدا شد — اسکن از مسیر خودتان روی پورت 443 …`);
+      const results = await runScan(edges, 443, rounds, timeout,
+        (p, rec) => {
+          $('#scanBar b').style.width = (p * 100).toFixed(1) + '%';
+          setStat(`اسکن‌شده: ${Math.round(p * edges.length)} از ${edges.length}` + (rec.ms !== null ? ` — آخرین: ${rec.ip} (${rec.ms} ms)` : ''));
+        }, () => {});
+      finishScan(results);
+    } catch (er) { setStat(''); toast(er.message, true); }
+    $('#scanBunny').disabled = false; $('#scanStart').disabled = false; $('#scanStopBtn').hidden = true;
   };
   $('#scanStart').onclick = async () => {
     scanStop = false;
@@ -1981,14 +2016,13 @@ function viewTuning() {
       <label class="chk"><input type="checkbox" id="tFrag" ${T.frag_on !== false ? 'checked' : ''}>فرگمنت فعال</label>
       <div class="g2" style="margin-top:8px">
         <div class="field"><label>حالت</label><select class="in ltr" id="tPk"><option value="tlshello" ${T.frag_packets !== '1-3' ? 'selected' : ''}>tlshello</option><option value="1-3" ${T.frag_packets === '1-3' ? 'selected' : ''}>1-3 (اسلایس جریان)</option></select></div>
-        <div class="field"><label>حداکثر تکه‌ها (maxSplit)</label><input class="in ltr" id="tMax" value="${esc(T.frag_maxsplit || '3-6')}"></div>
-        <div class="field"><label>اندازه تکه‌ها (بایت)</label><input class="in ltr" id="tLen" value="${esc(T.frag_lengths || '10-20')}"></div>
-        <div class="field"><label>فاصله بین تکه‌ها (میلی‌ثانیه)</label><input class="in ltr" id="tDel" value="${esc(T.frag_delays || '10-20')}"></div>
+        <div class="field"><label>اندازه تکه‌ها؛ length بایت)</label><input class="in ltr" id="tLen" value="${esc(T.frag_lengths || '10-20')}"></div>
+        <div class="field"><label>فاصله بین تکه‌ها؛ interval میلی‌ثانیه)</label><input class="in ltr" id="tDel" value="${esc(T.frag_delays || '10-20')}"></div>
       </div>
-      <label class="chk" style="margin-top:10px"><input type="checkbox" id="tNoise" ${T.noise_on ? 'checked' : ''}>نویز UDP (پیشرفته — قبل از دیتای واقعی بسته‌ی تصادفی می‌فرستد)</label>
+      <label class="chk" style="margin-top:10px"><input type="checkbox" id="tNoise" ${T.noise_on ? 'checked' : ''}>نویز TCP / sockopt.noises (پیشرفته — قبل از دیتای واقعی بسته‌ی تصادفی می‌فرستد)</label>
       <div class="g2" id="noiseBox" style="${T.noise_on ? '' : 'display:none'}">
-        <div class="field"><label>حجم نویز (بایت)</label><input class="in ltr" id="tNR" value="${esc(T.noise_rand || '1-64')}"></div>
-        <div class="field"><label>تاخیر نویز (ms)</label><input class="in ltr" id="tND" value="${esc(T.noise_delay || '10-20')}"></div>
+        <div class="field"><label>اندازه بسته‌ی نویز (packetSize بایت)</label><input class="in ltr" id="tNR" value="${esc(T.noise_rand || '1-64')}"></div>
+        <div class="field"><label>تاخیر نویز (delay میلی‌ثانیه)</label><input class="in ltr" id="tND" value="${esc(T.noise_delay || '10-20')}"></div>
       </div>
       <h3 style="margin-top:18px">اثر انگشت TLS (uTLS)</h3><p class="sub">دست‌دادن TLS شما شبیه کدام مرورگر به نظر برسد؟</p>
       <div class="field"><select class="in ltr" id="tFp">${FPSL.map(f => `<option ${f === (T.fp || 'chrome') ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select></div>
@@ -2006,24 +2040,24 @@ function viewTuning() {
     </form>
     <div class="panel mt"><h3>پیش‌نمایش بخش اعمال‌شده در کانفیگ JSON</h3>
       <div class="jprev" id="jPrev"></div>
-      <small style="display:block;margin-top:6px;color:var(--mu2)">لینک‌های ساب اثر انگشت و ALPN را می‌گیرند؛ FinalMask کامل و Cipher Suites در «کانفیگ JSON بهینه» (دکمه JSON کاربر) اعمال می‌شود. فرگمنت روی Reality اعمال نمی‌شود تا هندشیک آن دست‌نخورده بماند.</small></div>`;
+      <small style="display:block;margin-top:6px;color:var(--mu2)">لینک‌های ساب اثر انگشت و ALPN را می‌گیرند؛ فرگمنت TLS (sockopt.fragment)، نویز و Cipher Suites در «کانفیگ JSON بهینه» (دکمه JSON کاربر) اعمال می‌شوند. فرگمنت روی Reality اعمال نمی‌شود تا هندشیک آن دست‌نخورده بماند.</small></div>`;
   const profMap = {}; profs.forEach(p => profMap[p.key] = p);
   const collect = () => ({
     enabled: $('#tOn').checked, profile: selProf,
     fp: $('#tFp').value, cipher_suites: $('#tCS').value.trim(), alpn: $('#tAlpn').value,
     frag_on: $('#tFrag').checked, frag_packets: $('#tPk').value,
     frag_lengths: $('#tLen').value.trim(), frag_delays: $('#tDel').value.trim(),
-    frag_maxsplit: $('#tMax').value.trim(),
     noise_on: $('#tNoise').checked, noise_rand: $('#tNR').value.trim(), noise_delay: $('#tND').value.trim(),
   });
   const jprev = () => {
     const t = collect();
     const out = { streamSettings: { tlsSettings: { serverName: '<domain>', fingerprint: t.fp, alpn: ['http/1.1'] } } };
     if (t.cipher_suites) out.streamSettings.tlsSettings.cipherSuites = t.cipher_suites;
+    const so = out.streamSettings.sockopt = { tcpNoDelay: true, tcpFastOpen: true };
     if (t.enabled && t.frag_on)
-      out.streamSettings.finalmask = { tcp: [{ type: 'fragment', settings: { packets: t.frag_packets, lengths: [t.frag_lengths], delays: [t.frag_delays], maxSplit: t.frag_maxsplit } }] };
+      so.fragment = { packets: t.frag_packets, length: t.frag_lengths, interval: t.frag_delays };
     if (t.enabled && t.noise_on)
-      (out.streamSettings.finalmask = out.streamSettings.finalmask || {}).udp = [{ type: 'noise', settings: { reset: '30-60', noise: [{ rand: t.noise_rand, delay: t.noise_delay }] } }];
+      so.noises = [{ type: 'rand', packetSize: t.noise_rand, delay: t.noise_delay }];
     $('#jPrev').textContent = JSON.stringify(out, null, 2);
   };
   const markProf = () => $$('.pchip').forEach(c => c.classList.toggle('on', c.dataset.prof === selProf));
@@ -2034,7 +2068,7 @@ function viewTuning() {
     markProf(); jprev();
   });
   // editing any preset field switches to "custom" so nothing gets lost on save
-  ['tLen', 'tDel', 'tMax', 'tPk', 'tFp'].forEach(id => $('#' + id).addEventListener('input', () => {
+  ['tLen', 'tDel', 'tPk', 'tFp'].forEach(id => $('#' + id).addEventListener('input', () => {
     if (selProf !== 'custom') { selProf = 'custom'; markProf(); }
     jprev();
   }));

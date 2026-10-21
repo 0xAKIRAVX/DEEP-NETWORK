@@ -17,6 +17,7 @@ import re
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import threading
@@ -248,18 +249,19 @@ def tuning_get():
 
 
 def finalmask_json(t):
-    """Xray FinalMask block for the exported client config (TCP fragment layer)."""
+    """Anti-SNI-block settings for the exported client JSON config, using
+    Xray-core's REAL schema: sockopt.fragment (TLS ClientHello fragmentation -
+    the primary Iranian anti-SNI trick) and sockopt.noises. The previous build
+    wrote a made-up top-level 'finalmask' key that Xray silently ignored, so
+    fragmentation never actually reached the client."""
     if not t.get("enabled") or not t.get("frag_on"):
         return None
-    fm = {"tcp": [{"type": "fragment", "settings": {
-        "packets": t.get("frag_packets") or "tlshello",
-        "lengths": [t.get("frag_lengths") or "10-20"],
-        "delays": [t.get("frag_delays") or "10-20"],
-        "maxSplit": t.get("frag_maxsplit") or "3-6"}}]}
+    fm = {"fragment": {"packets": t.get("frag_packets") or "tlshello",
+                      "length": t.get("frag_lengths") or "10-20",
+                      "interval": t.get("frag_delays") or "10-20"}}
     if t.get("noise_on"):
-        fm["udp"] = [{"type": "noise", "settings": {
-            "reset": "30-60",
-            "noise": [{"rand": t.get("noise_rand") or "1-64", "delay": t.get("noise_delay") or "10-20"}]}}]
+        fm["noises"] = [{"type": "rand", "packetSize": t.get("noise_rand") or "1-64",
+                         "delay": t.get("noise_delay") or "10-20"}]
     return fm
 
 
@@ -1417,11 +1419,13 @@ def client_config_json(c, host=""):
                   # first request, keepalive keeps the tunnel through NAT windows
                   "sockopt": {"tcpNoDelay": True, "tcpFastOpen": True, "tcpKeepAliveIdle": 300},
                   **transport}
-        # FinalMask: fragments the TLS ClientHello so SNI-based DPI filtering
-        # misses it - the core Iranian anti-throttling trick, applied on top of
-        # the transport settings without touching the tunnel itself.
+        # TLS ClientHello fragmentation (Xray sockopt.fragment): splits the
+        # ClientHello across TCP segments so SNI-based DPI never sees the whole
+        # domain - the core Iranian anti-filtering trick. It must live INSIDE
+        # sockopt (the old top-level 'finalmask' key was ignored by Xray).
+        # Reality stays un-fragmented: its handshake must remain intact.
         if fm:
-            stream["finalmask"] = fm
+            stream["sockopt"].update(fm)
         return stream
 
     def vless_out(tag, port, stream, flow=None):
@@ -1762,6 +1766,66 @@ def scan_targets(targets, port=443, timeout=2.0, rounds=1):
     with ThreadPoolExecutor(max_workers=min(16, len(clean))) as ex:
         results = list(ex.map(probe, clean))
     return sorted(results, key=lambda r: (not r["ok"], r["ms"] or 1 << 30))
+
+
+# ─────────────── bunny CDN edge discovery (Lucity's own domain) ───────────────
+# lucity.app is fronted by bunny.net, and every bunny edge IP serves the
+# *.lucity.app certificate (SNI-routed) and forwards to the origin. So a client
+# can connect to ANY reachable bunny edge while the TLS identity stays on the
+# service domain - the exact "Railway clean-IP" experience without owning a
+# domain. The server VERIFIES each edge (full TLS handshake with
+# server_hostname=<our domain> + one HTTP request); the browser then measures
+# which verified edges are fast on the admin's own Iranian route.
+_BUNNY = {"list_t": 0.0, "ips": [], "ver_t": 0.0, "dom": "", "ok": []}
+
+
+def _bunny_ip_list(timeout=8.0):
+    now = time.time()
+    if _BUNNY["ips"] and now - _BUNNY["list_t"] < 300:
+        return _BUNNY["ips"]
+    with urllib.request.urlopen("https://api.bunny.net/system/edgeserverlist",
+                                timeout=timeout) as r:
+        data = json.loads(r.read().decode("utf-8", "ignore"))
+    ips = [x for x in data if isinstance(x, str) and _scan_target_valid(x)][:600]
+    _BUNNY.update(list_t=now, ips=ips)
+    return ips
+
+
+def _bunny_verify(ip, domain, timeout=2.5):
+    """True = this edge really serves our certificate (Python validates the
+    chain AND hostname via server_hostname) and the origin answers."""
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((ip, 443), timeout=timeout) as raw:
+            with ctx.wrap_socket(raw, server_hostname=domain) as tls:
+                tls.settimeout(timeout)
+                tls.sendall(("GET / HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\n"
+                             "Accept: */*\r\nConnection: close\r\n\r\n" % domain).encode())
+                line = tls.recv(128).decode("latin-1", "ignore")
+        if not line.startswith("HTTP/"):
+            return False
+        code = int(line.split(" ")[1])
+        return 100 <= code < 500
+    except Exception:
+        return False
+
+
+def bunny_edges_for(domain):
+    """Verified bunny.net edge IPs for THIS service's domain (6h cache)."""
+    domain = (domain or "").strip().split(":")[0]
+    if not domain or is_ip_literal(domain) or not HOST_RE.fullmatch(domain):
+        return [], False
+    now = time.time()
+    if _BUNNY["ok"] and _BUNNY["dom"] == domain and now - _BUNNY["ver_t"] < 6 * 3600:
+        return list(_BUNNY["ok"]), True
+    ips = _bunny_ip_list()
+    if not ips:
+        return [], False
+    with ThreadPoolExecutor(max_workers=64) as ex:
+        flags = list(ex.map(lambda i: _bunny_verify(i, domain), ips))
+    ok = [i for i, good in zip(ips, flags) if good]
+    _BUNNY.update(ver_t=now, dom=domain, ok=ok)
+    return ok, False
 
 
 # ───────────────────────── web panel ─────────────────────────
@@ -2358,6 +2422,22 @@ class H(BaseHTTPRequestHandler):
             return self.send_json(200, {"results": res, "from": "server", "count": len(res)},
                                   self.auth_headers())
 
+        if path == "/panel/api/bunnyedges":
+            # Verified bunny.net CDN edges for the service's OWN domain - the
+            # no-custom-domain clean-IP flow (lucity.app is bunny-fronted).
+            dom = (env("DOMAIN") or "").strip() or self.host()
+            if not dom or is_ip_literal(dom) or dom in ("127.0.0.1", "localhost", "::1"):
+                return self.send_json(400, {"error": "دامنه عمومی سرویس پیدا نشد — متغیر DOMAIN را روی دامنه لوسیتی ست کنید"},
+                                      self.auth_headers())
+            try:
+                edges, cached = bunny_edges_for(dom)
+            except Exception as e:
+                return self.send_json(502, {"error": f"دریافت لبه‌های CDN ممکن نشد: {e}"},
+                                      self.auth_headers())
+            return self.send_json(200, {"ok": True, "domain": dom, "edges": edges,
+                                        "verified": len(edges), "cached": cached},
+                                  self.auth_headers())
+
         self.send_bytes(404, "not found", "text/plain; charset=utf-8")
 
 
@@ -2400,8 +2480,8 @@ def boot_report():
         print(f"  sub        : ... and {len(clients) - 5} more (see panel)", flush=True)
     if dom:
         print(f"  DOMAIN     : {dom} - all links/subs are generated on this host.", flush=True)
-        print("               (bypass filtering the Railway way: put this host behind", flush=True)
-        print("                Cloudflare, then scan & apply a clean CF IP in the panel)", flush=True)
+        print("               (no custom domain needed: IP Scanner -> scan CDN edges", flush=True)
+        print("                of this domain; a custom domain + CF Worker also works)", flush=True)
     if DATA_DIR == "/tmp":
         print("  WARNING   : state is EPHEMERAL - /data is not writable.", flush=True)
         print("               Attach a volume at /data so users & links survive redeploys.", flush=True)
