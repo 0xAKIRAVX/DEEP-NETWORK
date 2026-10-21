@@ -2380,9 +2380,12 @@ def boot_report():
         is_auto = bool(state.get("pass_is_auto"))
         pw = state["admin_pass"]
         clients = [dict(c) for c in state["clients"]]
+    # When DOMAIN is set (e.g. a custom Cloudflare-fronted hostname) links are
+    # generated with it - print real URLs instead of the <your-domain> stub.
+    dom = (env("DOMAIN") or "").strip() or None
     print("─" * 62, flush=True)
     print(f"NullGate {PANEL_VERSION} is up", flush=True)
-    print("  panel     : https://<your-domain>/panel", flush=True)
+    print(f"  panel     : https://{dom or '<your-domain>'}/panel", flush=True)
     print(f"  username  : {user}", flush=True)
     if is_auto:
         print(f"  password  : {pw}", flush=True)
@@ -2392,9 +2395,13 @@ def boot_report():
     # persistent volume these change, and old links in clients start returning
     # 404. Printing them here gives the admin the fresh link without logging in.
     for c in clients[:5]:
-        print(f"  sub [{c['name'][:18]}]: https://<your-domain>/sub/{sub_token(c['id'])}", flush=True)
+        print(f"  sub [{c['name'][:18]}]: https://{dom or '<your-domain>'}/sub/{sub_token(c['id'])}", flush=True)
     if len(clients) > 5:
         print(f"  sub        : ... and {len(clients) - 5} more (see panel)", flush=True)
+    if dom:
+        print(f"  DOMAIN     : {dom} - all links/subs are generated on this host.", flush=True)
+        print("               (bypass filtering the Railway way: put this host behind", flush=True)
+        print("                Cloudflare, then scan & apply a clean CF IP in the panel)", flush=True)
     if DATA_DIR == "/tmp":
         print("  WARNING   : state is EPHEMERAL - /data is not writable.", flush=True)
         print("               Attach a volume at /data so users & links survive redeploys.", flush=True)

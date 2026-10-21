@@ -1785,7 +1785,7 @@ function applyCleanIp(ip) {
     } else if (res === false) {
       box.style.background = 'rgba(255,80,80,.08)';
       box.style.border = '1px solid rgba(255,80,80,.45)';
-      box.innerHTML = '⚠ هشدار مهم: دامنه <bdi class="ltr">' + esc(dom) + '</bdi> پشت Cloudflare <b>نیست</b>. Cloudflare فقط برای دامنه‌های خودش ترافیک را جلو می‌برد؛ با این IP، TLS روی این دامنه برقرار نمی‌شود و <b>کانفیگ‌ها بعد از اعمال وصل نمی‌شوند</b>.<br>راه‌حل: یک دامنه بخرید، در Cloudflare اضافه کنید (پروکسی نارنجی روشن) و رکورد آن را به همین دامنه سرویس وصل کنید؛ سپس دامنه خودتان را در این فیلد بگذارید.';
+      box.innerHTML = '⚠ هشدار مهم: دامنه <bdi class="ltr">' + esc(dom) + '</bdi> پشت Cloudflare <b>نیست</b>. Cloudflare فقط برای دامنه‌های خودش ترافیک را جلو می‌برد؛ با این IP، TLS روی این دامنه برقرار نمی‌شود و <b>کانفیگ‌ها بعد از اعمال وصل نمی‌شوند</b>.<br>راه‌حل: طبق «راهنمای کامل CDN» در همین صفحه عمل کنید — دامنه بخرید و در Cloudflare با یک Worker به همین سرویس وصل کنید؛ سپس دامنه خودتان را در این فیلد بگذارید.';
     } else {
       box.hidden = true;
     }
@@ -1801,6 +1801,38 @@ function applyCleanIp(ip) {
       viewIpScan();
     } catch (er) { toast(er.message, true); }
   };
+}
+
+function workerCode(backend) {
+  return `// NullGate CDN front — Cloudflare Worker
+// 1) Deploy this in Workers & Pages  2) attach a Custom Domain (e.g. vpn.yourdomain.com)
+// 3) set that host as the DOMAIN env var of the service
+const BACKEND = "${backend}"; // this service's platform domain
+
+export default {
+  async fetch(req) {
+    const u = new URL(req.url);
+    u.hostname = BACKEND;
+    if (req.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+      // vless-ws / vmess-ws / trojan-ws: real WS handshake
+      const up = await fetch(u, req);
+      if (up.webSocket) {
+        const [client, mine] = Object.values(new WebSocketPair());
+        mine.accept();
+        const pump = (a, b) => {
+          a.addEventListener("message", e => b.send(e.data));
+          a.addEventListener("close", () => { try { b.close(1000); } catch {} });
+          a.addEventListener("error", () => { try { b.close(1011); } catch {} });
+        };
+        pump(mine, up.webSocket);
+        pump(up.webSocket, mine);
+        return new Response(null, { status: 101, webSocket: client });
+      }
+      return up;
+    }
+    return fetch(u, req); // panel / sub / XHTTP
+  }
+};`;
 }
 
 function viewIpScan() {
@@ -1847,9 +1879,32 @@ function viewIpScan() {
         <li>بعد از اعمال، همه لینک‌ها و ساب‌ها به آن IP می‌روند و SNI/Host روی دامنه اصلی می‌ماند تا گواهی TLS مطابقت کند.</li>
         <li>در کلاینت، لینک ساب را آپدیت کنید (Update subscription) — همه کانفیگ‌ها خودکار عوض می‌شوند.</li>
       </ol>
-      <p class="sub">این الگو (IP تمیز + دامنه پشت CDN) زمانی کامل می‌شود که دامنه‌تان روی Cloudflare پروکسی شده و به این سرویس اشاره کند؛ برای دامنه پیش‌فرض پلتفرم هم IP تمیز معمولا کیفیت مسیر را بهتر می‌کند.</p>
+      <p class="sub">این الگو (IP تمیز + دامنه پشت CDN) فقط زمانی کامل و بی‌خطر است که دامنه‌تان روی Cloudflare پروکسی شده و به این سرویس وصل باشد؛ با دامنه پیش‌فرض پلتفرم، IP تمیز Cloudflare اعمال نکنید چون TLS برقرار نمی‌شود.</p>
+    </div>
+    <div class="panel mt"><h3>مثل Railway از فیلترینگ عبور کنید — راهنمای کامل CDN</h3>
+      <p class="sub">راز Railway همین است: دامنه‌هایش پشت Cloudflare هستند؛ کلاینت به IPهای CF وصل می‌شود (قابل اسکن و جایگزینی با IP تمیز) و فیلترینگ نمی‌تواند کل Cloudflare را قفل کند. دامنه پیش‌فرض این سرویس مستقیم روی CDN پلتفرم است و یک IP ثابت دارد؛ با دامنه اختصاصی + Worker زیر، همان ساختار Railway برای این سرویس ساخته می‌شود و مقاومت فیلترینگ چند برابر می‌شود.</p>
+      <ol class="steps">
+        <li><b>دامنه بخرید</b> — از ثبت‌کننده ایرانی (پرداخت ریالی) یا خارجی؛ حتی ارزان‌ترین پسوند مثل <bdi class="ltr">.xyz</bdi> کافی است.</li>
+        <li><b>حساب رایگان Cloudflare</b> — در <bdi class="ltr">dash.cloudflare.com</b> حساب بسازید، دامنه را Add کنید و دو Nameserver داده‌شده را در ثبت‌کننده جایگزین کنید تا وضعیت Active شود.</li>
+        <li><b>Worker بسازید</b> — در منوی <bdi class="ltr">Workers &amp; Pages</b> یک Worker جدید بسازید (اسم دلخواه)، کد زیر را جایگذاری کنید و Deploy بزنید.</li>
+        <li><b>دامنه را به Worker وصل کنید</b> — در تنظیمات Worker: <bdi class="ltr">Domains &amp; Routes</b> ← <bdi class="ltr">Add</bdi> ← <bdi class="ltr">Custom domain</bdi> ← مثلاً <bdi class="ltr">vpn.yourdomain.com</bdi>. رکورد DNS و گواهی TLS خودکار ساخته می‌شود.</li>
+        <li><b>متغیر DOMAIN را ست کنید</b> — در Lucity (تب Variables سرویس) متغیر <bdi class="ltr">DOMAIN</b> را با همان آدرس بسازید؛ از این پس همه لینک‌ها و ساب‌ها روی این دامنه ساخته می‌شوند.</li>
+        <li><b>اسکن و اعمال IP تمیز</b> — به همین صفحه برگردید، «شروع اسکن مرورگر» را بزنید و روی بهترین نتیجه «اعمال» را کلیک کنید؛ اتصال از IP تمیز Cloudflare می‌گذرد و SNI دامنه شماست — دقیقاً مثل Railway.</li>
+      </ol>
+      <div class="field"><label>کد آماده Worker — دامنه همین سرویس پیش‌فرض گذاشته شده</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="in ltr" id="wkHost" value="${esc(location.hostname)}" style="flex:1;min-width:220px">
+          <button class="btn ghost-gold" id="wkCopy">${ico('check')}کپی کد Worker</button>
+        </div>
+        <pre class="jprev ltr" id="wkCode" style="margin-top:10px;max-height:340px;overflow:auto;user-select:all"></pre>
+      </div>
+      <p class="sub">نکته‌ها: ۱) دامنه رایگان <bdi class="ltr">workers.dev</b> معمولاً در ایران فیلتر است — حتماً Custom domain بدهید. ۲) کانفیگ‌های WS و XHTTP از Cloudflare عبور می‌کنند؛ اگر کانفیگ HTTPUpgrade وصل نشد، آن را حذف کنید. ۳) چرا پروکسی نارنجی مستقیم روی دامنه اختصاصی Lucity کار نمی‌کند؟ چون Lucity باید CNAME را ببیند و پروکسی CF آن را مخفی می‌کند؛ Worker این محدودیت را دور می‌زند چون Lucity فقط دامنه خودش را می‌بیند. ۴) بعد از هر تغییر، لینک ساب را در کلاینت Update کنید.</p>
     </div>`;
   const setStat = t => $('#scanStat').textContent = t;
+  const renderWk = () => { $('#wkCode').textContent = workerCode(($('#wkHost').value || '').trim() || location.hostname); };
+  $('#wkHost').addEventListener('input', renderWk);
+  $('#wkCopy').onclick = () => copy($('#wkCode').textContent);
+  renderWk();
   const finishScan = results => {
     const ok = results.filter(r => r.ms !== null).sort((a, b) => a.ms - b.ms);
     $('#ipRes').hidden = false;
