@@ -837,7 +837,22 @@ GRPC_LOCATION = """    location ^~ @@PATH@@/ {
 """
 
 
+def ensure_public():
+    """Railpack deploys (Lucity) copy the repo as-is - the Dockerfile step that
+    placed index.html into public/ never runs, so nginx's `try_files
+    /index.html =404` would 404 the decoy site at /. Copy it into place once."""
+    try:
+        os.makedirs(PUBLIC_DIR, exist_ok=True)
+        dst = os.path.join(PUBLIC_DIR, "index.html")
+        src = os.path.join(APP_DIR, "index.html")
+        if not os.path.isfile(dst) and os.path.isfile(src):
+            shutil.copyfile(src, dst)
+    except OSError:
+        pass  # decoy page is cosmetic - never block startup on it
+
+
 def write_nginx():
+    ensure_public()
     for d in ("client", "proxy", "fastcgi", "uwsgi", "scgi"):
         os.makedirs(f"/tmp/nginx/{d}", exist_ok=True)
     locs = ""
