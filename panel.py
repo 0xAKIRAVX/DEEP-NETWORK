@@ -2343,6 +2343,7 @@ def boot_report():
         user = state["admin_user"]
         is_auto = bool(state.get("pass_is_auto"))
         pw = state["admin_pass"]
+        clients = [dict(c) for c in state["clients"]]
     print("─" * 62, flush=True)
     print(f"NullGate {PANEL_VERSION} is up", flush=True)
     print("  panel     : https://<your-domain>/panel", flush=True)
@@ -2351,6 +2352,13 @@ def boot_report():
         print(f"  password  : {pw}", flush=True)
         print("               ↳ auto-generated (no ADMIN_PASSWORD variable was set);", flush=True)
         print("                 change it any time in Settings, or find it here again.", flush=True)
+    # Sub URLs are derived from the per-user token - after a redeploy WITHOUT a
+    # persistent volume these change, and old links in clients start returning
+    # 404. Printing them here gives the admin the fresh link without logging in.
+    for c in clients[:5]:
+        print(f"  sub [{c['name'][:18]}]: https://<your-domain>/sub/{sub_token(c['id'])}", flush=True)
+    if len(clients) > 5:
+        print(f"  sub        : ... and {len(clients) - 5} more (see panel)", flush=True)
     if DATA_DIR == "/tmp":
         print("  WARNING   : state is EPHEMERAL - /data is not writable.", flush=True)
         print("               Attach a volume at /data so users & links survive redeploys.", flush=True)
