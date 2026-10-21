@@ -783,6 +783,9 @@ http {
   uwsgi_temp_path /tmp/nginx/uwsgi;
   scgi_temp_path /tmp/nginx/scgi;
   map $http_upgrade $connection_upgrade { default upgrade; "" close; }
+  # Pass an edge-provided X-Forwarded-Host through when present, else the plain
+  # Host header - the panel backend derives every link address from it (host()).
+  map $http_x_forwarded_host $panel_xfh { "" $http_host; default $http_x_forwarded_host; }
 
   server {
     listen @@PORT@@ default_server;
@@ -795,8 +798,30 @@ http {
     proxy_set_header X-Real-IP $remote_addr;
 
 @@LOCATIONS@@
-    location ^~ /panel { proxy_pass http://127.0.0.1:@@PANEL@@; proxy_set_header Connection ""; }
-    location ^~ /sub/  { proxy_pass http://127.0.0.1:@@PANEL@@; proxy_set_header Connection ""; }
+    # nginx rule: a location that declares ANY proxy_set_header of its own (e.g.
+    # Connection "") inherits NONE from the server block above. The backend used
+    # to see Host: 127.0.0.1:PANEL here and stamped 127.0.0.1 into every generated
+    # config link - so both locations repeat the full header set explicitly.
+    # X-Forwarded-Proto uses $http_x_forwarded_proto: absent upstream, nginx omits
+    # the header and the backend defaults to https (Lucity always serves https).
+    location ^~ /panel {
+      proxy_pass http://127.0.0.1:@@PANEL@@;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $panel_xfh;
+      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header Connection "";
+    }
+    location ^~ /sub/ {
+      proxy_pass http://127.0.0.1:@@PANEL@@;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $panel_xfh;
+      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header Connection "";
+    }
     location / {
       root @@PUBLIC@@;
       try_files /index.html =404;
@@ -1749,6 +1774,9 @@ SECURITY_HEADERS = {
 }
 
 
+_warned_bad_host = False  # one-shot diagnostic for loopback host() results
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "nginx"
     sys_version = ""
@@ -1781,8 +1809,16 @@ class H(BaseHTTPRequestHandler):
             return {}
 
     def host(self):
+        global _warned_bad_host
         h = env("DOMAIN") or self.headers.get("X-Forwarded-Host") or self.headers.get("Host", "")
-        return h.split(",")[0].split(":")[0].strip()
+        host = h.split(",")[0].split(":")[0].strip()
+        if not _warned_bad_host and host in ("", "127.0.0.1", "localhost", "::1"):
+            _warned_bad_host = True
+            print(f"[host] WARNING: request host resolved to '{host or '(empty)'}' - links "
+                  f"will carry it. Set the DOMAIN env var to the public domain, or fix "
+                  f"Host/X-Forwarded-Host on the reverse proxy in front of the panel.",
+                  flush=True)
+        return host
 
     def client_ip(self):
         xr = self.headers.get("X-Real-IP")
