@@ -370,6 +370,10 @@ func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]str
         sem := make(chan struct{}, 16)
         var wg sync.WaitGroup
         var mu sync.Mutex
+        rank := map[string]int{} // keep tier order (near-Iran first) in the reply
+        for i, ip := range alive {
+                rank[ip] = i
+        }
         for _, ip := range alive {
                 wg.Add(1)
                 go func(ip string) {
@@ -384,6 +388,14 @@ func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]str
                 }(ip)
         }
         wg.Wait()
+        sort2d := func(a []string) { // insertion-stable by pre-assigned rank
+                for i := 1; i < len(a); i++ {
+                        for j := i; j > 0 && rank[a[j-1]] > rank[a[j]]; j-- {
+                                a[j-1], a[j] = a[j], a[j-1]
+                        }
+                }
+        }
+        sort2d(verified)
 
         geo = bunny.geoBatch(verified)
         bunny.mu.Lock()
