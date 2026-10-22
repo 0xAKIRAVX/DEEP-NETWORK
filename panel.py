@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 START = time.time()
-PANEL_VERSION = "2.8.0"
+PANEL_VERSION = "2.8.1"
 
 # Protocol keys: built-in inbounds + the Reality TCP link. Each can
 # be turned off globally (Settings) or per-user (empty override = follow globals).
