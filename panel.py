@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 START = time.time()
-PANEL_VERSION = "2.7.0"
+PANEL_VERSION = "2.8.0"
 
 # Protocol keys: built-in inbounds + the Reality TCP link. Each can
 # be turned off globally (Settings) or per-user (empty override = follow globals).
@@ -1727,11 +1727,11 @@ def traffic_30d():
 
 class Sampler(threading.Thread):
     daemon = True
-    INTERVAL = 2.0
+    INTERVAL = 1.0          # 1s resolution -> the live wave chart moves on every real sample
 
     def __init__(self):
         super().__init__()
-        self.hist = collections.deque(maxlen=90)
+        self.hist = collections.deque(maxlen=150)   # 150s rolling window of real measurements
         self.latest = {}
         self.prev = None          # (time, cpu counter, rx, tx)
         self.cores = os.cpu_count() or 1
@@ -1777,6 +1777,34 @@ class Sampler(threading.Thread):
 
 sampler = Sampler()
 
+# server geo cache (real public-IP location; see server_geo)
+_GEO = None
+_GEO_T = 0.0
+
+
+def server_geo():
+    """Real geo (lat/lon/city/country) of THIS server's public IP via ip-api.com.
+    Cached 24h; failure-tolerant (returns None) so the panel never blocks on it.
+    Used by the dashboard globe + location cards — real data, not mockups."""
+    global _GEO_T, _GEO
+    now = time.time()
+    if _GEO is not None and now - _GEO_T < 24 * 3600:
+        return _GEO
+    try:
+        req = urllib.request.Request(
+            "http://ip-api.com/json?fields=status,query,country,countryCode,city,lat,lon",
+            headers={"User-Agent": "NullGate-Edge/2.8"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            d = json.loads(r.read().decode() or "{}")
+        if d.get("status") == "success" and isinstance(d.get("lat"), (int, float)):
+            _GEO = {"ip": d.get("query"), "country": d.get("country"), "cc": d.get("countryCode"),
+                    "city": d.get("city"), "lat": round(float(d["lat"]), 3), "lon": round(float(d["lon"]), 3)}
+            _GEO_T = now
+            return _GEO
+    except Exception:
+        pass
+    return _GEO  # last known, or None
+
 
 def stats_payload():
     return {
@@ -1790,6 +1818,7 @@ def stats_payload():
         "cpu_model": cpu_model(),
         "version": PANEL_VERSION,
         "traffic30": traffic_30d(),
+        "geo": server_geo(),
     }
 
 
@@ -2620,6 +2649,7 @@ def main():
     sampler.start()
     threading.Thread(target=watchdog, daemon=True).start()
     threading.Thread(target=usage_loop, daemon=True).start()
+    threading.Thread(target=server_geo, daemon=True).start()  # warm the geo cache off-request
     boot_report()
     ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), H).serve_forever()
 

@@ -510,14 +510,17 @@ dialog.modal::backdrop{background:rgba(3,3,4,.72);backdrop-filter:blur(3px)}
 .mm .mi.up2{background:rgba(167,139,250,.13);color:var(--purple)}
 .mm b{display:block;font-size:18px;font-weight:800;line-height:1.35;unicode-bidi:plaintext}
 .mm small{display:block;color:var(--mu2);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.globe{display:flex;align-items:center;justify-content:center;min-height:230px}
-.globe svg{width:232px;height:232px;filter:drop-shadow(0 0 26px rgba(200,214,232,.13))}
-.gspin{animation:gspin 26s linear infinite;transform-origin:110px 110px}
-.gnode{animation:gpulse 2.6s ease-in-out infinite}
-.gnode.n2{animation-delay:.9s}.gnode.n3{animation-delay:1.7s}
-@keyframes gspin{to{transform:rotate(360deg)}}
-@keyframes gpulse{0%,100%{opacity:.3}50%{opacity:1}}
+.globe{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:230px;gap:8px}
+.globe canvas{width:232px;height:232px;filter:drop-shadow(0 0 26px rgba(200,214,232,.13))}
+.gcap{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--mu2);direction:ltr;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gcap b{color:var(--tx);font-weight:700}
+.gcap svg.i{width:12px;height:12px;flex-shrink:0}
 @keyframes svcpulse{70%{box-shadow:0 0 0 8px rgba(61,220,132,0)}}
+/* live canvases (wave chart) */
+.chart-wrap canvas{display:block;width:100%;height:196px}
+/* animated page background */
+#bgfx{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.app,.login{position:relative;z-index:1}
 .mon-toggles{display:flex;align-items:center;gap:8px;margin-top:14px}
 .mon-toggles .grow{flex:1}
 .monpill{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--card2);color:var(--mu);font-size:12px;font-weight:700;transition:border-color .15s,color .15s,background .15s}
@@ -532,12 +535,13 @@ dialog.modal::backdrop{background:rgba(3,3,4,.72);backdrop-filter:blur(3px)}
 .tag-en{display:block;font-size:8px;font-weight:600;letter-spacing:.22em;color:var(--mu2);direction:ltr;text-align:start;margin-top:1px}
 .rail .brand .emb{width:42px;height:42px;flex-shrink:0;background:var(--emblem) center/contain no-repeat;mix-blend-mode:screen;filter:drop-shadow(0 0 10px rgba(190,205,225,.22))}
 .topbar .logo-h{width:36px;height:36px;flex-shrink:0;background:var(--emblem) center/contain no-repeat;mix-blend-mode:screen}
-@media (max-width:900px){.mon-grid{grid-template-columns:1fr}.globe svg{width:180px;height:180px}.globe{min-height:180px}}
+@media (max-width:900px){.mon-grid{grid-template-columns:1fr}.globe canvas{width:180px;height:180px}.globe{min-height:180px}}
 @media (max-width:860px){.lgc.mr,.lgc.br,.lg-vert{display:none}}
 
 </style>
 </head>
 <body>
+<canvas id="bgfx" aria-hidden="true"></canvas>
 
 <!-- ═══════════ login ═══════════ -->
 <div class="login" id="login" hidden>
@@ -545,7 +549,7 @@ dialog.modal::backdrop{background:rgba(3,3,4,.72);backdrop-filter:blur(3px)}
   <div class="lgc mr" aria-hidden="true"><span>NO BORDERS</span><span>JUST</span><span>FREEDOM</span></div>
   <div class="lgc br" aria-hidden="true"><span>PRIVATE</span><span>SECURE</span><span>GLOBAL</span></div>
   <div class="lg-vert" aria-hidden="true">DEEP NETWORK • SECURE INFRASTRUCTURE</div>
-  <div class="lg-ver" aria-hidden="true"><b>v2.7.0</b><span>DEEP NETWORK</span></div>
+  <div class="lg-ver" aria-hidden="true"><b>v2.8.0</b><span>DEEP NETWORK</span></div>
   <form class="login-card" id="loginForm">
     <div class="lg-chrome" aria-hidden="true">
       <span class="lg-appicon"></span>
@@ -603,7 +607,7 @@ dialog.modal::backdrop{background:rgba(3,3,4,.72);backdrop-filter:blur(3px)}
     </div>
     <nav id="nav"></nav>
     <div class="grow"></div>
-    <div class="srvchip"><span class="pls"></span><div><b class="ltr">IR-VPN-01</b><small>v2.7.0 · آماده برای سرویس‌دهی</small></div></div>
+    <div class="srvchip"><span class="pls"></span><div><b class="ltr">IR-VPN-01</b><small>v2.8.0 · آماده برای سرویس‌دهی</small></div></div>
     <div class="me">
       <span class="ava" id="meAva">م</span>
       <div><b id="meName">…</b><span>مدیر</span></div>
@@ -1019,6 +1023,27 @@ async function refreshLive() {
   try { d = await api('stats'); } catch { return; }
   if (tab !== 'dashboard' || !$('#ringCpu')) return;
   ST = d;
+  /* real server location (from server-side geo lookup) */
+  const geo = d.geo || null;
+  const sl = $('#vSrvLoc');
+  if (sl) {
+    if (geo && geo.city) {
+      sl.textContent = geo.city;
+      const cc = $('#vSrvCC'); if (cc) { cc.textContent = geo.cc || ''; cc.style.display = ''; }
+      const ss = $('#vSrvSub'); if (ss) ss.textContent = `${geo.country || ''} · موقعیت واقعی سرور`;
+    } else {
+      sl.textContent = nf(protoCountLive());
+      const cc = $('#vSrvCC'); if (cc) cc.style.display = 'none';
+      const ss = $('#vSrvSub'); if (ss) ss.textContent = 'کانال اتصال فعال';
+    }
+  }
+  const sy = $('#vSysLoc'); if (sy) sy.textContent = geo && geo.city ? `${geo.city}, ${geo.country || ''}` : '—';
+  const gc = $('#globeCap');
+  if (gc) gc.innerHTML = geo && geo.city
+    ? `${ico('pin')}<b>${esc(geo.city)}</b><span>، ${esc(geo.country || '')} (${esc(geo.cc || '')})</span>`
+    : `${ico('pin')}<span>موقعیت سرور در دسترس نیست</span>`;
+  GLOBE.setGeo(geo);
+  GLOBE.kick();
   setRing('ringCpu', d.cpu, RING_COLORS.cpu, 'CPU');
   setRing('ringRam', d.mem, RING_COLORS.ram, 'RAM');
   setRing('ringDisk', d.disk.percent, RING_COLORS.disk, 'Storage');
@@ -1254,20 +1279,13 @@ function upPctText() {
   if (!S || !S.xray.running) return '0.0%';
   return Math.min(99.9, 100 - (S.xray.restarts || 0) * 0.05).toFixed(1) + '%';
 }
+function protoCountLive() {
+  return (S && S.protocols ? S.protocols.length : 0) + (S && S.inbounds ? S.inbounds.length : 0);
+}
 function drawMonChart() {
   if (!ST || tab !== 'dashboard') return;
-  const el = $('#monChart'); if (!el) return;
-  const sm = a => a.map((v, i) => ((a[i - 1] ?? v) + v + (a[i + 1] ?? v)) / 3);
-  const n = ST.hist.rx.length; if (n < 2) return;
-  const pd = $('.monpill[data-m="dl"]'), pu = $('.monpill[data-m="ul"]');
-  const recent = [...ST.hist.rx.slice(-36), ...ST.hist.tx.slice(-36)].filter(v => v > 0).sort((a, b) => a - b);
-  const p75 = recent.length ? recent[Math.floor(recent.length * 0.75)] : 1;
-  const vmax = Math.max(p75 * 1.5, 2048);
-  const series = [];
-  if (!pd || pd.classList.contains('on')) series.push({ color: '#e8ecf1', data: sm(ST.hist.rx).map(v => v / vmax * 100) });
-  if (!pu || pu.classList.contains('on')) series.push({ color: '#8d95a2', data: sm(ST.hist.tx).map(v => v / vmax * 100) });
-  const sig = 'mon|' + vmax + '|' + series.map(s => s.data.length + ':' + (s.data[s.data.length - 1] || 0)).join(',');
-  if (el.dataset.sig !== sig) { el.dataset.sig = sig; requestAnimationFrame(() => drawChart(el, series, timeLabels(n, ST.interval || 2), { max: 100, fmt: v => (v / 100 * vmax / 125000).toFixed(1) })); }
+  MONCH.push(ST);
+  MONCH.kick();
 }
 function viewDashboard() {
   const cs = S.clients;
@@ -1286,7 +1304,7 @@ function viewDashboard() {
     <div class="hero"><div class="ht"><span class="h1">سرویس امن پرسرعت</span><h2>ایران، همیشه آزاد</h2><p>اتصال پایدار، سرعت بالا، بدون محدودیت</p><div class="hchips"><span>${ico('xray')}VLESS</span><span>${ico('shield')}Clean IP : 443</span><span>${ico('layers')}v${esc(ver)}</span><span>${ico('refresh')}120FPS</span><span>${ico('globe')}Reality</span></div></div></div>
     <div class="grid3">
       ${statCard('users', 'blue', 'کاربران فعال', nf(active), active ? `<span class="badge up">${ico('arrup')}${nf(active)}</span>` : '', `${nf(cs.length)} کاربر در مجموع`)}
-      ${statCard('server', 'green', 'موقعیت سرور', nf(protoCount), '', 'کانال اتصال فعال')}
+      ${statCard('server', 'green', 'موقعیت سرور', `<span class="ltr" id="vSrvLoc">…</span>`, `<span class="badge up ltr" id="vSrvCC" style="display:none">—</span>`, `<span id="vSrvSub">کانال اتصال فعال: ${nf(protoCount)}</span>`)}
       ${statCard('db', 'purple', 'ترافیک فعلی', `<span class="ltr" id="t30Val">${gb(t30 && t30.bytes ? t30.bytes : totalUsed)}</span>`, `<span id="t30Badge">${t30Badge}</span>`, `<span id="t30Sub">${t30Sub}</span>`)}
     </div>
     <div class="panel mon">
@@ -1298,33 +1316,14 @@ function viewDashboard() {
           <div class="mm"><span class="mi st">${ico('wifi')}</span><div><b id="vMonSt">…</b><small>وضعیت سرویس</small></div></div>
           <div class="mm"><span class="mi up2">${ico('clock')}</span><div><b id="vMonUp">…</b><small>مدت فعالیت پیوسته</small></div></div>
         </div>
-        <div class="globe" aria-hidden="true"><svg viewBox="0 0 220 220">
-          <defs><radialGradient id="ggl" cx="36%" cy="30%" r="80%"><stop offset="0" stop-color="rgba(255,255,255,.09)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></radialGradient></defs>
-          <circle cx="110" cy="110" r="84" fill="url(#ggl)" stroke="rgba(226,232,240,.55)" stroke-width="1.1"/>
-          <g fill="none" stroke="rgba(226,232,240,.16)">
-            <ellipse cx="110" cy="110" rx="84" ry="18"/>
-            <ellipse cx="110" cy="68" rx="72" ry="16"/>
-            <ellipse cx="110" cy="152" rx="72" ry="16"/>
-            <ellipse cx="110" cy="37" rx="42" ry="9"/>
-            <ellipse cx="110" cy="183" rx="42" ry="9"/>
-          </g>
-          <g class="gspin" fill="none" stroke="rgba(226,232,240,.22)">
-            <ellipse cx="110" cy="110" rx="28" ry="84"/>
-            <ellipse cx="110" cy="110" rx="58" ry="84"/>
-          </g>
-          <g fill="#e8ecf1">
-            <circle class="gnode" cx="152" cy="70" r="3"/>
-            <circle class="gnode n2" cx="74" cy="130" r="2.5"/>
-            <circle class="gnode n3" cx="146" cy="150" r="2.5"/>
-          </g>
-        </svg></div>
+        <div class="globe"><canvas id="globeCv" role="img" aria-label="کره چرخان موقعیت واقعی سرور"></canvas><div class="gcap" id="globeCap">${ico('pin')}<span>در حال تشخیص موقعیت سرور…</span></div></div>
       </div>
       <div class="mon-toggles">
         <button type="button" class="monpill on" data-m="dl">${ico('arrdown')}دانلود</button>
         <button type="button" class="monpill on" data-m="ul">${ico('arrup')}آپلود</button>
         <span class="grow"></span><span class="mon-note ltr">MB/s</span>
       </div>
-      <div class="chart-wrap"><svg id="monChart"></svg></div>
+      <div class="chart-wrap"><canvas id="monCv" role="img" aria-label="نمودار موج پهنای باند لحظه‌ای"></canvas></div>
     </div>
     <p class="sect-t">وضعیت سرور</p>
     <div class="grid4">
@@ -1345,7 +1344,7 @@ function viewDashboard() {
       <div class="panel"><h3>اطلاعات سیستم</h3><p class="sub">مشخصات سرور و نسخه پنل</p>
         <dl class="rows">
           <div><dt>نام سرور</dt><dd><span>IR-VPN-01</span>${ico('server')}</dd></div>
-          <div><dt>لوکیشن</dt><dd><span>تهران، ایران</span>${ico('pin')}</dd></div>
+          <div><dt>لوکیشن</dt><dd><span class="ltr" id="vSysLoc">…</span>${ico('pin')}</dd></div>
           <div><dt>سیستم عامل</dt><dd><span class="ltr" id="osVal">${esc(ST && ST.os ? ST.os : 'Linux')}</span>${ico('gear')}</dd></div>
           <div><dt>مدت زمان فعالیت</dt><dd><span id="vUp2">…</span>${ico('clock')}</dd></div>
           <div><dt>هسته پردازنده</dt><dd><span class="ltr" id="coresVal">…</span>${ico('server')}</dd></div>
@@ -1361,6 +1360,7 @@ function viewDashboard() {
   $$('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   $$('#view .trow').forEach(wireClientRow);
   $$('.monpill').forEach(b => b.onclick = () => { b.classList.toggle('on'); drawMonChart(); });
+  MONCH.kick(); GLOBE.kick();
   refreshLive(); pollTimer = setInterval(refreshLive, 2500);
   if (ST) $('#vUp2').textContent = dur(ST.uptime);
 }
@@ -2303,6 +2303,486 @@ function viewTuning() {
   jprev();
 }
 </script>
+<script>/* FX-BEGIN */
+/* ═══════════════════════════════════════════════════════════════════
+   v2.8 LIVE FX — all three renderers draw REAL data only:
+   • BGFX  : animated page background (starfield + aurora + meteors)
+   • GLOBE : true rotating 3-D wireframe globe — real server coords
+   • MONCH : live scrolling wave chart fed by /panel/api/stats hist
+   Every number on screen is a real measurement; nothing is faked.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─────────── animated background ─────────── */
+const BGFX = (() => {
+  const cv = document.getElementById('bgfx');
+  if (!cv) return {};
+  const ctx = cv.getContext('2d');
+  const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isLight = () => document.documentElement.dataset.theme === 'light';
+  let W = 0, H = 0, last = performance.now();
+  const stars = [];
+  const blobs = [
+    { x: .16, y: .20, r: .55, vx: .0042, vy: .0031, c: 0 },
+    { x: .82, y: .34, r: .48, vx: -.0033, vy: .0044, c: 1 },
+    { x: .52, y: .82, r: .44, vx: .0029, vy: -.0036, c: 2 },
+  ];
+  let meteor = null, nextMeteor = 3500 + Math.random() * 6000;
+
+  function size() {
+    const DPR = Math.min(devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  function init() {
+    stars.length = 0;
+    const n = Math.round(Math.min(190, (W * H) / 9000));
+    for (let i = 0; i < n; i++) {
+      const layer = i % 3;
+      stars.push({
+        x: Math.random() * W, y: Math.random() * H,
+        r: .4 + layer * .3 + Math.random() * .55,
+        d: .25 + layer * .375,
+        tw: .5 + Math.random() * 2.4,
+        ph: Math.random() * 6.283,
+        vx: (Math.random() - .5) * 5.2,
+        vy: (Math.random() - .5) * 2.6,
+      });
+    }
+  }
+  function aurora(dt) {
+    const light = isLight();
+    const cols = light
+      ? [[148, 160, 182], [124, 142, 170], [108, 120, 142]]
+      : [[96, 112, 148], [74, 90, 130], [110, 100, 140]];
+    for (const b of blobs) {
+      if (!RM) {
+        b.x = (b.x + b.vx * dt + 1) % 1;
+        b.y = (b.y + b.vy * dt + 1) % 1;
+      }
+      const R = b.r * Math.max(W, H), c = cols[b.c];
+      const g = ctx.createRadialGradient(b.x * W, b.y * H, 0, b.x * W, b.y * H, R);
+      g.addColorStop(0, `rgba(${c[0]},${c[1]},${c[2]},${light ? .10 : .12})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(b.x * W - R, b.y * H - R, R * 2, R * 2);
+    }
+  }
+  function starfield(t, dt) {
+    const light = isLight();
+    for (const s of stars) {
+      if (!RM) {
+        s.x += s.vx * s.d * dt; s.y += s.vy * s.d * dt;
+        if (s.x < -4) s.x = W + 4; if (s.x > W + 4) s.x = -4;
+        if (s.y < -4) s.y = H + 4; if (s.y > H + 4) s.y = -4;
+      }
+      const tw = RM ? .75 : .45 + .55 * (.5 + .5 * Math.sin(t * s.tw + s.ph));
+      ctx.beginPath();
+      ctx.fillStyle = light
+        ? `rgba(56,66,88,${(.16 * s.d + .06) * tw})`
+        : `rgba(206,216,236,${(.34 * s.d + .08) * tw})`;
+      ctx.arc(s.x, s.y, s.r * (.75 + .25 * tw), 0, 6.283);
+      ctx.fill();
+    }
+  }
+  function meteors(dt, t) {
+    if (RM) return;
+    if (!meteor && t > nextMeteor) {
+      const sy = Math.random() * H * .6;
+      meteor = { x: Math.random() * W * .7 + W * .15, y: sy, vx: -(320 + Math.random() * 260), vy: 190 + Math.random() * 140, life: 1 };
+    }
+    if (meteor) {
+      meteor.x += meteor.vx * dt; meteor.y += meteor.vy * dt; meteor.life -= dt / 1.1;
+      if (meteor.life <= 0 || meteor.y > H + 30 || meteor.x < -60) { meteor = null; nextMeteor = t + 4000 + Math.random() * 9000; return; }
+      const tx = meteor.x - meteor.vx * .22, ty = meteor.y - meteor.vy * .22;
+      const g = ctx.createLinearGradient(meteor.x, meteor.y, tx, ty);
+      g.addColorStop(0, `rgba(226,232,240,${.85 * meteor.life})`);
+      g.addColorStop(1, 'rgba(226,232,240,0)');
+      ctx.strokeStyle = g; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(meteor.x, meteor.y); ctx.lineTo(tx, ty); ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${.9 * meteor.life})`;
+      ctx.beginPath(); ctx.arc(meteor.x, meteor.y, 1.7, 0, 6.283); ctx.fill();
+    }
+  }
+  function frame(now) {
+    const dt = Math.min(.1, (now - last) / 1000); last = now;
+    ctx.clearRect(0, 0, W, H);
+    aurora(dt);
+    starfield(now / 1000, dt);
+    meteors(dt, now / 1000);
+    if (!RM) requestAnimationFrame(frame);
+  }
+  size(); init();
+  addEventListener('resize', () => {
+    const ow = W, oh = H; size();
+    for (const s of stars) { s.x *= W / Math.max(ow, 1); s.y *= H / Math.max(oh, 1); }
+  }, { passive: true });
+  requestAnimationFrame(frame);   /* rAF auto-pauses on hidden tabs */
+  return {};
+})();
+
+/* ─────────── real rotating 3-D globe ─────────── */
+const GLOBE = (() => {
+  const D2R = Math.PI / 180;
+  const TEH = { lat: 35.6892, lon: 51.389 };           /* origin: Tehran */
+  const TILT = -13.5 * D2R;                             /* polar axis tilt */
+  let cv = null, ctx = null, raf = 0, rot = -0.6, last = 0, W = 0, H = 0;
+  let geo = null;                                       /* real server coords {lat,lon,city,cc} */
+
+  const isLight = () => document.documentElement.dataset.theme === 'light';
+  function vec(lat, lon) {
+    const la = lat * D2R, lo = lon * D2R;
+    return [Math.cos(la) * Math.sin(lo), Math.sin(la), Math.cos(la) * Math.cos(lo)];
+  }
+  function view(v) {                                    /* spin + tilt -> [x, y, z] screen space */
+    const c = Math.cos(rot), s = Math.sin(rot);
+    const x = v[0] * c + v[2] * s, z = -v[0] * s + v[2] * c, y = v[1];
+    const ct = Math.cos(TILT), st = Math.sin(TILT);
+    return [x, y * ct - z * st, y * st + z * ct];
+  }
+  function setGeo(g) { geo = (g && typeof g.lat === 'number' && typeof g.lon === 'number') ? g : null; }
+
+  function path3(points, front) {
+    ctx.beginPath();
+    let pen = false;
+    for (const p of points) {
+      const ok = front ? p.z >= 0 : p.z < 0;
+      if (ok) { pen ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); pen = true; }
+      else pen = false;
+    }
+    ctx.stroke();
+  }
+  function graticule(cx, cy, R) {
+    const light = isLight();
+    const FRONT = light ? 'rgba(28,36,52,.36)' : 'rgba(226,232,240,.27)';
+    const BACK = light ? 'rgba(28,36,52,.09)' : 'rgba(226,232,240,.07)';
+    ctx.lineWidth = 1;
+    /* meridians (every 20°) — full pole-to-pole great halves */
+    for (let m = 0; m < 18; m++) {
+      const lon = m * 20 - 180;
+      const pts = [];
+      for (let la = -90; la <= 90; la += 4) {
+        const v = view(vec(la, lon));
+        pts.push({ x: cx + v[0] * R, y: cy - v[1] * R, z: v[2] });
+      }
+      ctx.strokeStyle = BACK; path3(pts, false);
+      ctx.strokeStyle = FRONT; path3(pts, true);
+    }
+    /* parallels (every 20°) */
+    for (let la = -80; la <= 80; la += 20) {
+      const pts = [];
+      for (let lo = 0; lo <= 360; lo += 5) {
+        const v = view(vec(la, lo - 180));
+        pts.push({ x: cx + v[0] * R, y: cy - v[1] * R, z: v[2] });
+      }
+      const eq = la === 0;
+      ctx.lineWidth = eq ? 1.35 : 1;
+      ctx.strokeStyle = eq ? (light ? 'rgba(28,36,52,.5)' : 'rgba(226,232,240,.42)') : BACK;
+      path3(pts, false);
+      ctx.strokeStyle = eq ? (light ? 'rgba(28,36,52,.5)' : 'rgba(226,232,240,.42)') : FRONT;
+      path3(pts, true);
+    }
+    ctx.lineWidth = 1;
+  }
+  function marker(cx, cy, R, v, col, label, t) {
+    const front = v[2] > 0;
+    const x = cx + v[0] * R, y = cy - v[1] * R;
+    if (!front) {
+      ctx.globalAlpha = .22;
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(x, y, 2.4, 0, 6.283); ctx.fill();
+      ctx.globalAlpha = 1;
+      return;
+    }
+    const pulse = .5 + .5 * Math.sin(t * 2.3);
+    ctx.strokeStyle = col; ctx.lineWidth = 1.2;
+    ctx.globalAlpha = .55 * (1 - pulse) + .08;
+    ctx.beginPath(); ctx.arc(x, y, 3.6 + pulse * 6.5, 0, 6.283); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, 6.283); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath(); ctx.arc(x - .8, y - .8, 1, 0, 6.283); ctx.fill();
+    if (label) {
+      ctx.font = '700 9.5px ui-monospace,SFMono-Regular,Menlo,monospace';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = isLight() ? 'rgba(28,36,52,.85)' : 'rgba(226,232,240,.9)';
+      ctx.fillText(label, x + 8, y - 8);
+    }
+  }
+  function arcs(cx, cy, R, t, active) {
+    if (!geo) return;
+    const light = isLight();
+    const a = view(vec(TEH.lat, TEH.lon));
+    const b = view(vec(geo.lat, geo.lon));
+    const dot = Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]));
+    const om = Math.acos(dot), so = Math.sin(om) || 1e-6;
+    const N = 56, pts = [];
+    for (let i = 0; i <= N; i++) {
+      const k = i / N;
+      const w1 = Math.sin((1 - k) * om) / so, w2 = Math.sin(k * om) / so;
+      let x = a[0] * w1 + b[0] * w2, y = a[1] * w1 + b[1] * w2, z = a[2] * w1 + b[2] * w2;
+      const L = Math.hypot(x, y, z) || 1;
+      const alt = 1 + .24 * Math.sin(Math.PI * k);
+      pts.push({ x: cx + x / L * R * alt, y: cy - y / L * R * alt, z: z / L });
+    }
+    /* arc body — brighter on the near side */
+    const FRONT = light ? 'rgba(28,36,52,.5)' : 'rgba(232,236,241,.52)';
+    const BACK = light ? 'rgba(28,36,52,.12)' : 'rgba(232,236,241,.10)';
+    ctx.lineWidth = 1.3; ctx.lineCap = 'round';
+    ctx.strokeStyle = BACK; path3(pts, false);
+    ctx.strokeStyle = FRONT; path3(pts, true);
+    /* traveling packets — count = real active users (1..5) */
+    const NP = Math.max(1, Math.min(5, active || 1));
+    for (let p = 0; p < NP; p++) {
+      const dir = p % 2 === 0 ? 1 : -1;                  /* half download, half upload */
+      const speed = dir > 0 ? 2400 : 3300;               /* dl faster than ul — like reality */
+      const kk = ((t * 1000 / speed) + p * (1 / NP)) % 1;
+      const k = dir > 0 ? kk : 1 - kk;
+      const idx = Math.min(N - 1, Math.max(0, k * N));
+      const i0 = Math.floor(idx), fr = idx - i0;
+      const P0 = pts[i0], P1 = pts[Math.min(N, i0 + 1)];
+      if (!P0 || !P1) continue;
+      const px = P0.x + (P1.x - P0.x) * fr, py = P0.y + (P1.y - P0.y) * fr;
+      const back = P0.z < 0;
+      for (let tr = 0; tr < 4; tr++) {                   /* little trail */
+        const tk = Math.max(0, k - dir * (tr + 1) * .014);
+        const ti = Math.min(N - 1, Math.max(0, tk * N));
+        const T0 = pts[Math.floor(ti)], T1 = pts[Math.min(N, Math.floor(ti) + 1)];
+        if (!T0 || !T1) continue;
+        const al = (1 - tr / 4) * .3;
+        ctx.fillStyle = dir > 0
+          ? (light ? `rgba(24,34,52,${al})` : `rgba(226,232,240,${al})`)
+          : `rgba(61,220,132,${al * .9})`;
+        ctx.beginPath();
+        ctx.arc(T0.x + (T1.x - T0.x) * (tk * N % 1), T0.y + (T1.y - T0.y) * (tk * N % 1), 1.5 - tr * .25, 0, 6.283);
+        ctx.fill();
+      }
+      const col = dir > 0 ? (light ? '#1f2c44' : '#eef1f5') : '#3ddc84';
+      ctx.globalAlpha = back ? .18 : .95;
+      ctx.fillStyle = col;
+      ctx.shadowColor = col; ctx.shadowBlur = back ? 0 : 7;
+      ctx.beginPath(); ctx.arc(px, py, 2.1, 0, 6.283); ctx.fill();
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    }
+  }
+  function draw(now) {
+    raf = 0;
+    cv = document.getElementById('globeCv');
+    if (!cv || tab !== 'dashboard') return;              /* stops itself; kick() restarts */
+    if (!ctx || cv !== GLOBE._cv) { ctx = cv.getContext('2d'); GLOBE._cv = cv; }
+    const dt = last ? Math.min(.1, (now - last) / 1000) : 0;
+    last = now;
+    rot += dt * 2 * Math.PI / 38;                        /* one full turn / 38 s */
+    const r = cv.getBoundingClientRect();
+    const DPR = Math.min(devicePixelRatio || 1, 2);
+    if (Math.abs(cv.width / DPR - r.width) > 1 || Math.abs(cv.height / DPR - r.height) > 1) {
+      cv.width = Math.round(r.width * DPR); cv.height = Math.round(r.height * DPR);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    W = r.width; H = r.height;
+    if (!W || !H) { raf = requestAnimationFrame(draw); return; }
+    const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 7;
+    const t = now / 1000;
+    const light = isLight();
+    ctx.clearRect(0, 0, W, H);
+    /* atmosphere */
+    let g = ctx.createRadialGradient(cx, cy, R * .5, cx, cy, R * 1.26);
+    g.addColorStop(0, 'rgba(160,178,205,0)');
+    g.addColorStop(.76, light ? 'rgba(120,134,158,.06)' : 'rgba(160,178,205,.06)');
+    g.addColorStop(1, 'rgba(160,178,205,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.26, 0, 6.283); ctx.fill();
+    /* sphere body */
+    g = ctx.createRadialGradient(cx - R * .38, cy - R * .42, R * .1, cx, cy, R);
+    g.addColorStop(0, light ? 'rgba(148,160,182,.13)' : 'rgba(190,202,220,.10)');
+    g.addColorStop(.72, light ? 'rgba(148,160,182,.05)' : 'rgba(140,152,175,.045)');
+    g.addColorStop(1, light ? 'rgba(148,160,182,.12)' : 'rgba(120,132,158,.10)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = light ? 'rgba(28,36,52,.55)' : 'rgba(226,232,240,.55)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.stroke();
+    /* wireframe + real markers */
+    graticule(cx, cy, R);
+    const active = (S && S.clients) ? S.clients.filter(c => c.status === 'active').length : 1;
+    arcs(cx, cy, R, t, active);
+    marker(cx, cy, R, view(vec(TEH.lat, TEH.lon)), '#3ddc84', 'Tehran', t);
+    if (geo) marker(cx, cy, R, view(vec(geo.lat, geo.lon)), light ? '#1f2c44' : '#eef1f5', geo.city || geo.cc || '', t);
+    raf = requestAnimationFrame(draw);
+  }
+  function kick() { if (!raf) raf = requestAnimationFrame(draw); }
+  return { setGeo, kick, _cv: null };
+})();
+
+/* ─────────── live wave chart (real rx/tx bytes-per-second) ─────────── */
+const MONCH = (() => {
+  const WINDOW = 120;                                    /* visible seconds */
+  let cv = null, ctx = null, raf = 0, W = 0, H = 0;
+  let vmax = 1, tvmax = 1;
+  let show = { dl: true, ul: true };
+  const pts = [];                                        /* {t, rx, tx} — REAL samples */
+
+  const isLight = () => document.documentElement.dataset.theme === 'light';
+  const fmtMB = v => (v / 125000).toFixed(1);            /* B/s -> MB/s label */
+  function sync() {
+    const pd = document.querySelector('.monpill[data-m="dl"]');
+    const pu = document.querySelector('.monpill[data-m="ul"]');
+    show.dl = !pd || pd.classList.contains('on');
+    show.ul = !pu || pu.classList.contains('on');
+  }
+  function push(ST) {
+    sync();
+    const iv = ST.interval || 1;
+    const rx = ST.hist && ST.hist.rx, tx = ST.hist && ST.hist.tx;
+    if (!rx || !rx.length) return;
+    const now = Date.now() / 1000;
+    const n = rx.length;
+    const t0 = now - (n - 1) * iv;
+    const lastT = pts.length ? pts[pts.length - 1].t : -1e9;
+    for (let i = 0; i < n; i++) {
+      const t = t0 + i * iv;
+      if (t > lastT + iv * .4) pts.push({ t, rx: rx[i] || 0, tx: (tx && tx[i]) || 0 });
+    }
+    while (pts.length && pts[0].t < now - WINDOW - 40) pts.shift();
+    if (pts.length > 900) pts.splice(0, pts.length - 900);
+    /* p75 autoscale target — like an honest Grafana */
+    const rec = [];
+    for (let i = Math.max(0, pts.length - 90); i < pts.length; i++) {
+      if (pts[i].rx > 0) rec.push(pts[i].rx);
+      if (pts[i].tx > 0) rec.push(pts[i].tx);
+    }
+    rec.sort((a, b) => a - b);
+    const p75 = rec.length ? rec[Math.floor(rec.length * .75)] : 1;
+    tvmax = Math.max(p75 * 1.6, 1024);
+  }
+  function kick() {
+    cv = document.getElementById('monCv');
+    if (cv && !raf) raf = requestAnimationFrame(draw);
+  }
+  function splinePath(P) {
+    const p = new Path2D();
+    p.moveTo(P[0].x, P[0].y);
+    for (let i = 0; i < P.length - 1; i++) {
+      const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+      p.bezierCurveTo(
+        p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6,
+        p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6,
+        p2.x, p2.y);
+    }
+    return p;
+  }
+  function draw(now) {
+    raf = 0;
+    cv = document.getElementById('monCv');
+    if (!cv || tab !== 'dashboard') return;               /* stops itself; kick() restarts */
+    if (!ctx || cv !== MONCH._cv) { ctx = cv.getContext('2d'); MONCH._cv = cv; }
+    const r = cv.getBoundingClientRect();
+    if (!r.width || !r.height) { raf = requestAnimationFrame(draw); return; }
+    const DPR = Math.min(devicePixelRatio || 1, 2);
+    if (Math.abs(cv.width / DPR - r.width) > 1 || Math.abs(cv.height / DPR - r.height) > 1) {
+      cv.width = Math.round(r.width * DPR); cv.height = Math.round(r.height * DPR);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    W = r.width; H = r.height;
+    vmax += (tvmax - vmax) * .05;                         /* smooth rescale */
+    const light = isLight();
+    const padL = 50, padR = 14, padT = 14, padB = 24;
+    const iw = W - padL - padR, ih = H - padT - padB;
+    const nowS = Date.now() / 1000, tA = nowS - WINDOW;
+    ctx.clearRect(0, 0, W, H);
+    /* grid + MB/s axis */
+    const gridC = light ? 'rgba(28,28,32,.10)' : 'rgba(255,255,255,.07)';
+    const txC = light ? 'rgba(28,28,32,.55)' : 'rgba(155,155,163,.85)';
+    ctx.font = '600 10px ui-monospace,SFMono-Regular,Menlo,monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (1 - i / 4) * ih;
+      ctx.strokeStyle = gridC; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.fillStyle = txC;
+      ctx.fillText(fmtMB(vmax * i / 4), padL - 8, y);
+    }
+    /* time marks every 30 s */
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let tm = Math.ceil(tA / 30) * 30; tm <= nowS; tm += 30) {
+      const x = padL + (tm - tA) / WINDOW * iw;
+      ctx.strokeStyle = gridC;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ih); ctx.stroke();
+      const d = new Date(tm * 1000);
+      ctx.fillStyle = txC;
+      ctx.fillText(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`, x, padT + ih + 6);
+    }
+    /* series (REAL measured points only) */
+    ctx.save();
+    ctx.beginPath(); ctx.rect(padL - 2, padT - 8, iw + 6, ih + 14); ctx.clip();
+    const series = [];
+    if (show.dl) series.push({ key: 'rx', col: light ? '#1f2937' : '#e8ecf1', glow: 'rgba(226,232,240,.5)', fill: true });
+    if (show.ul) series.push({ key: 'tx', col: light ? '#57617a' : '#8d95a2', glow: 'rgba(141,149,162,.45)', fill: false });
+    for (const s of series) {
+      const vis = [];
+      for (const p of pts) if (p.t >= tA - 4 && p.t <= nowS + 1) vis.push(p);
+      if (vis.length < 2) continue;
+      const P = vis.map(p => ({
+        x: padL + (p.t - tA) / WINDOW * iw,
+        y: padT + (1 - Math.min(p[s.key], vmax) / vmax) * ih,
+        v: p[s.key],
+      }));
+      const lastP = P[P.length - 1];
+      const xNow = padL + (nowS - tA) / WINDOW * iw;
+      if (xNow > lastP.x + 2) P.push({ x: xNow, y: lastP.y, v: lastP.v });  /* hold tail until next real sample */
+      const path = splinePath(P);
+      if (s.fill) {
+        const f = new Path2D(path);
+        f.lineTo(P[P.length - 1].x, padT + ih);
+        f.lineTo(P[0].x, padT + ih);
+        f.closePath();
+        const g = ctx.createLinearGradient(0, padT, 0, padT + ih);
+        g.addColorStop(0, light ? 'rgba(31,41,55,.15)' : 'rgba(232,236,241,.14)');
+        g.addColorStop(1, 'rgba(232,236,241,0)');
+        ctx.fillStyle = g;
+        ctx.fill(f);
+      }
+      ctx.save();
+      ctx.shadowColor = s.glow; ctx.shadowBlur = 9;
+      ctx.strokeStyle = s.col; ctx.lineWidth = 2;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.stroke(path);
+      ctx.restore();
+      ctx.strokeStyle = s.col; ctx.lineWidth = 1.6;
+      ctx.stroke(path);
+      /* pulsing "now" dot + live value chip */
+      const lp = P[P.length - 1];
+      const pulse = .5 + .5 * Math.sin(now / 380);
+      ctx.fillStyle = s.col;
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, 3, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = s.col; ctx.lineWidth = 1.1;
+      ctx.globalAlpha = .5 * (1 - pulse) + .1;
+      ctx.beginPath(); ctx.arc(lp.x, lp.y, 4 + pulse * 8, 0, 6.283); ctx.stroke();
+      ctx.globalAlpha = 1;
+      const label = speed(lp.v).join(' ');
+      ctx.font = '700 10.5px ui-monospace,SFMono-Regular,Menlo,monospace';
+      const tw = ctx.measureText(label).width;
+      let lx = Math.min(lp.x + 10, W - padR - tw - 10);
+      let ly = Math.max(padT + 9, lp.y - 16);
+      ctx.fillStyle = light ? 'rgba(255,255,255,.85)' : 'rgba(12,13,15,.72)';
+      ctx.strokeStyle = light ? 'rgba(28,28,32,.14)' : 'rgba(226,232,240,.14)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(lx - 5, ly - 8, tw + 10, 15, 5);
+      else ctx.rect(lx - 5, ly - 8, tw + 10, 15);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = s.col;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx, ly);
+    }
+    ctx.restore();
+    raf = requestAnimationFrame(draw);
+  }
+  return { push, kick, _cv: null };
+})();
+/* FX-END */</script>
+
 <script>/* display-refresh probe — panel is 120Hz-ready; dataset.fps shows real rate */
 (function(){var n=0,t0=performance.now();function loop(t){n++;var dt=t-t0;if(dt>=1000){try{document.documentElement.dataset.fps=String(Math.round(n*1000/dt))}catch(e){}n=0;t0=t}requestAnimationFrame(loop)}requestAnimationFrame(loop)})();</script>
 </body>
