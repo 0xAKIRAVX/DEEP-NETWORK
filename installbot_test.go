@@ -23,6 +23,7 @@ type tgRecorder struct {
 	edits   map[int64][]string
 	deleted map[int64][]int64
 	counter int64
+	queue   []any // pending updates for the poller (Telegram semantics)
 }
 
 func newRecorder() *tgRecorder {
@@ -48,6 +49,24 @@ func (r *tgRecorder) addEdit(chat int64, text string) {
 func (r *tgRecorder) addDeleted(chat int64, id int64) {
 	r.mu.Lock()
 	r.deleted[chat] = append(r.deleted[chat], id)
+	r.mu.Unlock()
+}
+
+// enqueue adds an update that the poller must fetch via getUpdates
+// (unlike feed(), which bypasses the polling layer entirely). Numbers
+// are stored as float64 to mirror what JSON decoding produces on the
+// wire from the real Bot API.
+func (r *tgRecorder) enqueue(chat, msgID int64, text, chatType string) {
+	upd := map[string]any{
+		"update_id": float64(msgID),
+		"message": map[string]any{
+			"message_id": float64(msgID),
+			"chat":       map[string]any{"id": float64(chat), "type": chatType},
+			"text":       text,
+		},
+	}
+	r.mu.Lock()
+	r.queue = append(r.queue, upd)
 	r.mu.Unlock()
 }
 
@@ -146,8 +165,30 @@ func newFake(t *testing.T) (*fakeLucity, *httptest.Server, *tgRecorder) {
 			mockWriteJSON(w, map[string]any{"ok": true, "result": true})
 		case "getMe":
 			mockWriteJSON(w, map[string]any{"ok": true, "result": map[string]any{"id": 42, "username": "deepnetwork_install_bot"}})
-		case "getUpdates", "setMyCommands", "deleteWebhook":
-			mockWriteJSON(w, map[string]any{"ok": true, "result": []any{}})
+		case "getUpdates":
+			// Telegram semantics: updates stay in the queue until a later
+			// getUpdates call passes an offset beyond their update_id.
+			off, _ := payload["offset"].(float64)
+			rec.mu.Lock()
+			keep := rec.queue[:0]
+			var deliver []any
+			for _, u0 := range rec.queue {
+				if m, _ := u0.(map[string]any); m != nil {
+					if id, _ := m["update_id"].(float64); id < off {
+						continue // confirmed by the offset
+					}
+				}
+				keep = append(keep, u0)
+				deliver = append(deliver, u0)
+			}
+			rec.queue = keep
+			rec.mu.Unlock()
+			if len(deliver) == 0 {
+				time.Sleep(50 * time.Millisecond) // fake long poll
+			}
+			mockWriteJSON(w, map[string]any{"ok": true, "result": deliver})
+		case "setMyCommands", "deleteWebhook":
+			mockWriteJSON(w, map[string]any{"ok": true, "result": true})
 		default:
 			mockWriteJSON(w, map[string]any{"ok": false, "description": "unknown method " + method})
 		}
@@ -503,5 +544,62 @@ func TestInstallBotBusyWhileInstalling(t *testing.T) {
 	// and the original install must still finish
 	if m := rec.waitSent(505, "آماده شد", 30*time.Second); m == "" {
 		t.Fatal("original install did not finish")
+	}
+}
+
+// TestInstallBotPollerEndToEnd drives the REAL poll loop (installBotLoop)
+// through getUpdates — the layer the old tests bypassed with feed().
+// It would have caught the v3.5.0/3.5.1 production bug where ibotCall
+// cast the getUpdates array result to a map, silently discarding every
+// fetched update: the bot never replied to anyone and updates stayed
+// pending-forever on Telegram's side.
+func TestInstallBotPollerEndToEnd(t *testing.T) {
+	f, _, rec := newFake(t)
+
+	// run the genuine loop in the background
+	go installBotLoop(installBotToken)
+
+	// 1) a plain /start must produce the welcome message via polling
+	rec.enqueue(777, 1001, "/start", "private")
+	if m := rec.waitSent(777, "DEEP NETWORK", 15*time.Second); m == "" {
+		t.Fatal("poller never answered /start (update fetch/parse broken)")
+	}
+
+	// 2) an unknown text must get the fallback reply via polling
+	rec.enqueue(777, 1002, "سلام", "private")
+	if m := rec.waitSent(777, "/start را بفرست", 15*time.Second); m == "" {
+		t.Fatal("poller never answered the fallback text")
+	}
+
+	// 3) a token must flow through polling into the full install
+	rec.enqueue(777, 1003, mkToken("cid", "secret", "org1", "test-ws"), "private")
+	if m := rec.waitSent(777, "آماده شد", 60*time.Second); m == "" {
+		t.Fatal("poller did not deliver the install result")
+	}
+
+	// 4) updates must be CONFIRMED: the queue empties once the offset
+	// passes the delivered update ids (the pending-forever regression)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		rec.mu.Lock()
+		left := len(rec.queue)
+		rec.mu.Unlock()
+		if left == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	rec.mu.Lock()
+	left := len(rec.queue)
+	rec.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d updates were never confirmed by the offset (pending-forever bug)", left)
+	}
+
+	f.mu.Lock()
+	img := f.addServiceImage
+	f.mu.Unlock()
+	if img != "ghcr.io/0xakiravx/deep-network:latest" {
+		t.Fatalf("unexpected service image: %q", img)
 	}
 }

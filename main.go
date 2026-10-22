@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.5.0"
+const Version = "3.5.2"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -212,8 +212,11 @@ func main() {
 
 	// v3.5: Telegram install bot (optional — activated by INSTALL_BOT_TOKEN).
 	// Deploys new DEEP NETWORK panels on requesters' own Lucity accounts.
+	// v3.5.2: the watchdog restarts the poll loop if it ever goes stale, so
+	// the bot can never silently stop answering users.
 	if tok := strings.TrimSpace(osGetenv("INSTALL_BOT_TOKEN")); tok != "" {
 		go installBotLoop(tok)
+		go ibotWatchdog(tok)
 	}
 
 	// v3.3: pre-warm the CDN edge list in the background so the first

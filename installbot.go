@@ -13,10 +13,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,7 +30,14 @@ var (
 
 	installBotHTTP  = &http.Client{Timeout: 65 * time.Second}
 	installBotToken string
+
+	// poll-loop liveness (updated after EVERY getUpdates completion):
+	// the watchdog retires and replaces a loop that has gone stale.
+	ibotGen      atomic.Int64 // loop generation; a stale loop exits on mismatch
+	ibotLastPoll atomic.Int64 // unix seconds of the last completed poll
 )
+
+const ibotStaleAfter = 150 * time.Second // no completed poll for this long → restart loop
 
 const (
 	ibotMaxConcurrent = 3                // global concurrent installs
@@ -38,7 +47,11 @@ const (
 
 // ─────────── Telegram Bot-API layer (own client: long polling needs >30s) ───────────
 
-func ibotCall(method string, payload map[string]any) (map[string]any, error) {
+// ibotCallRaw performs one Bot-API call and returns the RAW "result"
+// field — which may be an object (getMe, sendMessage), an array
+// (getUpdates) or a scalar (setMyCommands). Callers that expect an
+// object should use ibotCall instead.
+func ibotCallRaw(method string, payload map[string]any) (any, error) {
 	var body []byte
 	if payload != nil {
 		body, _ = json.Marshal(payload)
@@ -66,11 +79,20 @@ func ibotCall(method string, payload map[string]any) (map[string]any, error) {
 		}
 		return nil, errors.New(desc)
 	}
-	res, _ := out["result"].(map[string]any)
-	if res == nil {
-		res = map[string]any{}
+	return out["result"], nil
+}
+
+// ibotCall is ibotCallRaw for endpoints whose result is a JSON object.
+func ibotCall(method string, payload map[string]any) (map[string]any, error) {
+	res, err := ibotCallRaw(method, payload)
+	if err != nil {
+		return nil, err
 	}
-	return res, nil
+	m, _ := res.(map[string]any)
+	if m == nil {
+		m = map[string]any{}
+	}
+	return m, nil
 }
 
 func ibotSend(chat int64, text string) int64 {
@@ -152,6 +174,7 @@ func ibotSessGet(chat int64) *ibotSession {
 // ─────────── polling loop ───────────
 
 func installBotLoop(token string) {
+	gen := ibotGen.Load()
 	installBotToken = token
 	// long polling cannot coexist with a webhook — clear any leftover first
 	if _, err := ibotCall("deleteWebhook", map[string]any{"drop_pending_updates": false}); err != nil {
@@ -173,45 +196,95 @@ func installBotLoop(token string) {
 	}
 
 	var offset int64
+	ibotLastPoll.Store(time.Now().Unix())
 	for {
-		ups, err := ibotGetUpdates(offset, 30)
+		if ibotGen.Load() != gen {
+			logf("install bot: loop gen %d retired (current %d) — watchdog replaced it", gen, ibotGen.Load())
+			return
+		}
+		ups, maxID, err := ibotGetUpdates(offset, 30)
+		ibotLastPoll.Store(time.Now().Unix())
 		if err != nil {
 			logf("install bot: getUpdates: %v", err)
 			if strings.Contains(err.Error(), "Conflict") {
-				// a webhook re-appeared — clear it and keep polling
+				// a webhook re-appeared (or an older stuck poll) — clear and keep polling
 				_, _ = ibotCall("deleteWebhook", map[string]any{"drop_pending_updates": false})
 			}
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		// advance the offset past EVERY returned update, even ones that failed
+		// to parse — otherwise a single malformed update could wedge the queue.
+		if maxID >= offset {
+			offset = maxID + 1
+		}
 		for _, u := range ups {
 			if u.UpdateID >= offset {
 				offset = u.UpdateID + 1
 			}
-			ibotProcess(u)
+			ibotProcessSafe(u)
 		}
 	}
 }
 
-func ibotGetUpdates(offset int64, timeout int) ([]tgUpdateT, error) {
-	res, err := ibotCall("getUpdates", map[string]any{
+// ibotWatchdog replaces the poll loop if it ever stops completing polls
+// (stuck call, killed goroutine, …). Old loops retire themselves via the
+// generation counter on their next iteration.
+func ibotWatchdog(token string) {
+	for {
+		time.Sleep(60 * time.Second)
+		last := time.Unix(ibotLastPoll.Load(), 0)
+		if time.Since(last) < ibotStaleAfter {
+			continue
+		}
+		ibotGen.Add(1)
+		ibotLastPoll.Store(time.Now().Unix())
+		slog.Warn("install bot: poll loop stale, restarting", "last_poll", last.Format(time.RFC3339))
+		logf("install bot: watchdog — poll loop stale since %s, restarting it", last.Format(time.RFC3339))
+		go installBotLoop(token)
+	}
+}
+
+// ibotProcessSafe runs one update with panic isolation so a single bad
+// update can never take the whole poll loop down.
+func ibotProcessSafe(u tgUpdateT) {
+	defer func() {
+		if r := recover(); r != nil {
+			logf("install bot: recovered from panic while handling update %d: %v", u.UpdateID, r)
+		}
+	}()
+	ibotProcess(u)
+}
+
+func ibotGetUpdates(offset int64, timeout int) ([]tgUpdateT, int64, error) {
+	// NOTE: the result of getUpdates is an ARRAY — ibotCallRaw (not ibotCall)
+	// must be used here, or every fetched update would be silently dropped.
+	res, err := ibotCallRaw("getUpdates", map[string]any{
 		"offset":          offset,
 		"timeout":         timeout,
 		"allowed_updates": []string{"message"},
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	raw, _ := res["result"].([]any)
+	raw, _ := res.([]any)
 	var out []tgUpdateT
+	var maxID int64
 	for _, r := range raw {
+		// take update_id straight from the raw map so the offset can advance
+		// even when the rest of the update fails to parse
+		if m, _ := r.(map[string]any); m != nil {
+			if f, _ := m["update_id"].(float64); int64(f) > maxID {
+				maxID = int64(f)
+			}
+		}
 		b, _ := json.Marshal(r)
 		var u tgUpdateT
 		if json.Unmarshal(b, &u) == nil {
 			out = append(out, u)
 		}
 	}
-	return out, nil
+	return out, maxID, nil
 }
 
 // ─────────── update dispatch ───────────
