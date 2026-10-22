@@ -4,3 +4,5 @@
 LICENSE
 scripts
 rust-probe/target
+out
+bin/xray

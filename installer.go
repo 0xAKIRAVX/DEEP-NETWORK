@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,7 +32,51 @@ var (
 	installVolumeName  = "deep-data"
 	installVolumeSize  = "10Gi"
 	installServiceName = "deep-network"
+
+	ghcrBase        = "https://ghcr.io" // var so tests can point it at a mock
+	ghcrImageOKUnix int64               // unix time of last confirmed public manifest (atomic)
 )
+
+// checkInstallImage verifies the public ghcr manifest is actually
+// reachable, so the bot can explain — instead of failing deep inside
+// Lucity — when the image is not published / not public yet. Definitive
+// 401/403/404 → clear Persian error; network oddities → proceed anyway.
+func checkInstallImage() error {
+	if ok := atomic.LoadInt64(&ghcrImageOKUnix); ok != 0 && time.Since(time.Unix(ok, 0)) < 5*time.Minute {
+		return nil
+	}
+	repo := strings.TrimPrefix(strings.TrimSuffix(installImage, ":latest"), "ghcr.io/")
+	tokURL := ghcrBase + "/token?service=ghcr.io&scope=repository:" + repo + ":pull"
+	resp, err := lucityHTTP.Get(tokURL)
+	if err != nil {
+		return nil
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&out)
+	resp.Body.Close()
+	if out.Token == "" {
+		return nil
+	}
+	req, _ := http.NewRequest("GET", ghcrBase+"/v2/"+repo+"/manifests/latest", nil)
+	req.Header.Set("Authorization", "Bearer "+out.Token)
+	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json")
+	resp2, err := lucityHTTP.Do(req)
+	if err != nil {
+		return nil
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp2.Body, 4096))
+	resp2.Body.Close()
+	switch resp2.StatusCode {
+	case 200:
+		atomic.StoreInt64(&ghcrImageOKUnix, time.Now().Unix())
+		return nil
+	case 401, 403, 404:
+		return fmt.Errorf("ایمیج عمومی پنل هنوز در دسترس نیست (ghcr.io/%s) — مدتی بعد دوباره تلاش کن", repo)
+	}
+	return nil
+}
 
 var lucityHTTP = &http.Client{Timeout: 45 * time.Second}
 
@@ -377,6 +422,12 @@ func installPanel(lc *lucityClient, pass string, progress func(int, string)) (*i
 		}
 	}
 	progress(1, wsNote(snap.Workspace))
+
+	// the public panel image must exist before anything is created on
+	// the requester's workspace — fail fast with a clear message.
+	if err := checkInstallImage(); err != nil {
+		return nil, err
+	}
 
 	// 2) project + volume
 	if snap.Env == nil {

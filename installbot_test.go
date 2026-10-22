@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -97,6 +98,7 @@ type fakeLucity struct {
 	portCalls        []int
 	healthCheckSet   bool
 	loginHits        int
+	ghcrPublic       bool
 	host             string // mock host:port
 }
 
@@ -264,6 +266,21 @@ func newFake(t *testing.T) (*fakeLucity, *httptest.Server, *tgRecorder) {
 		}
 	})
 
+	// —— ghcr mock (public image pre-check) ——
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		mockWriteJSON(w, map[string]any{"token": "ghcr-anon-token"})
+	})
+	mux.HandleFunc("/v2/0xakiravx/deep-network/manifests/latest", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		pub := f.ghcrPublic
+		f.mu.Unlock()
+		if !pub {
+			w.WriteHeader(404)
+			return
+		}
+		mockWriteJSON(w, map[string]any{"schemaVersion": 2})
+	})
+
 	// —— panel login verification target ——
 	mux.HandleFunc("/panel/api/login", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -288,6 +305,9 @@ func newFake(t *testing.T) (*fakeLucity, *httptest.Server, *tgRecorder) {
 	panelURLScheme = "http"
 	installBotToken = "6:test-token-abcdefghijklmnop"
 	installPollDelay = 20 * time.Millisecond
+	ghcrBase = srv.URL
+	atomic.StoreInt64(&ghcrImageOKUnix, 0)
+	f.ghcrPublic = true
 	return f, srv, rec
 }
 
@@ -440,6 +460,25 @@ func TestInstallBotUnknownTextCancelAndGroups(t *testing.T) {
 	rec.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("group chat got %d replies, want 0", n)
+	}
+}
+
+func TestInstallBotImageNotPublic(t *testing.T) {
+	f, _, rec := newFake(t)
+	f.mu.Lock()
+	f.ghcrPublic = false // image not published yet
+	f.mu.Unlock()
+
+	feed(606, 70, mkToken("cid", "secret", "org1", "test-ws"), "private")
+	if m := rec.waitEdit(606, "ایمیج عمومی پنل", 10*time.Second); m == "" {
+		t.Fatal("missing clear not-published error")
+	}
+	// nothing should have been created on Lucity
+	f.mu.Lock()
+	created := f.serviceID != "" || f.volumeID != ""
+	f.mu.Unlock()
+	if created {
+		t.Fatal("service was created although the image was not public")
 	}
 }
 
