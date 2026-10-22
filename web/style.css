@@ -469,6 +469,17 @@ section{margin-bottom:14px}
 .progress{height:3px;background:#161616;border-radius:4px;overflow:hidden;margin-top:12px}
 .progress i{display:block;height:100%;width:0;background:#fff;box-shadow:0 0 9px rgba(255,255,255,.7);transition:width .3s}
 
+/* ── selects inside .field (FinalMask & Cipher Suites) ── */
+.field select{flex:1;background:none;border:0;outline:0;height:46px;font-size:13px;color:var(--tx);
+  appearance:none;-webkit-appearance:none;padding:0 12px;cursor:pointer}
+.field.sel{direction:rtl}
+.field.sel select{direction:rtl;text-align:right}
+.field select option{background:#111;color:#ddd}
+/* ── smart-optimizer result card ── */
+.opt-ok{margin-top:14px;padding:14px 16px;border:1px solid rgba(127,185,138,.35);
+  background:rgba(127,185,138,.06);border-radius:var(--r-md)}
+.opt-ok .kv{margin-top:6px}
+
 /* responsive */
 @media (max-width:1180px){
   .cards3{grid-template-columns:repeat(3,1fr)}

@@ -11,6 +11,21 @@
   const S = { view: 'dashboard', state: null, stats: null, whoami: null, timers: [], fx: {} };
   window.APP = S;
 
+  // ─────────── FinalMask & Cipher Suites — UI label maps ───────────
+  const fpLabels = {
+    chrome: 'اثر انگشت Chrome (پیش‌فرض — بهترین سازگاری)', firefox: 'اثر انگشت Firefox',
+    safari: 'اثر انگشت Safari', ios: 'اثر انگشت iOS (آیفون)', android: 'اثر انگشت Android (موبایل)',
+    edge: 'اثر انگشت Edge', random: 'تصادفی در هر اتصال', randomized: 'تصادفی پیوسته',
+  };
+  const alpnLabels = {
+    '': 'خودکار (بهترین برای هر پروتکل)', 'http/1.1': 'HTTP/1.1 (سبک — WebSocket)',
+    'h2': 'HTTP/2', 'h2,http/1.1': 'HTTP/2 + HTTP/1.1 (XHTTP)', 'http/1.1,h2': 'HTTP/1.1 + HTTP/2',
+  };
+  const cipherLabels = {
+    TLS13: 'TLS 1.3 کامل — امن و سریع', TLS13_FAST: 'TLS 1.3 سریع — فقط AES-128',
+    TLS12_AES: 'TLS 1.2 — AES-GCM', TLS12_CHACHA: 'TLS 1.2 — ChaCha20 (بهتر برای موبایل)',
+  };
+
   // ─────────── tiny helpers ───────────
   async function api(path, body, method) {
     const opt = { method: method || (body ? 'POST' : 'GET'), headers: {} };
@@ -185,7 +200,7 @@
         ۱) با نام کاربری و رمز وارد شوید (رمز در لاگ دیپلوی است اگر خودتان تنظیم نکرده‌اید).<br>
         ۲) از بخش «کاربران» لینک اشتراک هر کاربر را کپی یا QR آن را بگیرید.<br>
         ۳) در v2rayNG / Hiddify از طریق Import from clipboard اضافه کنید.<br>
-        ۴) اگر اتصال برقرار نشد، از «اسکنر IP» لبه نزدیک CDN را پیدا و در تنظیمات کانفیگ اعمال کنید.</p>`);
+        ۴) اگر اتصال برقرار نشد یا قطع و وصل شد: از «بهینه‌ساز و اسکنر» دکمه <b>«بهینه‌سازی خودکار برای شبکه من»</b> را بزنید — بهترین IP و تنظیمات اپراتور شما خودکار اعمال می‌شود، بعد اشتراک را در کلاینت به‌روزرسانی کنید.</p>`);
       } else if (act === 'settings') {
         toast('اول وارد شوید تا تنظیمات باز شود');
       }
@@ -385,8 +400,24 @@
       </section>`;
     },
     scanner() {
+      const t = (S.state && S.state.settings.tuning) || {};
+      const curAddr = (S.state && S.state.settings.address) || '';
       return `<section class="info-sec" style="margin-top:20px">
-      <h3>اسکنر IP — یافتن نزدیک‌ترین لبه CDN</h3>
+      <h3>بهینه‌ساز هوشمند — بهترین IP برای شبکه گوشی شما</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">فقط <b>یک دکمه</b> بزنید؛ سنجش از داخل مرورگر گوشی شما (یعنی دقیقاً روی اینترنت خودتان) انجام می‌شود: اپراتور تشخیص داده می‌شود، همه لبه‌های نزدیک ایران چند بار پینگ می‌شوند، <b>سریع‌ترین و کم‌نوسان‌ترین</b> لبه انتخاب و روی همه کانفیگ‌ها اعمال می‌شود و پروفایل ضد فیلتر اپراتور شما (FinalMask) هم خودکار فعال می‌گردد.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn primary" id="opt-run">بهینه‌سازی خودکار برای شبکه من</button>
+        <button class="btn" id="opt-stab">تست پایداری مسیر فعلی</button>
+        <button class="btn" id="opt-stop" hidden>توقف</button>
+      </div>
+      ${curAddr ? `<p style="font-size:11px;color:#7fb98a;margin-top:10px">مسیر فعلی: <b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(curAddr)}</b> — برای برگشت به مسیر دامنه، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>` : ''}
+      <div class="progress" hidden id="opt-prog"><i></i></div>
+      <p id="opt-status" style="font-size:11.5px;color:#8d8d8d;margin:8px 0 0;line-height:1.9"></p>
+      <div id="opt-result"></div>
+      <div id="opt-cands" style="margin-top:6px"></div>
+      </section>
+      <section class="info-sec" style="margin-top:20px">
+      <h3>اسکن دستی لبه‌ها</h3>
       <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">پینگ لبه‌های bunny.net (CDN خود Lucity) از <b>مرورگر خودتان</b> سنجیده می‌شود تا دقیقاً مطابق مسیر اینترنت شما باشد. لبه‌های نزدیک ایران (ترکیه، قفقاز، عراق، اروپا) اولویت دارند. روی «اعمال» بزنید تا همه کانفیگ‌ها از آن IP سرو شوند؛ برای برگشت، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn primary" id="scan-bunny">اسکن لبه‌های CDN</button>
@@ -430,6 +461,7 @@
     settings() {
       const st = S.state; if (!st) return '<p>در حال بارگذاری…</p>';
       const s = st.settings, ops = s.operators || {}, t = s.tuning || {};
+      const cps = st.cipher_presets || {}, fps = st.fps || [];
       return `<section class="info-sec" style="margin-top:20px;max-width:720px">
       <h3>تنظیمات</h3>
       <h4 style="margin:16px 0 8px;font-size:12.5px;color:#cfcfcf">مدیریت</h4>
@@ -467,18 +499,54 @@
         <input type="checkbox" class="se-proto" data-k="${p.key}" ${(s.protocols || {})[p.key] ? 'checked' : ''}><span class="cbx"></span>${esc(p.name)}</label>`).join('')}
       </div>
 
-      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">بهینه‌سازی اپراتور (ضد فیلتر)</h4>
-      <p style="font-size:11px;color:#8d8d8d;margin-bottom:10px;line-height:1.9">پروفایل اپراتور خودتان را انتخاب کنید تا فرگمنت TLS و اثر انگشت مرورگر روی همه کانفیگ‌ها اعمال شود. «خودکار» بدون فرگمنت کم‌ترین پینگ را دارد (SNI تصادفی خودش فیلتر SNI را دور می‌زند).</p>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
-      ${Object.entries(ops).map(([k, o]) => `<label style="display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:#c9c9c9;background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer">
-        <span style="display:flex;gap:8px;align-items:center"><input type="radio" name="opprof" value="${k}" ${k === (t.profile || 'auto') ? 'checked' : ''}><b>${esc(o.label)}</b></span>
-        <small style="color:#7d7d7d;font-size:10px;line-height:1.7">${esc(o.note || '')}</small></label>`).join('')}
+      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">FinalMask &amp; Cipher Suites — بهینه‌سازی و پایداری برای اپراتور شما</h4>
+      <p style="font-size:11px;color:#8d8d8d;margin-bottom:10px;line-height:1.9"><b>FinalMask</b> دست دادن TLS را تکه‌تکه می‌کند (فرگمنت) و اثر انگشت TLS را شبیه مرورگر واقعی می‌کند تا DPI اپراتور نتواند پروکسی را تشخیص دهد و سرعت را نکَند. <b>Cipher Suites و ALPN</b> هم امضای رمزنگاری اتصال را عوض می‌کنند. کافی است فقط <b>Enable</b> را روشن کنید و اپراتور خود را انتخاب کنید — بقیه مقادیر بهترین حالت را می‌گیرند.</p>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:10px 2px"><input type="checkbox" id="se-fm-on" ${t.enabled !== false ? 'checked' : ''}><span class="cbx"></span><b>Enable — فعال‌سازی FinalMask &amp; Cipher Suites</b></label>
+      <div class="row2" style="margin-top:10px">
+      <label class="field sel"><select id="se-opprof">
+        ${Object.entries(ops).map(([k, o]) => `<option value="${k}" ${k === (t.profile || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+      </select></label>
+      <label class="field sel"><select id="se-fp">
+        ${(fps.length ? fps : ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random', 'randomized']).map(f => `<option value="${f}" ${f === (t.fp || 'chrome') ? 'selected' : ''}>${esc(fpLabels[f] || f)}</option>`).join('')}
+      </select></label>
       </div>
-      <div class="row2" style="margin-top:12px">
-      <label class="field"><input id="se-fraglen" value="${esc(t.frag_lengths || '100-200')}" placeholder="طول فرگمنت (مثلاً 40-100)"></label>
-      <label class="field"><input id="se-fragdelay" value="${esc(t.frag_delays || '10-20')}" placeholder="تأخیر فرگمنت به میلی‌ثانیه (مثلاً 10-20)"></label>
+      <p id="se-opnote" style="font-size:11px;color:#8d8d8d;margin:8px 2px;line-height:1.9">${esc((ops[t.profile || 'auto'] || {}).note || '')}</p>
+
+      <div id="fm-block">
+        <h4 style="margin:16px 0 8px;font-size:12px;color:#cfcfcf">فرگمنت TLS (FinalMask)</h4>
+        <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:6px 2px"><input type="checkbox" id="se-fragon" ${t.frag_on ? 'checked' : ''}><span class="cbx"></span>فرگمنت TLS فعال (پروفایل «خودکار» بدون فرگمنت کم‌ترین پینگ را دارد)</label>
+        <div class="row2">
+        <label class="field"><input id="se-fraglen" value="${esc(t.frag_lengths || '100-200')}" placeholder="طول فرگمنت (مثلاً 40-100)"></label>
+        <label class="field"><input id="se-fragdelay" value="${esc(t.frag_delays || '10-20')}" placeholder="تأخیر فرگمنت به میلی‌ثانیه"></label>
+        </div>
+        <div class="row2">
+        <label class="field sel"><select id="se-fragpackets">
+          <option value="tlshello" ${(t.frag_packets || 'tlshello') === 'tlshello' ? 'selected' : ''}>تکه‌تکه کردن دست‌دادن TLS (توصیه‌شده)</option>
+          <option value="1-3" ${t.frag_packets === '1-3' ? 'selected' : ''}>بسته‌های ۱ تا ۳</option>
+        </select></label>
+        <label class="field"><input id="se-fragmaxsplit" value="${esc(t.frag_maxsplit || '3-6')}" placeholder="بیشینه تکه (3-6)"></label>
+        </div>
+
+        <h4 style="margin:16px 0 8px;font-size:12px;color:#cfcfcf">Cipher Suites &amp; ALPN</h4>
+        <div class="row2">
+        <label class="field sel"><select id="se-alpn">
+          ${['', 'http/1.1', 'h2', 'h2,http/1.1', 'http/1.1,h2'].map(m => `<option value="${m}" ${m === (t.alpn || '') ? 'selected' : ''}>${esc(alpnLabels[m] !== undefined ? alpnLabels[m] : m)}</option>`).join('')}
+        </select></label>
+        <label class="field sel"><select id="se-cipher">
+          <option value="" ${!t.cipher_suites ? 'selected' : ''}>Cipher پیش‌فرض امن (توصیه‌شده)</option>
+          ${Object.entries(cps).map(([k, v]) => `<option value="${esc(v)}" ${v === t.cipher_suites ? 'selected' : ''}>${esc(cipherLabels[k] || k)}</option>`).join('')}
+          <option value="__custom__" ${t.cipher_suites && !Object.values(cps).includes(t.cipher_suites) ? 'selected' : ''}>اختصاصی…</option>
+        </select></label>
+        </div>
+        <label class="field" id="se-cipher-wrap" style="display:none"><input id="se-cipher-custom" value="${esc(t.cipher_suites || '')}" placeholder="TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256"></label>
+
+        <h4 style="margin:16px 0 8px;font-size:12px;color:#cfcfcf">نویز تصادفی (اختیاری — ضد تشخیص الگو)</h4>
+        <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:6px 2px"><input type="checkbox" id="se-noiseon" ${t.noise_on ? 'checked' : ''}><span class="cbx"></span>افزودن بسته‌های نویز تصادفی به اتصال</label>
+        <div class="row2">
+        <label class="field"><input id="se-noiserand" value="${esc(t.noise_rand || '1-64')}" placeholder="اندازه بسته نویز (1-64)"></label>
+        <label class="field"><input id="se-noisedelay" value="${esc(t.noise_delay || '10-20')}" placeholder="فاصله نویز به میلی‌ثانیه"></label>
+        </div>
       </div>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-fragon" ${t.frag_on ? 'checked' : ''}><span class="cbx"></span>فرگمنت TLS فعال (با پروفایل «اختصاصی» مقادیر بالا اعمال می‌شود)</label>
       <div class="btns"><button class="btn primary" id="se-save">ذخیره تنظیمات</button></div>
       </section>`;
     },
@@ -547,11 +615,8 @@
       }));
     },
     scanner() {
-      const out = $('#scan-out'), prog = $('#scan-prog'), statusEl = $('#scan-status'), stopBtn = $('#scan-stop');
-      let stopped = false;
-      stopBtn.addEventListener('click', () => { stopped = true; });
-
-      // hard-timeout fetch (works on every browser — no AbortSignal.timeout dependency)
+      // ── shared probe helper (used by optimizer, stability test and manual scan) ──
+      const TIMEOUT = 3500;
       const timedFetch = (url, ms) => new Promise(resolve => {
         let ctl;
         try { ctl = new AbortController(); } catch { resolve(); return; }
@@ -560,6 +625,144 @@
           .catch(() => { })
           .finally(() => { clearTimeout(t); resolve(); });
       });
+      const probe = async (host, ms) => {
+        const t0 = performance.now();
+        await timedFetch('https://' + host + '/', ms || TIMEOUT);
+        return Math.round(performance.now() - t0);
+      };
+      const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+      const jitter = a => a.length < 2 ? 0 : Math.max(...a) - Math.min(...a);
+      const jitterVerdict = j => j <= 25 ? '<b style="color:var(--ok)">بسیار پایدار</b>' : j <= 60 ? '<b style="color:#d6c96b">پایدار</b>' : '<b style="color:#f8b4b4">نوسان بالا</b>';
+
+      // ─────────── SMART OPTIMIZER — one button: best IP + operator tuning ───────────
+      const oStatus = $('#opt-status'), oProg = $('#opt-prog'), oRes = $('#opt-result'),
+        oCands = $('#opt-cands'), oStop = $('#opt-stop'), oRun = $('#opt-run');
+      // guard: placeholder render (state not yet arrived) has none of these elements
+      if (!oRun || !oStatus || !oStop || !$('#scan-bunny')) return;
+      let optStop = false;
+      oStop.addEventListener('click', () => { optStop = true; });
+      const setStep = (txt, pct) => {
+        oStatus.innerHTML = txt;
+        if (pct == null) { oProg.hidden = true; } else { oProg.hidden = false; const b = $('i', oProg); if (b) b.style.width = pct + '%'; }
+      };
+      const runMap = async (list, fn, conc, onOne) => {
+        const q = list.slice(); let done = 0;
+        await Promise.all(Array.from({ length: conc }, async () => {
+          while (!optStop) {
+            const it = q.shift(); if (!it) return;
+            await fn(it); done++;
+            if (onOne) onOne(it, done);
+          }
+        }));
+      };
+
+      $('#opt-run').addEventListener('click', async () => {
+        if (oRun.dataset.busy === '1') return;
+        oRun.dataset.busy = '1'; oRun.disabled = true; optStop = false;
+        oStop.hidden = false; oRes.innerHTML = ''; oCands.innerHTML = '';
+        try {
+          // 1) operator detect (server reads the request IP → ASN)
+          setStep('۱/۵ — تشخیص اپراتور اینترنت شما…', 5);
+          let w; try { w = await api('whoami'); } catch { w = { operator: 'auto', label: 'خودکار' }; }
+          const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
+          const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
+
+          // 2) verified geo-balanced edges
+          setStep('۲/۵ — دریافت لبه‌های تأییدشده نزدیک ایران… (اولین بار ممکن است تا ۳۰ ثانیه طول بکشد)', 15);
+          const r = await api('bunnyedges', {});
+          const edges = (r.edges || []).slice(0, 40);
+          if (!edges.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>'; return; }
+
+          // 3) round 1 — first RTT sweep from THIS phone
+          setStep('۳/۵ — سنجش پینگ ' + edges.length + ' لبه از مرورگر شما…', 20);
+          const first = new Map();
+          await runMap(edges, async ip => { first.set(ip, await probe(ip)); }, 6,
+            (ip, done) => setStep('۳/۵ — سنجش پینگ ' + done + ' از ' + edges.length + ' لبه…', 20 + done / edges.length * 40));
+          const alive = edges.filter(ip => (first.get(ip) || TIMEOUT) < TIMEOUT - 50)
+            .sort((a, b) => first.get(a) - first.get(b)).slice(0, 12);
+          if (!alive.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای از اینترنت شما پاسخ نداد — بعداً دوباره تلاش کنید.</p>'; return; }
+
+          // 4) rounds 2-3 on the top 12 → median + jitter (stability!)
+          setStep('۴/۵ — سنجش پایداری ۱۲ لبه برتر (هرکدام ۳ بار)…', 65);
+          const samples = new Map(alive.map(ip => [ip, [first.get(ip)]]));
+          for (let round = 0; round < 2 && !optStop; round++) {
+            await runMap(alive, async ip => { samples.get(ip).push(await probe(ip)); }, 6);
+          }
+          const cands = alive.map(ip => {
+            const s = samples.get(ip);
+            return { ip, geo: (r.geo || {})[ip] || null, med: median(s), jit: jitter(s) };
+          }).map(c => ({ ...c, score: c.med + c.jit * 0.6 })).sort((a, b) => a.score - b.score);
+          oCands.innerHTML = '<p style="font-size:11px;color:#8d8d8d;margin:2px 0 6px">برترین گزینه‌ها (پینگ میانه + نوسان):</p>' +
+            cands.slice(0, 5).map((c, i) => `<div class="scan-row"><span>${i === 0 ? '🏆 ' : ''}${c.ip}</span>
+              <span class="ok">${c.med} ms</span><span class="geo">نوسان ${c.jit} ms · ${c.geo ? esc(c.geo.city + '، ' + c.geo.cc) : '—'}</span>
+              <span class="geo">${i === 0 ? 'انتخاب شد' : 'رزرو'}</span></div>`).join('');
+
+          // 5) confirm the winner (2 extra probes), fall back if it died
+          setStep('۵/۵ — تأیید نهایی و اعمال روی همه کانفیگ‌ها…', 88);
+          let best = null;
+          for (const c of cands) {
+            const c1 = await probe(c.ip), c2 = await probe(c.ip);
+            if (c1 < TIMEOUT - 50 && c2 < TIMEOUT - 50) { best = { ...c, med: median([c.med, c1, c2]) }; break; }
+          }
+          if (optStop) { setStep('بهینه‌سازی متوقف شد.'); return; }
+          if (!best) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای پایدار پاسخ نداد — دوباره تلاش کنید.</p>'; return; }
+
+          // apply: best edge IP + operator FinalMask profile in one shot
+          const tuning = { enabled: true, profile: opKey, frag_on: opKey !== 'auto' };
+          await api('settings', { address: best.ip, tuning });
+          await refreshAll();
+          setStep('انجام شد ✓', null);
+          oRes.innerHTML = `<div class="opt-ok">
+            <b style="font-size:13px">بهترین مسیر برای شبکه شما فعال شد ✓</b>
+            <ul class="kv" style="margin-top:8px">
+            <li><span>اپراتور شناسایی‌شده</span><b>${esc(opLabel)}</b></li>
+            <li><span>پروفایل FinalMask اعمال‌شده</span><b>${opKey === 'auto' ? 'خودکار (بدون فرگمنت — کم‌ترین پینگ)' : esc(opLabel)}</b></li>
+            <li><span>بهترین لبه</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${best.ip}</b></li>
+            <li><span>موقعیت</span><b>${best.geo ? esc(best.geo.city + '، ' + best.geo.cc) : '—'}</b></li>
+            <li><span>پینگ میانه</span><b style="color:var(--ok)">${best.med} ms</b></li>
+            <li><span>نوسان (پایداری)</span><b>${best.jit} ms — ${jitterVerdict(best.jit)}</b></li>
+            </ul>
+            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">همه کانفیگ‌ها حالا از این لبه سرو می‌شوند. در کلاینت خود (v2rayNG / Hiddify) اشتراک را <b>به‌روزرسانی (Update)</b> کنید تا لینک‌های جدید گرفته شود. اگر باز هم قطع و وصل شد، دوباره همین دکمه را بزنید تا لبه تازه‌ای انتخاب شود.</p></div>`;
+        } catch (ex) {
+          setStep('');
+          oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
+        } finally {
+          oRun.dataset.busy = '0'; oRun.disabled = false; oStop.hidden = true;
+        }
+      });
+
+      // ─────────── STABILITY TEST of the current route ───────────
+      $('#opt-stab').addEventListener('click', async () => {
+        const btn = $('#opt-stab');
+        if (btn.dataset.busy === '1') return;
+        btn.dataset.busy = '1'; btn.disabled = true; optStop = false; oStop.hidden = false;
+        try {
+          const target = (S.state && S.state.settings.address) || location.host;
+          setStep('سنجش پایداری مسیر فعلی (<b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(target) + '</b>) — ۸ پینگ متوالی…', 10);
+          const s = [];
+          for (let i = 0; i < 8 && !optStop; i++) { s.push(await probe(target)); setStep('سنجش پایداری مسیر فعلی — ' + (i + 1) + ' از ۸…', (i + 1) / 8 * 100); }
+          const med = median(s), jit = jitter(s);
+          setStep('تست پایداری تمام شد', null);
+          oRes.innerHTML = `<div class="opt-ok">
+            <b style="font-size:13px">نتیجه تست مسیر فعلی</b>
+            <ul class="kv" style="margin-top:8px">
+            <li><span>مقصد</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(target)}</b></li>
+            <li><span>پینگ میانه</span><b>${med} ms</b></li>
+            <li><span>کمترین / بیشترین</span><b>${Math.min(...s)} / ${Math.max(...s)} ms</b></li>
+            <li><span>نوسان</span><b>${jit} ms — ${jitterVerdict(jit)}</b></li>
+            </ul>
+            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">${jit > 60 || med > 400
+              ? 'نوسان یا پینگ بالاست — دکمه «بهینه‌سازی خودکار برای شبکه من» را بزنید تا یک لبه پایدارتر انتخاب شود.'
+              : 'مسیر فعلی سالم است؛ اگر باز هم قطع و وصل می‌شود، «بهینه‌سازی خودکار» را اجرا کنید و اشتراک را در کلاینت به‌روزرسانی کنید.'}</p></div>`;
+        } catch (ex) {
+          setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
+        } finally { btn.dataset.busy = '0'; btn.disabled = false; oStop.hidden = true; }
+      });
+
+      // ─────────── MANUAL SCAN (unchanged behavior) ───────────
+      const out = $('#scan-out'), prog = $('#scan-prog'), statusEl = $('#scan-status'), stopBtn = $('#scan-stop');
+      let stopped = false;
+      stopBtn.addEventListener('click', () => { stopped = true; });
 
       // event delegation: ONE listener for every «اعمال» button (no re-attach churn)
       out.addEventListener('click', async e => {
@@ -583,7 +786,7 @@
             out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>';
             return;
           }
-          const TIMEOUT = 3500, CONC = 6; // capped parallelism — 40 hanging fetches used to saturate mobile links
+          const CONC = 6; // capped parallelism — 40 hanging fetches used to saturate mobile links
           const edges = r.edges.slice(0, 60);
           // FIX(v3.3): `rows` was declared inside the try-block while renderRows
           // was declared outside → ReferenceError "rows is not defined" and the
@@ -609,9 +812,7 @@
             while (!stopped) {
               const ip = queue.shift();
               if (!ip) return;
-              const t0 = performance.now();
-              await timedFetch('https://' + ip + '/', TIMEOUT);
-              const ms = Math.round(performance.now() - t0);
+              const ms = await probe(ip);
               const rw = byIp.get(ip);
               if (rw) {
                 rw.ms = Math.min(ms, TIMEOUT);
@@ -678,6 +879,10 @@
       });
     },
     settings() {
+      // guard: when state hasn't arrived yet the view renders a placeholder that
+      // has none of these elements — bail and let viewStale re-render + re-bind
+      // once stateLoop delivers data (was: rare "textContent of null" race).
+      if (!$('#tg-status') || !$('#se-save')) return;
       // ── Telegram bot section (v3.4) ──
       const stEl = $('#tg-status'), connBtn = $('#tg-connect'), discBtn = $('#tg-disconnect');
       const paintTg = () => {
@@ -712,24 +917,58 @@
         } catch (ex) { toast(ex.message, 'err'); }
       });
 
-      // operator radio → sensible frag_on default (auto = off, others = on)
-      $$('input[name="opprof"]').forEach(rd => rd.addEventListener('change', () => {
-        const cb = $('#se-fragon');
-        if (cb) cb.checked = rd.value !== 'auto';
-      }));
+      // ── FinalMask & Cipher Suites section (v3.6) ──
+      // guard: when state hasn't arrived yet the view renders a placeholder —
+      // re-binding happens automatically via viewStale once data lands.
+      const fmOn = $('#se-fm-on'), opSel = $('#se-opprof'), fpSel = $('#se-fp'), cipherSel = $('#se-cipher');
+      if (!fmOn || !opSel || !fpSel || !cipherSel) return;
+      const fmBlock = $('#fm-block'), opNote = $('#se-opnote'), fragOn = $('#se-fragon'),
+        cipherWrap = $('#se-cipher-wrap');
+      const ops = (S.state && S.state.settings.operators) || {};
+      const paintFm = () => {
+        fmBlock.style.display = fmOn.checked ? '' : 'none';
+        const prof = ops[opSel.value];
+        opNote.textContent = prof ? (prof.note || '') : '';
+      };
+      const initCipherCustom = () => {
+        cipherWrap.style.display = cipherSel.value === '__custom__' ? '' : 'none';
+      };
+      fmOn.addEventListener('change', paintFm);
+      opSel.addEventListener('change', () => {
+        const prof = ops[opSel.value];
+        // switching operator → refill fragment presets + fingerprint + sensible frag default
+        if (prof) {
+          const fl = $('#se-fraglen'); if (fl) fl.value = prof.frag_lengths || fl.value;
+          const fd = $('#se-fragdelay'); if (fd) fd.value = prof.frag_delays || fd.value;
+          if (prof.fp) fpSel.value = prof.fp;
+        }
+        if (fragOn) fragOn.checked = opSel.value !== 'auto';
+        paintFm();
+      });
+      cipherSel.addEventListener('change', initCipherCustom);
+      paintFm(); initCipherCustom();
+
       $('#se-save').addEventListener('click', async () => {
         const protocols = {};
         $$('.se-proto').forEach(p => protocols[p.dataset.k] = p.checked);
-        const prof = $('input[name="opprof"]:checked');
-        const profV = prof ? prof.value : 'auto';
-        const fragLen = ($('#se-fraglen') || {}).value || '';
-        const profDefault = (S.state && S.state.settings.operators || {})[profV];
+        const profV = opSel.value;
+        const profDefault = ops[profV];
+        const cipherSelV = cipherSel.value;
         // explicit custom lengths only apply on the custom profile — otherwise keep the preset
         const tune = {
-          enabled: true, profile: profV,
-          frag_on: $('#se-fragon') && $('#se-fragon').checked,
-          frag_lengths: profV === 'custom' ? fragLen : (profDefault ? profDefault.frag_lengths : undefined),
+          enabled: fmOn.checked,
+          profile: profV,
+          fp: fpSel.value,
+          alpn: $('#se-alpn').value,
+          cipher_suites: cipherSelV === '__custom__' ? (($('#se-cipher-custom') || {}).value || '') : cipherSelV,
+          frag_on: fragOn && fragOn.checked,
+          frag_packets: $('#se-fragpackets').value,
+          frag_lengths: profV === 'custom' ? (($('#se-fraglen') || {}).value || '') : (profDefault ? profDefault.frag_lengths : undefined),
           frag_delays: profV === 'custom' ? (($('#se-fragdelay') || {}).value || '') : (profDefault ? profDefault.frag_delays : undefined),
+          frag_maxsplit: ($('#se-fragmaxsplit') || {}).value || '',
+          noise_on: $('#se-noiseon') && $('#se-noiseon').checked,
+          noise_rand: ($('#se-noiserand') || {}).value || '',
+          noise_delay: ($('#se-noisedelay') || {}).value || '',
         };
         if (tune.frag_lengths === undefined) delete tune.frag_lengths;
         if (tune.frag_delays === undefined) delete tune.frag_delays;
