@@ -144,11 +144,11 @@ func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
                 case path == "/panel/api/ping":
                         sendJSON(w, 200, map[string]any{"ok": true, "t": time.Now().UnixMilli()})
                 case path == "/panel/api/stats":
-                        sendJSON(w, 200, statsPayload())
+                        sendJSONGz(r, w, 200, statsPayload())
                 case path == "/panel/api/state":
-                        sendJSON(w, 200, statePayload(r))
+                        sendJSONGz(r, w, 200, statePayload(r))
                 case path == "/panel/api/log":
-                        sendJSON(w, 200, map[string]any{"lines": logTail(150)})
+                        sendJSONGz(r, w, 200, map[string]any{"lines": logTail(150)})
                 case path == "/panel/api/health":
                         sendJSON(w, 200, healthPayload())
                 case path == "/panel/api/whoami":
@@ -1307,7 +1307,7 @@ func handleBunnyEdges(w http.ResponseWriter, r *http.Request) {
                 return
         }
         edges, geo, cached := bunnyEdgesFor(dom)
-        sendJSON(w, 200, map[string]any{"ok": true, "domain": dom, "edges": edges, "geo": geo,
+        sendJSONGz(r, w, 200, map[string]any{"ok": true, "domain": dom, "edges": edges, "geo": geo,
                 "verified": len(edges), "cached": cached})
 }
 

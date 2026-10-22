@@ -128,7 +128,7 @@
     $('#forgot').addEventListener('click', () => modal(`<h3>رمز عبور <button>✕</button></h3>
       <p style="font-size:12.5px;color:#bbb;line-height:2">
       اگر رمز را خودتان تنظیم نکرده‌اید، پنل آن را هنگام استقرار <b>خودکار ساخته</b> و در <b>لاگ‌های دیپلوی Lucity</b> چاپ کرده است.<br>
-      متغیر محیطی <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> را در تنظیمات سرویس ست کنید تا رمز دلخواه شما باشد. رمز جدید در پنل هم قابل تغییر است (تنظیمات ← مدیرت).</p>`));
+      متغیر محیطی <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> را در تنظیمات سرویس تنظیم کنید تا رمز دلخواه شما باشد. رمز جدید در پنل هم قابل تغییر است (تنظیمات ← مدیریت).</p>`));
     $('#btn-quick').addEventListener('click', async () => {
       try {
         const st = await api('state');
@@ -154,7 +154,7 @@
       } else if (act === 'help') {
         modal(`<h3>راهنما <button>✕</button></h3>
         <p style="font-size:12.5px;color:#bbb;line-height:2">
-        ۱) با نام کاربری و رمز لاگین کنید (رمز در لاگ دیپلوی است اگر خودتان ست نکرده‌اید).<br>
+        ۱) با نام کاربری و رمز وارد شوید (رمز در لاگ دیپلوی است اگر خودتان تنظیم نکرده‌اید).<br>
         ۲) از بخش «کاربران» لینک اشتراک هر کاربر را کپی یا QR آن را بگیرید.<br>
         ۳) در v2rayNG / Hiddify از طریق Import from clipboard اضافه کنید.<br>
         ۴) اگر اتصال برقرار نشد، از «اسکنر IP» لبه نزدیک CDN را پیدا و در تنظیمات کانفیگ اعمال کنید.</p>`);
@@ -192,8 +192,18 @@
       dashViews.hidden = true;
       setDashFX(false); // pause hidden dashboard canvases → zero cost
       host.hidden = false;
-      host.innerHTML = views[v] ? views[v]() : '<p>به‌زودی</p>';
-      if (viewsInit[v]) viewsInit[v]();
+      // FIX(v3.3): views that need S.state used to render ONCE with empty data
+      // (state arrives a beat later on slow links) and never refresh → "menu
+      // items never load". Now we mark the view stale and re-render it the
+      // moment stateLoop delivers data.
+      const needsState = v === 'users' || v === 'subs' || v === 'settings';
+      S.viewStale = needsState && !S.state;
+      try {
+        host.innerHTML = views[v] ? views[v]() : '<p>به‌زودی</p>';
+      } catch (err) {
+        host.innerHTML = '<section class="info-sec" style="margin-top:20px"><h3>خطا</h3><p style="font-size:12px;color:#f8b4b4">در نمایش این بخش مشکلی پیش آمد: ' + esc(err.message) + '</p></section>';
+      }
+      if (viewsInit[v]) { try { viewsInit[v](); } catch (err) { console.error(err); } }
       window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     }
   }
@@ -263,6 +273,9 @@
     try {
       S.state = await api('state');
       paintState(S.state);
+      // FIX(v3.3): if the current view was rendered before state existed,
+      // re-render it now (menus never loaded otherwise on slow connections).
+      if (S.viewStale && S.view !== 'dashboard') { S.viewStale = false; renderView(S.view); }
     } catch { }
   }
   function paintState(st) {
@@ -345,13 +358,15 @@
     },
     scanner() {
       return `<section class="info-sec" style="margin-top:20px">
-      <h3>اسکنر IP — یافتن لبه تمیز و سریع CDN</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">لبه‌های bunny.net (CDN خود Lucity) اسکن می‌شوند؛ هر لبه‌ای که گواهی دامنه شما را سرو کند قابل استفاده است. نزدیک‌ترین لبه (ترکیه/آذربایجان/عراق) کم‌ترین پینگ را از ایران دارد. IP انتخابی را در «تنظیمات ← آدرس» بگذارید.</p>
+      <h3>اسکنر IP — یافتن نزدیک‌ترین لبه CDN</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">پینگ لبه‌های bunny.net (CDN خود Lucity) از <b>مرورگر خودتان</b> سنجیده می‌شود تا دقیقاً مطابق مسیر اینترنت شما باشد. لبه‌های نزدیک ایران (ترکیه، قفقاز، عراق، اروپا) اولویت دارند. روی «اعمال» بزنید تا همه کانفیگ‌ها از آن IP سرو شوند؛ برای برگشت، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn primary" id="scan-bunny">اسکن لبه‌های CDN</button>
         <button class="btn" id="scan-custom">اسکن IP های دلخواه</button>
+        <button class="btn" id="scan-stop" hidden>توقف اسکن</button>
       </div>
       <div class="progress" hidden id="scan-prog"><i></i></div>
+      <p id="scan-status" style="font-size:11.5px;color:#8d8d8d;margin:8px 0 0;line-height:1.9"></p>
       <div class="scan-list" id="scan-out"></div>
       </section>`;
     },
@@ -362,7 +377,7 @@
       <ul class="kv">
       <li><span>پردازنده</span><b>${esc(st.cpu_model || '—')}</b></li>
       <li><span>مصرف CPU</span><b>${(st.cpu || 0).toFixed(1)}%</b></li>
-      <li><span>حافظه</span><b>${(st.mem_used || 0)} / ${st.mem_total || 0} MB (${(st.mem || 0).toFixed(1)}%)</b></li>
+      <li><span>حافظه</span><b>${(st.mem_used || 0)} / ${st.mem_total || 0} MB (${(Number(st.mem) || 0).toFixed(1)}%)</b></li>
       <li><span>دیسک</span><b>${(st.disk && st.disk.used || 0)} / ${(st.disk && st.disk.total || 0)} GB</b></li>
       <li><span>دانلود کل</span><b>${fmtGB(st.rx_total || 0)}</b></li>
       <li><span>آپلود کل</span><b>${fmtGB(st.tx_total || 0)}</b></li>
@@ -432,10 +447,10 @@
       <h3>پشتیبانی</h3>
       <p style="font-size:12.5px;color:#bbb;line-height:2.2;margin-top:8px">
       DEEP NETWORK روی Lucity اجرا می‌شود؛ همه‌ی تنظیمات از متغیرهای محیطی سرویس خوانده می‌شود:<br>
-      <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> — رمز ورود پنل (در غیر این صورت خودکار ساخته و در لاگ دیپلوی چاپ می‌شود)<br>
+      <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> — رمز ورود به پنل (در غیر این صورت خودکار ساخته و در لاگ دیپلوی چاپ می‌شود)<br>
       <code style="font-family:var(--mono);direction:ltr;display:inline-block">DOMAIN</code> — دامنه سرویس (برای لینک‌های درست و اسکنر CDN)<br>
       <code style="font-family:var(--mono);direction:ltr;display:inline-block">UUID / SECRET</code> — ثابت نگه‌داشتن شناسه‌ها بین دیپلوی‌ها<br>
-      <b style="color:#e8e8e8">مهم:</b> یک Volume روی مسیر <code style="font-family:var(--mono);direction:ltr;display:inline-block">/data</code> سوار کنید تا کاربران و لینک‌ها بعد از دیپلوی دوباره از بین نروند.</p>
+      <b style="color:#e8e8e8">مهم:</b> یک Volume روی مسیر <code style="font-family:var(--mono);direction:ltr;display:inline-block">/data</code> متصل کنید تا کاربران و لینک‌ها بعد از دیپلوی دوباره از بین نروند.</p>
       </section>`;
     },
   };
@@ -492,45 +507,91 @@
       }));
     },
     scanner() {
-      const out = $('#scan-out'), prog = $('#scan-prog');
+      const out = $('#scan-out'), prog = $('#scan-prog'), statusEl = $('#scan-status'), stopBtn = $('#scan-stop');
+      let stopped = false;
+      stopBtn.addEventListener('click', () => { stopped = true; });
+
+      // hard-timeout fetch (works on every browser — no AbortSignal.timeout dependency)
+      const timedFetch = (url, ms) => new Promise(resolve => {
+        let ctl;
+        try { ctl = new AbortController(); } catch { resolve(); return; }
+        const t = setTimeout(() => { try { ctl.abort(); } catch { } }, ms);
+        fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal })
+          .catch(() => { })
+          .finally(() => { clearTimeout(t); resolve(); });
+      });
+
+      // event delegation: ONE listener for every «اعمال» button (no re-attach churn)
+      out.addEventListener('click', async e => {
+        const b = e.target.closest('[data-ip]');
+        if (!b) return;
+        try {
+          await api('settings', { address: b.dataset.ip });
+          toast('IP روی همه کانفیگ‌ها اعمال شد ✓', 'ok'); refreshAll();
+        } catch (ex) { toast(ex.message, 'err'); }
+      });
+
       $('#scan-bunny').addEventListener('click', async () => {
-        out.innerHTML = '<p style="color:#8d8d8d;font-size:12px">در حال دریافت و بررسی لبه‌های CDN… (چند ثانیه)</p>';
+        if (out.dataset.busy === '1') return;
+        out.dataset.busy = '1'; stopped = false; stopBtn.hidden = false;
+        statusEl.textContent = 'در حال دریافت لبه‌های تأییدشده… (اولین اسکن ممکن است تا ۳۰ ثانیه طول بکشد؛ دفعات بعد سریع است)';
+        out.innerHTML = '';
         try {
           const r = await api('bunnyedges', {});
-          if (!r.edges || !r.edges.length) return out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>';
-          // browser-side real RTT scan of the verified edges
-          out.innerHTML = '';
-          prog.hidden = false; // FIX: progress bar was never un-hidden
-          let done = 0;
-          const rows = [];
-          for (const ip of r.edges.slice(0, 40)) {
-            rows.push({ ip, geo: (r.geo || {})[ip] || null, ms: null });
+          if (!r.edges || !r.edges.length) {
+            statusEl.textContent = '';
+            out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>';
+            return;
           }
+          const TIMEOUT = 3500, CONC = 6; // capped parallelism — 40 hanging fetches used to saturate mobile links
+          const edges = r.edges.slice(0, 60);
+          // FIX(v3.3): `rows` was declared inside the try-block while renderRows
+          // was declared outside → ReferenceError "rows is not defined" and the
+          // scanner did NOTHING. Both now share one scope, and re-renders are
+          // single-listener (event delegation), sorted as results arrive.
+          const rows = edges.map(ip => ({ ip, geo: (r.geo || {})[ip] || null, ms: null }));
+          const byIp = new Map(rows.map(x => [x.ip, x]));
+          const renderRows = () => {
+            const fin = rows.filter(x => x.ms != null).sort((a, b) => a.ms - b.ms);
+            const pend = rows.filter(x => x.ms == null);
+            const row = w => `<div class="scan-row"><span>${w.ip}</span>
+            <span class="${w.ms == null ? '' : (w.ms < TIMEOUT - 50 ? 'ok' : 'bad')}">${w.ms == null ? '…' : (w.ms < TIMEOUT - 50 ? w.ms + ' ms' : 'بدون پاسخ')}</span>
+            <span class="geo">${w.geo ? esc(w.geo.city + '، ' + w.geo.cc) : '—'}</span>
+            <button class="mini-btn" data-ip="${w.ip}">اعمال</button></div>`;
+            out.innerHTML = fin.map(row).join('') + pend.map(row).join('');
+          };
           renderRows();
-          await Promise.all(rows.map(async (row) => {
-            const t0 = performance.now();
-            try { await fetch('https://' + row.ip + '/', { mode: 'no-cors', cache: 'no-store' }); } catch { }
-            row.ms = Math.round(performance.now() - t0);
-            done++;
-            $('i', prog).style.width = (done / rows.length * 100) + '%';
-            // FIX: re-render in batches (was: full re-render + 40 listener
-            // re-attachments on EVERY probe completion → scan-time jank)
-            if (done % 5 === 0 || done === rows.length) renderRows();
+          prog.hidden = false;
+          statusEl.textContent = '۰ از ' + rows.length + ' لبه بررسی شد…';
+          let doneN = 0, okN = 0;
+          const queue = edges.slice();
+          await Promise.all(Array.from({ length: CONC }, async () => {
+            while (!stopped) {
+              const ip = queue.shift();
+              if (!ip) return;
+              const t0 = performance.now();
+              await timedFetch('https://' + ip + '/', TIMEOUT);
+              const ms = Math.round(performance.now() - t0);
+              const rw = byIp.get(ip);
+              if (rw) {
+                rw.ms = Math.min(ms, TIMEOUT);
+                if (ms < TIMEOUT - 50) okN++;
+              }
+              doneN++;
+              const bar = $('i', prog); if (bar) bar.style.width = (doneN / rows.length * 100) + '%';
+              statusEl.textContent = doneN + ' از ' + rows.length + ' لبه بررسی شد — ' + okN + ' لبه پاسخ داد';
+              renderRows();
+            }
           }));
           prog.hidden = true;
-        } catch (ex) { out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>'; }
-        function renderRows() {
-          out.innerHTML = rows.slice().sort((a, b) => (a.ms || 1e9) - (b.ms || 1e9)).map(r =>
-            `<div class="scan-row"><span>${r.ip}</span>
-            <span class="${r.ms ? 'ok' : ''}">${r.ms ? r.ms + ' ms' : '…'}</span>
-            <span class="geo">${r.geo ? esc(r.geo.city + '، ' + r.geo.cc) : ''}</span>
-            <button class="mini-btn" data-ip="${r.ip}">اعمال</button></div>`).join('');
-          $$('#scan-out [data-ip]').forEach(b => b.addEventListener('click', async () => {
-            try {
-              await api('settings', { address: b.dataset.ip });
-              toast('IP روی همه کانفیگ‌ها اعمال شد ✓', 'ok'); refreshAll();
-            } catch (ex) { toast(ex.message, 'err'); }
-          }));
+          statusEl.textContent = stopped
+            ? 'اسکن متوقف شد — ' + doneN + ' لبه بررسی شد'
+            : 'تمام شد ✓ سریع‌ترین لبه در بالای فهرست است — روی «اعمال» بزنید';
+        } catch (ex) {
+          statusEl.textContent = '';
+          out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
+        } finally {
+          out.dataset.busy = '0'; stopBtn.hidden = true; prog.hidden = true;
         }
       });
       $('#scan-custom').addEventListener('click', () => {
@@ -539,7 +600,7 @@
         <div class="btns"><button class="btn primary" id="sc-go">اسکن (سمت سرور)</button></div>`);
         $('#sc-go').addEventListener('click', async () => {
           const targets = $('#sc-list').value.split('\n').map(s => s.trim()).filter(Boolean);
-          if (!targets.length) return toast('IP وارد کنید', 'err');
+          if (!targets.length) return toast('حداقل یک IP وارد کنید', 'err');
           try {
             const r = await api('ipscan', { targets, port: 443 });
             $('#modal-root').innerHTML = '';
@@ -680,10 +741,13 @@
   function startLoops() {
     stopTimers();
     statLoop(); stateLoop(); pingLoop();
-    S.timers.push(setInterval(statLoop, 2000));
-    S.timers.push(setInterval(pingLoop, 5000));
-    S.timers.push(setInterval(stateLoop, 30000));
-    S.timers.push(setInterval(() => { if (S.view === 'stats' && !S.paused) renderView('stats'); }, 5000));
+    // FIX(v3.3): gentler polling — 2s full-stats + 5s pings over a filtered
+    // Iranian mobile link made the whole panel feel laggy; also everything
+    // pauses while the tab is hidden (bandwidth + battery).
+    S.timers.push(setInterval(() => { if (!document.hidden) statLoop(); }, 3000));
+    S.timers.push(setInterval(() => { if (!document.hidden) pingLoop(); }, 6000));
+    S.timers.push(setInterval(() => { if (!document.hidden) stateLoop(); }, 45000));
+    S.timers.push(setInterval(() => { if (S.view === 'stats' && !document.hidden) renderView('stats'); }, 5000));
   }
   async function refreshAll() { await stateLoop(); if (S.view !== 'dashboard') renderView(S.view); }
 

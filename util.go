@@ -3,15 +3,44 @@ package main
 import (
         "archive/zip"
         "bytes"
+        "compress/gzip"
         "crypto/rand"
+        "encoding/json"
         "fmt"
         "io"
+        "net/http"
         "os"
         "path/filepath"
+        "strings"
         "syscall"
 )
 
 // ─────────── small shared helpers ───────────
+
+// sendJSONGz marshals obj and writes it gzip-compressed when the client
+// accepts it and the body is large enough to be worth it (v3.3: stats/state
+// payloads are polled every few seconds — 5-6KB raw ≈ 1.3KB gzipped, which
+// matters a lot on filtered mobile links where every byte adds latency).
+func sendJSONGz(r *http.Request, w http.ResponseWriter, code int, obj any) {
+        b, _ := json.Marshal(obj)
+        w.Header().Set("Content-Type", "application/json; charset=utf-8")
+        if len(b) > 512 && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+                var buf bytes.Buffer
+                gz := gzip.NewWriter(&buf)
+                _, _ = gz.Write(b)
+                _ = gz.Close()
+                if buf.Len() < len(b) {
+                        w.Header().Set("Content-Encoding", "gzip")
+                        w.Header().Set("Content-Length", itoa(buf.Len()))
+                        w.WriteHeader(code)
+                        _, _ = w.Write(buf.Bytes())
+                        return
+                }
+        }
+        w.Header().Set("Content-Length", itoa(len(b)))
+        w.WriteHeader(code)
+        _, _ = w.Write(b)
+}
 
 func fmtSscan(s string, n *int) (int, error) {
         return fmt.Sscan(s, n)

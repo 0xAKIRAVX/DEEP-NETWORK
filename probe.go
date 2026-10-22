@@ -10,7 +10,6 @@ import (
         "net/http"
         "os/exec"
         "path/filepath"
-        "sort"
         "strconv"
         "strings"
         "sync"
@@ -60,55 +59,55 @@ func deepProbeBin() string {
 // runDeepProbe calls the Rust binary: fast parallel TCP + TLS-ClientHello probes.
 // Line protocol: "<ip> <port> <sni> <rounds>" in, "<ip> <ok> <tcp_ms> <tls_ms> <stat>" out.
 func runDeepProbe(targets []ProbeTarget, timeoutMs int) []ProbeResult {
-	if timeoutMs <= 0 {
-		timeoutMs = 2000
-	}
-	if len(targets) == 0 {
-		return nil
-	}
-	bin := deepProbeBin()
-	if bin == "" {
-		return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
-	}
-	var inbuf bytes.Buffer
-	for _, t := range targets {
-		rounds := t.Rounds
-		if rounds < 1 {
-			rounds = 1
-		}
-		fmt.Fprintf(&inbuf, "%s %d %s %d\n", t.IP, orInt(t.Port, 443), t.SNI, rounds)
-	}
-	cmd := exec.Command(bin, itoa(timeoutMs))
-	cmd.Stdin = &inbuf
-	out, err := cmd.Output()
-	if err != nil && len(out) == 0 {
-		return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
-	}
-	var results []ProbeResult
-	for _, line := range strings.Split(string(out), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 5 {
-			continue
-		}
-		tcpMs, _ := strconv.ParseFloat(f[2], 64)
-		tlsMs, _ := strconv.ParseFloat(f[3], 64)
-		results = append(results, ProbeResult{
-			Target: f[0], IP: f[0], OK: f[1] == "1",
-			TCPMs: tcpMs, TLSMs: tlsMs,
-			SNIOk: f[4] == "hello", SNIStat: f[4],
-		})
-	}
-	if len(results) == 0 {
-		return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
-	}
-	return results
+        if timeoutMs <= 0 {
+                timeoutMs = 2000
+        }
+        if len(targets) == 0 {
+                return nil
+        }
+        bin := deepProbeBin()
+        if bin == "" {
+                return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
+        }
+        var inbuf bytes.Buffer
+        for _, t := range targets {
+                rounds := t.Rounds
+                if rounds < 1 {
+                        rounds = 1
+                }
+                fmt.Fprintf(&inbuf, "%s %d %s %d\n", t.IP, orInt(t.Port, 443), t.SNI, rounds)
+        }
+        cmd := exec.Command(bin, itoa(timeoutMs))
+        cmd.Stdin = &inbuf
+        out, err := cmd.Output()
+        if err != nil && len(out) == 0 {
+                return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
+        }
+        var results []ProbeResult
+        for _, line := range strings.Split(string(out), "\n") {
+                f := strings.Fields(line)
+                if len(f) < 5 {
+                        continue
+                }
+                tcpMs, _ := strconv.ParseFloat(f[2], 64)
+                tlsMs, _ := strconv.ParseFloat(f[3], 64)
+                results = append(results, ProbeResult{
+                        Target: f[0], IP: f[0], OK: f[1] == "1",
+                        TCPMs: tcpMs, TLSMs: tlsMs,
+                        SNIOk: f[4] == "hello", SNIStat: f[4],
+                })
+        }
+        if len(results) == 0 {
+                return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
+        }
+        return results
 }
 
 func orInt(v, def int) int {
-	if v == 0 {
-		return def
-	}
-	return v
+        if v == 0 {
+                return def
+        }
+        return v
 }
 
 // goFallbackProbe: pure-Go TCP connect probe (used when the Rust binary is absent).
@@ -314,8 +313,13 @@ func verifyEdge(ip, domain string, timeout time.Duration) bool {
         return code >= 100 && code < 500
 }
 
-// bunnyEdgesFor: rust prefilter (TCP + TLS hello) over ALL edges, then a full
-// verification pass over the fastest shortlist. Cached 6h per domain.
+// bunnyEdgesFor: returns CDN edges that provably serve this domain, selected
+// GEO-BALANCED (v3.3). The old pipeline ranked candidates by latency measured
+// from THIS server (Hetzner DE) — so the "top 60" were all German edges and
+// Iranian users never saw the Turkey/Caucasus/Iraq PoPs that ping best from
+// Iran. Now every edge is geo-tagged first and a tiered per-country quota
+// guarantees near-Iran regions dominate the shortlist; the browser then
+// measures the real user-side RTT. Cached 6h per domain.
 func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]string, cached bool) {
         domain = strings.TrimSpace(strings.Split(domain, ":")[0])
         if domain == "" || isIPLiteral(domain) || !hostRe.MatchString(domain) {
@@ -335,34 +339,38 @@ func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]str
                 return nil, nil, false
         }
 
-        // 1) Rust prober: TCP + TLS ClientHello (with SNI) across every edge, ranked by latency.
-        targets := make([]ProbeTarget, len(ips))
-        for i, ip := range ips {
+        // 1) geo-tag every bunny edge once (ip-api batch, 6h cache).
+        geoAll := bunny.geoBatch(ips)
+
+        // 2) tiered, per-country quota — near-Iran regions first.
+        shortlist := pickEdgesByRegion(ips, geoAll, 130)
+        if len(shortlist) == 0 {
+                shortlist = ips
+        }
+
+        // 3) Rust prober: TCP + TLS ClientHello with our SNI (is the edge
+        //    actually serving this hostname?).
+        targets := make([]ProbeTarget, len(shortlist))
+        for i, ip := range shortlist {
                 targets[i] = ProbeTarget{IP: ip, Port: 443, SNI: domain}
         }
         res := runDeepProbe(targets, 2500)
-        var candidates []ProbeResult
+        var alive []string
         for _, r := range res {
                 if r.OK {
-                        candidates = append(candidates, r)
+                        alive = append(alive, r.IP)
                 }
         }
-        sort.Slice(candidates, func(i, j int) bool {
-                if candidates[i].TCPMs != candidates[j].TCPMs {
-                        return candidates[i].TCPMs < candidates[j].TCPMs
-                }
-                return candidates[i].TLSMs < candidates[j].TLSMs
-        })
-        if len(candidates) > 60 {
-                candidates = candidates[:60]
+        if len(alive) > 100 {
+                alive = alive[:100]
         }
 
-        // 2) Full chain+hostname verification on the shortlist (Go crypto/tls).
+        // 4) Full chain+hostname verification (Go crypto/tls) on the survivors.
         var verified []string
         sem := make(chan struct{}, 16)
         var wg sync.WaitGroup
         var mu sync.Mutex
-        for _, cand := range candidates {
+        for _, ip := range alive {
                 wg.Add(1)
                 go func(ip string) {
                         defer wg.Done()
@@ -373,7 +381,7 @@ func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]str
                                 verified = append(verified, ip)
                                 mu.Unlock()
                         }
-                }(cand.IP)
+                }(ip)
         }
         wg.Wait()
 
@@ -384,6 +392,50 @@ func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]str
         bunny.verT = time.Now()
         bunny.mu.Unlock()
         return verified, geo, false
+}
+
+// edgeRegionTiers: country → max edges, nearest-to-Iran first.
+var edgeRegionTiers = []map[string]int{
+        {"TR": 14, "AZ": 12, "GE": 12, "AM": 10, "IQ": 10, "AE": 10, "RO": 12, "BG": 10},                                        // tier 1 — Iran's neighbourhood
+        {"QA": 6, "BH": 6, "OM": 6, "KW": 6, "SA": 6, "GR": 8, "CY": 6, "RS": 6, "MK": 4, "AL": 4, "BA": 4, "MD": 6, "UA": 6}, // tier 2
+        {"HU": 5, "AT": 5, "SK": 5, "SI": 5, "HR": 5, "CZ": 5, "PL": 6, "DE": 10, "NL": 6, "CH": 5, "IT": 5, "FR": 4},          // tier 3
+        {"SE": 3, "NO": 3, "DK": 3, "FI": 3, "LT": 3, "LV": 3, "EE": 3, "BE": 3, "LU": 2, "GB": 3, "IE": 2, "ES": 3, "PT": 2}, // tier 4 — fallback breadth
+}
+
+// pickEdgesByRegion walks the tiers in order, taking up to perCC edges from
+// each country until total is filled (unknown-geo edges are skipped).
+func pickEdgesByRegion(ips []string, geo map[string]map[string]string, total int) []string {
+        if len(geo) == 0 || total <= 0 {
+                return nil
+        }
+        seen := make(map[string]bool, len(ips))
+        var out []string
+        budget := total
+        for _, tier := range edgeRegionTiers {
+                used := map[string]int{}
+                for _, ip := range ips {
+                        if budget <= 0 {
+                                return out
+                        }
+                        if seen[ip] {
+                                continue
+                        }
+                        g, ok := geo[ip]
+                        if !ok {
+                                continue
+                        }
+                        cc := g["cc"]
+                        cap, has := tier[cc]
+                        if !has || used[cc] >= cap {
+                                continue
+                        }
+                        seen[ip] = true
+                        used[cc]++
+                        out = append(out, ip)
+                        budget--
+                }
+        }
+        return out
 }
 
 // ─────────── client-side ISP detection (/panel/api/whoami) ───────────

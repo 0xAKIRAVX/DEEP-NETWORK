@@ -15,6 +15,20 @@
   };
   window.FX = FX;
 
+  // ─────────── low-end device detection (v3.3) ───────────
+  // Cheap phones (≤4 cores / ≤4GB) start degrading immediately instead of
+  // waiting 3+ seconds of measured low FPS — the panel must feel smooth from
+  // the very first frame.
+  {
+    const cores = navigator.hardwareConcurrency || 8;
+    const mem = navigator.deviceMemory || 8;
+    if (cores <= 4 || mem <= 4) {
+      FX.quality = .6;
+      FX.dpr = Math.min(FX.dpr, 1.25);
+      try { document.body.setAttribute('data-fx', 'low'); } catch { }
+    }
+  }
+
   // ─────────── helpers ───────────
   const $ = (s) => document.querySelector(s);
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -177,7 +191,7 @@
     const cv = $(canvasSel);
     if (!cv) return { stop() { }, pause() { }, resume() { } };
     // fibonacci sphere points — fewer on small screens (phones)
-    const N = Math.min(1500, window.innerWidth < 520 ? 850 : 1500);
+    const N = Math.min(1500, window.innerWidth < 640 ? 650 : window.innerWidth < 960 ? 1000 : 1500);
     const pts = [];
     for (let i = 0; i < N; i++) {
       const y = 1 - (i / (N - 1)) * 2;
@@ -219,7 +233,7 @@
     }
     const loop = makeLoop(function frame(t) {
       if (FX.paused) return;
-      if (FX.quality < .6) { skip = !skip; if (skip) return; } // half-rate under sustained load
+      if (FX.quality < .7) { skip = !skip; if (skip) return; } // half-rate under sustained load
       const dt = Math.min(64, (t - (globe._lt || t)) / 1000); globe._lt = t;
       if (!dragging && t - idleAt > 2500) rot += spinV * dt; // frame-rate independent spin
       const [c, w, h] = ctx2d(cv);
@@ -254,7 +268,7 @@
       }
       // dots (land bright, sea dim) — NO per-dot shadowBlur: it forced a
       // GPU blur per land point per frame → the "lag/freeze" root cause #2
-      const step = FX.quality > .6 ? 1 : 2;
+      const step = FX.quality > .7 ? 1 : 2;
       for (let i = 0; i < pts.length; i += step) {
         const p = pts[i];
         const [X, Y, Z] = proj(p, R, cx, cy);

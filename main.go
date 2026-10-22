@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.2.0"
+const Version = "3.3.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -207,6 +207,21 @@ func main() {
         go watchdogLoop()
         go usageLoop()
         go serverGeo()
+
+        // v3.3: pre-warm the CDN edge list in the background so the first
+        // scanner click in the panel is instant instead of a ~20s cold scan.
+        go func() {
+                time.Sleep(15 * time.Second)
+                dom := strings.TrimSpace(osGetenv("DOMAIN"))
+                if dom == "" {
+                        dom = "deep-network-development-w4a86.lucity.app"
+                }
+                if dom != "" && !isIPLiteral(dom) {
+                        logf("pre-warming CDN edge cache for %s …", dom)
+                        bunnyEdgesFor(dom)
+                        logf("CDN edge cache ready")
+                }
+        }()
 
         bootReport()
 
