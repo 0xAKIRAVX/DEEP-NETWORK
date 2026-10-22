@@ -45,8 +45,8 @@
         <circle cx="60" cy="60" r="57" />
         <circle cx="60" cy="60" r="57" class="spin-ccw" stroke-dasharray="8 5" />
       </svg>
-      <img class="lc-avatar" src="/panel/assets/img/avatar.jpg" alt="">
-      <button class="lc-cam" type="button" title="تغییر تصویر" aria-label="تغییر تصویر">
+      <img class="lc-avatar" id="lc-avatar" data-avatar src="/panel/avatar.png" alt="">
+      <button class="lc-cam" id="lc-cam" type="button" title="تغییر تصویر پروفایل" aria-label="تغییر تصویر پروفایل">
         <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
       </button>
     </div>
@@ -127,7 +127,10 @@
       <button class="hd-ico" id="bell" title="اعلان‌ها"><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 1 1 12 0v5l1.8 2.6H4.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10.2 20.5a1.9 1.9 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
       <div class="hd-user">
         <div class="hd-user-text"><b id="hd-user-name">admin</b><small id="hd-user-role">مدیر</small></div>
-        <div class="hd-avatar" id="hd-avatar"></div>
+        <button class="hd-avatar" id="hd-avatar-wrap" type="button" title="تغییر تصویر پروفایل" aria-label="تغییر تصویر پروفایل">
+          <img id="hd-avatar-img" src="/panel/avatar.png" alt="" draggable="false">
+          <i class="hd-cam" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="13" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></i>
+        </button>
       </div>
     </div>
   </header>
@@ -174,7 +177,7 @@
       <div class="hero-chips">
         <span class="chip"><svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>v__PANEL_VER__</span>
         <span class="chip"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v13M16 5v13M3.5 9.5h17M3.5 14h17" stroke="currentColor" stroke-width="1.2"/></svg><b id="fps-chip">60</b>FPS</span>
-        <span class="chip" id="chip-proto"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>XHTTP</span>
+        <span class="chip" id="chip-proto"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span id="chip-proto-label">XHTTP</span></span>
         <button class="chip-close" id="hero-close" aria-label="بستن">✕</button>
       </div>
     </section>
@@ -197,8 +200,8 @@
       <div class="stat">
         <div class="stat-ico"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="13" width="16" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 8h.01M7.5 16h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></div>
         <div><b id="st-proto">0</b></div>
-        <span>اکانت‌های فعال</span>
-        <small>پروتکل‌های قابل فعال‌سازی</small>
+        <span>پروتکل‌های فعال</span>
+        <small>ترنسپورت‌های روشن روی سرور</small>
       </div>
       <div class="stat">
         <div class="stat-ico"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>

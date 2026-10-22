@@ -55,15 +55,45 @@
     stopTimers();
     $('#dash').hidden = true;
     $('#login').hidden = false;
+    if (S.fx.dash) { try { S.fx.dash.stop(); } catch { } S.fx.dash = null; } // stop hidden canvas → real FPS
     if (!S.fx.login) S.fx.login = FX.starField($('#fx-login'), { stars: 100, drift: 7 });
   }
   function showDash() {
     $('#login').hidden = true;
     $('#dash').hidden = false;
+    if (S.fx.login) { try { S.fx.login.stop(); } catch { } S.fx.login = null; }
     if (!S.fx.dash) S.fx.dash = FX.starField($('#fx-dash'), { stars: 70, drift: 5 });
     renderView('dashboard');
     startLoops();
     detectOperator();
+  }
+
+  // ─────────── profile picture upload ───────────
+  let avatarV = 0;
+  function bustAvatars() {
+    avatarV = Date.now();
+    const u = '/panel/avatar.png?v=' + avatarV;
+    $$('img[data-avatar]').forEach(im => im.src = u);
+    const hd = $('#hd-avatar-img'); if (hd) hd.src = u;
+  }
+  function pickAvatar() {
+    const i = document.createElement('input');
+    i.type = 'file'; i.accept = 'image/png,image/jpeg,image/gif,image/webp';
+    i.addEventListener('change', async () => {
+      const f = i.files && i.files[0];
+      if (!f) return;
+      if (f.size > 8 * 1024 * 1024) return toast('حجم تصویر بیش از ۸ مگابایت است', 'err');
+      try {
+        const fd = new FormData(); fd.append('file', f);
+        const r = await fetch('/panel/api/avatar', { method: 'POST', body: fd });
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 401) return toast('برای تغییر عکس پروفایل اول وارد شوید', 'err');
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        bustAvatars();
+        toast('تصویر پروفایل ذخیره شد ✓', 'ok');
+      } catch (ex) { toast(ex.message, 'err'); }
+    });
+    i.click();
   }
 
   async function doLogin(e) {
@@ -86,6 +116,11 @@
     $('#login-form').addEventListener('submit', doLogin);
     $('#eye').addEventListener('click', () => {
       const i = $('#f-pass'); i.type = i.type === 'password' ? 'text' : 'password';
+    });
+    $('#lc-cam').addEventListener('click', () => {
+      // avatar upload needs a session; check quietly and open the picker if logged in
+      fetch('/panel/api/ping').then(r => { if (r.ok) pickAvatar(); else toast('برای تغییر عکس پروفایل اول وارد شوید'); })
+        .catch(() => toast('ارتباط با سرور برقرار نیست', 'err'));
     });
     $('#forgot').addEventListener('click', () => modal(`<h3>رمز عبور <button>✕</button></h3>
       <p style="font-size:12.5px;color:#bbb;line-height:2">
@@ -135,7 +170,7 @@
     $$('#sb-nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
     const ct = $('#content');
     if (v === 'dashboard') {
-      location.hash = '';
+      history.replaceState(null, '', location.pathname); // location.hash='' scrolls & appends '#'
       ct.style.display = '';
       // re-init FX canvases if they were dropped by another view
       if (!S.fx.wave) { S.fx.wave = FX.wave('#wave'); }
@@ -223,8 +258,9 @@
     for (const c of st.clients) { up += c.up || 0; down += c.down || 0; }
     const tEl = $('#st-traffic'); if (tEl) tEl.textContent = fmtGB(up + down);
     const active = st.clients.filter(c => c.status === 'active').length;
-    const dEl = $('#st-users-delta'); if (dEl) dEl.textContent = '+' + (S.state._lastActive && S.state._lastActive < active ? active - S.state._lastActive : 0);
-    S.state._lastActive = active;
+    const dEl = $('#st-users-delta');
+    if (dEl) dEl.textContent = '+' + (S.lastActive >= 0 && S.lastActive < active ? active - S.lastActive : 0);
+    S.lastActive = active;
     // users table (top 5)
     const tbl = $('#users-table');
     if (tbl) {
@@ -240,12 +276,11 @@
       }
     }
     // protocol chip
-    const cp = $('#chip-proto');
+    const cp = $('#chip-proto-label');
     if (cp) {
       const protos = st.settings.protocols || {};
-      const label = protos['vless-reality'] ? 'Reality' : protos['vless-xhttp'] ? 'XHTTP' : 'VLESS';
-      $('b', cp) ? $('b', cp).textContent = '' : 0;
-      cp.lastChild.textContent = label;
+      const tcpReady = st.settings.tcp_ready;
+      cp.textContent = tcpReady && protos['vless-reality'] ? 'Reality' : protos['vless-xhttp'] ? 'XHTTP' : protos['vless-ws'] ? 'VLESS-WS' : 'VLESS';
     }
   }
 
@@ -346,6 +381,10 @@
       <label class="field"><input id="se-user" value="${esc(s.user || '')}" placeholder="نام کاربری"></label>
       <label class="field"><input id="se-pass" type="password" placeholder="رمز عبور جدید (خالی = بدون تغییر)"></label>
       </div>
+      <div class="row2">
+      <label class="field"><input id="se-session" type="number" min="1" max="336" value="${s.session_hours || 12}" placeholder="مدت نشست (ساعت ۱-۳۳۶)"></label>
+      <label class="field"><input id="se-sni-ov" value="${esc(s.sni_override || '')}" placeholder="SNI جایگزین (اختیاری)"></label>
+      </div>
       <h4 style="margin:16px 0 8px;font-size:12.5px;color:#cfcfcf">اتصال</h4>
       <div class="row2">
       <label class="field"><input id="se-address" value="${esc(s.address || '')}" placeholder="آدرس تمیز (IP یا دامنه)"></label>
@@ -367,6 +406,11 @@
         <span style="display:flex;gap:8px;align-items:center"><input type="radio" name="opprof" value="${k}" ${k === (t.profile || 'auto') ? 'checked' : ''}><b>${esc(o.label)}</b></span>
         <small style="color:#7d7d7d;font-size:10px;line-height:1.7">${esc(o.note || '')}</small></label>`).join('')}
       </div>
+      <div class="row2" style="margin-top:12px">
+      <label class="field"><input id="se-fraglen" value="${esc(t.frag_lengths || '100-200')}" placeholder="طول فرگمنت (مثلاً 40-100)"></label>
+      <label class="field"><input id="se-fragdelay" value="${esc(t.frag_delays || '10-20')}" placeholder="تاخیر فرگمنت ms (مثلاً 10-20)"></label>
+      </div>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-fragon" ${t.frag_on ? 'checked' : ''}><span class="cbx"></span>فرگمنت TLS فعال (با پروفایل «اختصاصی» مقادیر بالا اعمال می‌شود)</label>
       <div class="btns"><button class="btn primary" id="se-save">ذخیره تنظیمات</button></div>
       </section>`;
     },
@@ -399,12 +443,12 @@
         } else if (act === 'edit') {
           const p = c.protocols || [];
           modal(`<h3>ویرایش ${esc(c.name)} <button>✕</button></h3>
-          <label class="field"><input id="eu-name" value="${esc(c.name)}" placeholder="نام">
+          <label class="field"><input id="eu-name" value="${esc(c.name)}" placeholder="نام"></label>
           <div class="row2">
-          <label class="field"><input id="eu-days" type="number" min="0" placeholder="روز (۰ = نامحدود)" value="${c.days_left || 0}">
-          <label class="field"><input id="eu-quota" type="number" min="0" placeholder="حجم GB" value="${c.quota ? Math.round(c.quota / 1073741824) : 0}">
+            <label class="field"><input id="eu-days" type="number" min="0" placeholder="روز (۰ = نامحدود)" value="${c.days_left || 0}"></label>
+            <label class="field"><input id="eu-quota" type="number" min="0" placeholder="حجم GB" value="${c.quota ? Math.round(c.quota / 1073741824) : 0}"></label>
           </div>
-          <label class="field"><input id="eu-note" value="${esc(c.note || '')}" placeholder="یادداشت">
+          <label class="field"><input id="eu-note" value="${esc(c.note || '')}" placeholder="یادداشت"></label>
           <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="eu-reset"><span class="cbx"></span>صفر کردن مصرف</label>
           <div class="btns"><button class="btn primary" id="eu-save">ذخیره</button></div>`);
           $('#eu-save').addEventListener('click', async () => {
@@ -483,9 +527,9 @@
           try {
             const r = await api('ipscan', { targets, port: 443 });
             $('#modal-root').innerHTML = '';
-            renderView('scanner');
-            out.innerHTML = r.results.map(x => `<div class="scan-row"><span>${esc(x.target)}</span>
-              <span class="${x.ok ? 'ok' : 'bad'}">${x.ok ? x.ms.toFixed(1) + ' ms' : 'غیرقابل دسترس'}</span><span></span><span></span></div>`).join('');
+            const box = $('#scan-out'); // query AFTER the modal closes — the old `out` may be detached
+            if (box) box.innerHTML = r.results.map(x => `<div class="scan-row"><span>${esc(x.target)}</span>
+              <span class="${x.ok ? 'ok' : 'bad'}">${x.ok ? x.ms.toFixed(1) + ' ms' : 'غیرقابل دسترس'}</span><span></span><span></span></div>`).join('') || '<p style="color:#8d8d8d;font-size:12px">نتیجه‌ای نبود</p>';
           } catch (ex) { toast(ex.message, 'err'); }
         });
       });
@@ -517,21 +561,41 @@
       });
     },
     settings() {
+      // operator radio → sensible frag_on default (auto = off, others = on)
+      $$('input[name="opprof"]').forEach(rd => rd.addEventListener('change', () => {
+        const cb = $('#se-fragon');
+        if (cb) cb.checked = rd.value !== 'auto';
+      }));
       $('#se-save').addEventListener('click', async () => {
         const protocols = {};
         $$('.se-proto').forEach(p => protocols[p.dataset.k] = p.checked);
         const prof = $('input[name="opprof"]:checked');
+        const profV = prof ? prof.value : 'auto';
+        const fragLen = ($('#se-fraglen') || {}).value || '';
+        const profDefault = (S.state && S.state.settings.operators || {})[profV];
+        // explicit custom lengths only apply on the custom profile — otherwise keep the preset
+        const tune = {
+          enabled: true, profile: profV,
+          frag_on: $('#se-fragon') && $('#se-fragon').checked,
+          frag_lengths: profV === 'custom' ? fragLen : (profDefault ? profDefault.frag_lengths : undefined),
+          frag_delays: profV === 'custom' ? (($('#se-fragdelay') || {}).value || '') : (profDefault ? profDefault.frag_delays : undefined),
+        };
+        if (tune.frag_lengths === undefined) delete tune.frag_lengths;
+        if (tune.frag_delays === undefined) delete tune.frag_delays;
         try {
-          await api('settings', {
+          const payload = {
             user: $('#se-user').value, address: $('#se-address').value,
             reality_sni: $('#se-sni').value, cfg_fmt: $('#se-fmt').value,
             random_sni: $('#se-randsni').checked, protocols,
-            tuning: { enabled: true, profile: prof ? prof.value : 'auto', frag_on: prof && prof.value !== 'auto' && prof.value !== 'custom' },
-          });
+            tuning: tune,
+          };
+          if ($('#se-sni-ov') && $('#se-sni-ov').value.trim() !== '') payload.sni_override = $('#se-sni-ov').value.trim();
+          if ($('#se-session')) payload.session_hours = +$('#se-session').value || 12;
+          if ($('#se-pass') && $('#se-pass').value) payload.pass = $('#se-pass').value;
+          await api('settings', payload);
           toast('تنظیمات ذخیره شد ✓', 'ok'); refreshAll();
         } catch (ex) { toast(ex.message, 'err'); }
       });
-      if ($('#se-pass')) { }
     },
   };
 
@@ -552,6 +616,8 @@
     });
     $('#hero-close').addEventListener('click', () => { $('#hero').style.display = 'none'; });
     $('#view-all').addEventListener('click', () => renderView('users'));
+    $('#hd-avatar-wrap').addEventListener('click', pickAvatar);
+    $('#hd-avatar-wrap').addEventListener('keydown', e => { if (e.key === 'Enter') pickAvatar(); });
     $('#theme-toggle').addEventListener('click', () => toast('حالت روشن در این نسخه فعال نیست — تم سینمایی تیره 🙂'));
     $('#bell').addEventListener('click', () => toast(S.stats && S.stats.online ? S.stats.online + ' تونل فعال است' : 'اعلان جدیدی نیست'));
     $('#chart-range').addEventListener('change', () => toast('بازه زنده: ۱۵۰ ثانیه اخیر (سایر بازه‌ها به‌زودی)'));
@@ -601,7 +667,7 @@
     S.timers.push(setInterval(statLoop, 2000));
     S.timers.push(setInterval(pingLoop, 5000));
     S.timers.push(setInterval(stateLoop, 30000));
-    setInterval(() => { if (S.view === 'stats') renderView('stats'); }, 5000);
+    S.timers.push(setInterval(() => { if (S.view === 'stats' && !S.paused) renderView('stats'); }, 5000));
   }
   async function refreshAll() { await stateLoop(); if (S.view !== 'dashboard') renderView(S.view); }
 

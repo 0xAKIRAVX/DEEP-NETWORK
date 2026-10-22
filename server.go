@@ -176,6 +176,10 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
         }
 
         // 2) panel UI
+        if path == "/panel/avatar.png" {
+                serveAvatar(w, r)
+                return
+        }
         if path == "/panel" || path == "/panel/" || strings.HasPrefix(path, "/panel/") {
                 w.Header().Set("Cache-Control", "no-store")
                 servePanelAsset(w, r, path)
@@ -353,8 +357,14 @@ func authSession(r *http.Request) (string, bool) {
         return c.Value, true
 }
 
-func setSessionCookie(w http.ResponseWriter, sid string, maxAge int) {
-        secure := ""
+func setSessionCookie(w http.ResponseWriter, r *http.Request, sid string, maxAge int) {
+        secure := "; Secure"
+        if r != nil && r.TLS == nil {
+                proto := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]))
+                if proto != "https" {
+                        secure = "" // local http dev (production always rides behind the https edge)
+                }
+        }
         w.Header().Add("Set-Cookie", "sid="+sid+"; Path=/; HttpOnly; SameSite=Strict; Max-Age="+itoa(maxAge)+secure)
 }
 

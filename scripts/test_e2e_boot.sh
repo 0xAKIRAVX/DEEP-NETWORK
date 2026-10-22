@@ -69,6 +69,17 @@ ck "ipscan (rust)"             "curl -sf -b $DATA/jar -X POST -H 'Content-Type: 
 
 ck "state.json persisted"       "python3 -c \"import json;d=json.load(open('$DATA/state.json'));assert d['admin_user']=='admin'\""
 
+# ── avatar + tuning (v3.1) ──
+ck "avatar default (jpeg)"      '[ "$(curl -s -o /dev/null -w %{content_type} http://127.0.0.1:8099/panel/avatar.png)" = "image/jpeg" ]'
+python3 -c "from PIL import Image; im=Image.new('RGBA',(600,400),(200,60,60,255)); im.save('$DATA/up.png')"
+ck "avatar upload (multipart)"   "curl -sf -b $DATA/jar -F file=@$DATA/up.png http://127.0.0.1:8099/panel/api/avatar | grep -q '\"ok\":true'"
+ck "avatar served (png 256)"     "[ \"\$(curl -s -o $DATA/got.png -w %{content_type} http://127.0.0.1:8099/panel/avatar.png)\" = 'image/png' ] && python3 -c \"from PIL import Image; im=Image.open('$DATA/got.png'); assert im.size==(256,256), im.size\""
+ck "avatar delete resets"        "curl -sf -b $DATA/jar -X POST http://127.0.0.1:8099/panel/api/avatar/delete | grep -q '\"ok\":true'"
+ck "avatar back to default"      '[ "$(curl -s -o /dev/null -w %{content_type} http://127.0.0.1:8099/panel/avatar.png)" = "image/jpeg" ]'
+ck "state includes tuning"      "curl -sf -b $DATA/jar http://127.0.0.1:8099/panel/api/state | python3 -c \"import sys,json; s=json.load(sys.stdin); assert 'tuning' in s['settings'] and 'profile' in s['settings']['tuning']\""
+ck "tuning partial merge"       "curl -sf -b $DATA/jar -X POST -H 'Content-Type: application/json' -d '{\"tuning\":{\"profile\":\"mci\"}}' http://127.0.0.1:8099/panel/api/settings | grep -q '\"ok\":true' && curl -sf -b $DATA/jar http://127.0.0.1:8099/panel/api/state | python3 -c \"import sys,json; s=json.load(sys.stdin); t=s['settings']['tuning']; assert t['profile']=='mci' and t['frag_lengths']=='40-100', t\""
+ck "persian name safe (runes)"  "curl -sf -b $DATA/jar -X POST -H 'Content-Type: application/json' -d '{\"name\":\"علیرضامحمدیبوستانیططط\"}' http://127.0.0.1:8099/panel/api/clients | grep -q '\"ok\":true'"
+
 echo "──"
 echo "PASS=$PASS FAIL=$FAIL"
 echo "boot log:"; head -22 "$DATA/boot.log"

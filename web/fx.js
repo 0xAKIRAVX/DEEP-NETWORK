@@ -78,6 +78,10 @@
   })();
 
   // ─────────── star field (login + dashboard backgrounds) ───────────
+  // NOTE: FPS is measured ONLY by fpsLoop below — animations must not
+  // accumulate into FX._fpsAcc themselves (a second accumulator double-counts
+  // and the FPS chip used to read 2–3× the real rate).
+  const starfields = [];
   function starField(canvas, opts) {
     const o = Object.assign({ stars: 150, drift: 6, shoots: true }, opts);
     let stars = [], shoots = [], t0 = performance.now();
@@ -93,6 +97,8 @@
     let last = t0, running = true;
     function frame(t) {
       if (!running) return;
+      requestAnimationFrame(frame);
+      if (FX.paused) return; // tab hidden → save battery
       const dt = Math.min(50, t - last) / 1000; last = t;
       const [c, w, h] = ctx2d(canvas);
       c.clearRect(0, 0, w, h);
@@ -117,15 +123,14 @@
         }
       }
       c.globalAlpha = 1;
-      tick(t);
-      requestAnimationFrame(frame);
     }
-    function tick(t) { FX._fpsAcc += Math.min(100, t - FX._t || 16); FX._t = t; FX._fpsN++; }
     requestAnimationFrame(frame);
-    return {
+    const inst = {
       remake() { make(Math.round(o.stars * FX.quality)); },
       stop() { running = false; },
     };
+    starfields.push(inst);
+    return inst;
   }
 
   // ─────────── globe (orthographic dot-earth, real rotation + real markers) ───────────
@@ -144,7 +149,7 @@
     }
     // arcs between real nodes
     let rot = -1.2, tilt = .35, spinV = .13, dragging = false, lastPX = 0, lastPY = 0, idleAt = 0;
-    let markers = [], arcs = [], running = true;
+    let markers = [], arcs = [], running = true, lastT = 0;
     // real network hub coordinates (world internet backbone)
     const HUBS = [
       { lat: 41.01, lon: 28.98 },  // Istanbul
@@ -173,7 +178,10 @@
     }
     function frame(t) {
       if (!running) return;
-      if (!dragging && t - idleAt > 2500) rot += spinV / 60;
+      requestAnimationFrame(frame);
+      if (FX.paused) return;
+      const dt = Math.min(64, (t - lastT) / 1000); lastT = t;
+      if (!dragging && t - idleAt > 2500) rot += spinV * dt; // frame-rate independent spin
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
       const cx = w / 2, cy = h / 2, R = Math.min(w, h) * .36;
@@ -266,7 +274,6 @@
         c.fillStyle = '#fff'; c.shadowColor = '#fff'; c.shadowBlur = 12;
         c.beginPath(); c.arc(X, Y, 2.6, 0, 6.283); c.fill(); c.shadowBlur = 0;
       }
-      requestAnimationFrame(frame);
     }
     // drag interaction (real user control)
     cv.addEventListener('pointerdown', e => { dragging = true; lastPX = e.clientX; lastPY = e.clientY; cv.setPointerCapture(e.pointerId); });
@@ -289,7 +296,7 @@
     let lastDraw = 0;
     function draw(t) {
       requestAnimationFrame(draw);
-      if (t - lastDraw < 90) return; // chart at ~10fps is plenty; saves GPU for globe/FX
+      if (t - lastDraw < 90 || FX.paused) return; // chart at ~10fps is plenty; saves GPU for globe/FX
       lastDraw = t;
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
@@ -344,11 +351,11 @@
       line('rx', '#ffffff', true);
       line('tx', 'rgba(255,255,255,.45)', false);
     }
-    function fmtNum(v) {
-      if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + 'G';
-      if (v >= 1024) return (v / 1024).toFixed(1) + 'M';
-      if (v >= 10) return Math.round(v) + 'K';
-      return v.toFixed(0);
+    function fmtNum(v) { // v is bytes/second
+      if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(1) + 'GB/s';
+      if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + 'MB/s';
+      if (v >= 1024) return (v / 1024).toFixed(1) + 'KB/s';
+      return Math.max(0, Math.round(v)) + 'B/s';
     }
     requestAnimationFrame(draw);
     return {
@@ -362,7 +369,7 @@
     let last = 0;
     function draw(t) {
       requestAnimationFrame(draw);
-      if (t - last < 500) return; last = t;
+      if (t - last < 500 || FX.paused) return; last = t;
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
       const hist = FX.data.hist || []; if (hist.length < 2) return;
@@ -421,4 +428,5 @@
   FX.globe = globe;
   FX.wave = wave;
   FX.spark = spark;
+  FX._remakeStars = () => starfields.forEach(s => s.remake && s.remake());
 })();

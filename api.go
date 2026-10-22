@@ -76,6 +76,21 @@ func jbool(d map[string]any, k string) bool {
         return false
 }
 
+// trunc runes-safe truncation: never splits a UTF-8 character (Persian names stay intact).
+func trunc(s string, n int) string {
+        if n <= 0 {
+                return ""
+        }
+        if len(s) <= n {
+                return s
+        }
+        out := []rune(s)
+        if len(out) <= n {
+                return s
+        }
+        return string(out[:n])
+}
+
 // handleSub serves /sub/<token> — base64 link list + client metadata headers.
 func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
         if tok == "" {
@@ -196,6 +211,10 @@ func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
                         handleInboundDelete(w, r)
                 case "/panel/api/settings":
                         handleSettings(w, r)
+                case "/panel/api/avatar":
+                        handleAvatarUpload(w, r)
+                case "/panel/api/avatar/delete":
+                        handleAvatarDelete(w, r)
                 case "/panel/api/restart":
                         restartXray()
                         refreshProxyRoutes()
@@ -240,7 +259,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
                 return
         }
         sid := newSession()
-        setSessionCookie(w, sid, int(sessionTTL().Seconds()))
+        setSessionCookie(w, r, sid, int(sessionTTL().Seconds()))
         sendJSON(w, 200, map[string]any{"ok": true, "user": user})
 }
 
@@ -270,6 +289,8 @@ func statePayload(r *http.Request) map[string]any {
                 "sni_override": state.SNIOverride, "random_sni": state.RandomSNI,
                 "reality_sni": state.RealitySNI, "cfg_fmt": state.CfgFmt,
                 "session_hours": state.SessionHours, "operators": operatorProfiles,
+                "tuning": tuningSanitize(state.Tuning),
+                "tcp_ready": tcpReady(),
         }
         stateMu.RUnlock()
         stateMu.RLock()
@@ -436,7 +457,7 @@ func handleQR(w http.ResponseWriter, r *http.Request) {
 
 func handleClientAdd(w http.ResponseWriter, r *http.Request) {
         d := readJSONBody(r)
-        name := strings.TrimSpace(jstr(d, "name"))[:min(30, len(strings.TrimSpace(jstr(d, "name"))))]
+        name := trunc(strings.TrimSpace(jstr(d, "name")), 30)
         if name == "" {
                 sendJSON(w, 400, map[string]any{"error": "نام کاربر را وارد کنید"})
                 return
@@ -559,10 +580,7 @@ func handleClientEdit(w http.ResponseWriter, r *http.Request) {
                 c.Up, c.Down = 0, 0
         }
         if name := jstr(d, "name"); name != "" {
-                if len(name) > 30 {
-                        name = name[:30]
-                }
-                c.Name = name
+                c.Name = trunc(name, 30)
         }
         if v, ok := d["note"]; ok {
                 if s, ok := v.(string); ok && len(s) <= 140 {
@@ -737,7 +755,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
                 seen[rid] = true
                 note := jstr(rc, "note")
                 if len(note) > 140 {
-                        note = note[:140]
+                        note = trunc(note, 140)
                 }
                 protos := strList(rc["protocols"])
                 var validProtos []string
@@ -747,7 +765,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
                         }
                 }
                 newClients = append(newClients, &Client{
-                        Name: jstr(rc, "name")[:min(30, len(jstr(rc, "name")))], ID: rid,
+                        Name: trunc(jstr(rc, "name"), 30), ID: rid,
                         Quota: maxI64(0, jint(rc, "quota")), ExpireAt: maxI64(0, jint(rc, "expire_at")),
                         Up: maxI64(0, jint(rc, "up")), Down: maxI64(0, jint(rc, "down")),
                         Note: note, Protocols: validProtos,
@@ -780,10 +798,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
                 if ri == nil {
                         continue
                 }
-                name := strings.TrimSpace(jstr(ri, "name"))
-                if len(name) > 30 {
-                        name = name[:30]
-                }
+                name := trunc(strings.TrimSpace(jstr(ri, "name")), 30)
                 proto := strings.ToLower(jstr(ri, "protocol"))
                 netw := strings.ToLower(jstr(ri, "network"))
                 sec := strings.ToLower(jstr(ri, "security"))
@@ -845,7 +860,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
         }
         stateMu.Lock()
         s, _ := snap["protocols"].(map[string]any)
-        addr := strings.TrimSpace(jstr(snap, "address"))[:min(253, len(strings.TrimSpace(jstr(snap, "address"))))]
+        addr := trunc(strings.TrimSpace(jstr(snap, "address")), 253)
         if addr != "" && !hostRe.MatchString(addr) {
                 addr = ""
         }
@@ -854,10 +869,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
         if hostRe.MatchString(sni) {
                 state.RealitySNI = sni
         }
-        fmtv := strings.Join(strings.Fields(jstr(snap, "cfg_fmt")), " ")
-        if len(fmtv) > 100 {
-                fmtv = fmtv[:100]
-        }
+        fmtv := trunc(strings.Join(strings.Fields(jstr(snap, "cfg_fmt")), " "), 100)
         if fmtv == "" {
                 fmtv = "{name}-{label}"
         }
@@ -898,6 +910,65 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
 
 func inList(s string, list []string) bool { return containsStr(list, s) }
 
+// mergeTuning overlays only the fields present in the incoming partial tuning map
+// onto the current tuning, then sanitizes. Prevents the settings form from
+// silently resetting custom fragment lengths / delays / fingerprint.
+func mergeTuning(cur *Tuning, patch map[string]any) *Tuning {
+        base := tuningSanitize(cur)
+        if base == nil {
+                base = defaultTuning()
+        }
+        if s, ok := patch["profile"].(string); ok {
+                if s != base.Profile {
+                        // switching profiles: drop the old profile-implied values so the
+                        // new profile's presets apply (explicit patch keys still win below)
+                        base.Profile = s
+                        base.FragLengths = ""
+                        base.FragDelays = ""
+                        base.FP = ""
+                } else {
+                        base.Profile = s
+                }
+        }
+        if b, ok := patch["enabled"].(bool); ok {
+                base.Enabled = b
+        }
+        if b, ok := patch["frag_on"].(bool); ok {
+                base.FragOn = b
+        }
+        if b, ok := patch["noise_on"].(bool); ok {
+                base.NoiseOn = b
+        }
+        if s, ok := patch["fp"].(string); ok {
+                base.FP = s
+        }
+        if s, ok := patch["cipher_suites"].(string); ok {
+                base.CipherSuites = s
+        }
+        if s, ok := patch["alpn"].(string); ok {
+                base.ALPN = s
+        }
+        if s, ok := patch["frag_packets"].(string); ok {
+                base.FragPackets = s
+        }
+        if s, ok := patch["frag_lengths"].(string); ok {
+                base.FragLengths = s
+        }
+        if s, ok := patch["frag_delays"].(string); ok {
+                base.FragDelays = s
+        }
+        if s, ok := patch["frag_maxsplit"].(string); ok {
+                base.FragMaxsplit = s
+        }
+        if s, ok := patch["noise_rand"].(string); ok {
+                base.NoiseRand = s
+        }
+        if s, ok := patch["noise_delay"].(string); ok {
+                base.NoiseDelay = s
+        }
+        return tuningSanitize(base)
+}
+
 func maxI64(a, b int64) int64 {
         if a > b {
                 return a
@@ -925,10 +996,7 @@ func handleInboundAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateInboundLocked(d map[string]any) (*Inbound, string) {
-        name := strings.TrimSpace(jstr(d, "name"))
-        if len(name) > 30 {
-                name = name[:30]
-        }
+        name := trunc(strings.TrimSpace(jstr(d, "name")), 30)
         proto := strings.ToLower(jstr(d, "protocol"))
         netw := strings.ToLower(jstr(d, "network"))
         sec := strings.ToLower(jstr(d, "security"))
@@ -1066,10 +1134,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
         needRestart := false
         stateMu.Lock()
         if u := strings.TrimSpace(jstr(d, "user")); u != "" {
-                if len(u) > 40 {
-                        u = u[:40]
-                }
-                state.AdminUser = u
+                state.AdminUser = trunc(u, 40)
         }
         if p := jstr(d, "pass"); p != "" {
                 if len(p) < 6 {
@@ -1103,15 +1168,13 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
                 state.SNIOverride = so
         }
         if v, ok := d["random_sni"].(bool); ok {
-			state.RandomSNI = v
-		}
+                state.RandomSNI = v
+        }
         if v, ok := d["tuning"]; ok {
                 if t0, ok := v.(map[string]any); ok {
-                        tb, _ := json.Marshal(t0)
-                        var t Tuning
-                        if json.Unmarshal(tb, &t) == nil {
-                                state.Tuning = tuningSanitize(&t)
-                        }
+                        // Partial merge: only keys present in the request are changed,
+                        // so saving the settings form never wipes custom fragment values.
+                        state.Tuning = mergeTuning(state.Tuning, t0)
                 }
         }
         if v, ok := d["reality_sni"]; ok {
@@ -1272,7 +1335,7 @@ func handleProbe(w http.ResponseWriter, r *http.Request) {
         sni := jstr(d, "sni")
         var pt []ProbeTarget
         for _, t := range targets {
-		if isIPLiteral(t) {
+                if isIPLiteral(t) {
                         pt = append(pt, ProbeTarget{IP: t, Port: port, SNI: sni})
                 } else if hostRe.MatchString(t) {
                         ips := resolveHost(t)
