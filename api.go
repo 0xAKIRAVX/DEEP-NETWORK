@@ -7,6 +7,7 @@ import (
         "io"
         "net/http"
         "regexp"
+        "strconv"
         "strings"
         "time"
 )
@@ -129,6 +130,7 @@ func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
                 "Profile-Title":             "base64:" + title,
                 "Profile-Update-Interval":    "12",
                 "Subscription-Userinfo":      strings.Join(info, "; "),
+                "X-Frame-Options":            "DENY",
         })
 }
 
@@ -225,9 +227,20 @@ func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
                         handleBunnyEdges(w, r)
                 case "/panel/api/probe":
                         handleProbe(w, r)
+                case "/panel/api/telegram":
+                        handleTelegramConnect(w, r)
                 default:
                         sendJSON(w, 404, map[string]any{"error": "not found"})
                 }
+        case http.MethodDelete:
+                if !apiAuth(w, r) {
+                        return
+                }
+                if path == "/panel/api/telegram" {
+                        handleTelegramDisconnect(w, r)
+                        return
+                }
+                sendJSON(w, 404, map[string]any{"error": "not found"})
         default:
                 sendJSON(w, 405, map[string]any{"error": "method not allowed"})
         }
@@ -248,6 +261,26 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
                 return
         }
         d := readJSONBody(r)
+        // ── Telegram Mini-App login (v3.4): no password needed when the
+        // initData signature verifies AND the Telegram user id matches the
+        // admin id configured in Settings → the bot owner opens the panel
+        // inside Telegram with one tap.
+        if tgd := jstr(d, "tg_init_data"); tgd != "" {
+                stateMu.RLock()
+                token, adminID := state.TGToken, state.TGAdminID
+                au := state.AdminUser
+                stateMu.RUnlock()
+                if token != "" && adminID != "" {
+                        if uid, ok := validateTGInitData(tgd, token); ok && strconvFormatInt(uid) == adminID {
+                                sid := newSession()
+                                setSessionCookie(w, r, sid, int(sessionTTL().Seconds()))
+                                sendJSON(w, 200, map[string]any{"ok": true, "user": au, "via": "telegram"})
+                                return
+                        }
+                }
+                sendJSON(w, 401, map[string]any{"error": "ورود تلگرام فعال نیست یا شناسه شما مطابقت ندارد — با رمز عبور وارد شوید"})
+                return
+        }
         user, pass := jstr(d, "user"), jstr(d, "pass")
         stateMu.RLock()
         au, ap := state.AdminUser, state.AdminPass
@@ -291,6 +324,8 @@ func statePayload(r *http.Request) map[string]any {
                 "session_hours": state.SessionHours, "operators": operatorProfiles,
                 "tuning": tuningSanitize(state.Tuning),
                 "tcp_ready": tcpReady(),
+                "telegram": map[string]any{"connected": state.TGToken != "",
+                        "bot_username": state.TGBotUser, "admin_id": state.TGAdminID},
         }
         stateMu.RUnlock()
         stateMu.RLock()
@@ -667,6 +702,9 @@ func containsStr(list []string, s string) bool {
         }
         return false
 }
+
+// strconvFormatInt keeps telegram.go free of a direct strconv import.
+func strconvFormatInt(n int64) string { return strconv.FormatInt(n, 10) }
 
 func handleClientDelete(w http.ResponseWriter, r *http.Request) {
         d := readJSONBody(r)

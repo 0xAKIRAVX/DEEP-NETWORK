@@ -145,7 +145,7 @@
     <nav class="sb-nav" id="sb-nav">
       <button class="on" data-view="dashboard"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9h-5v-6h-6v6H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>داشبورد</span></button>
       <button data-view="users"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 19c.9-3 2.9-4.4 5.5-4.4s4.6 1.4 5.5 4.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16.5" cy="9.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M15.5 14.6c2.3.1 4 1.5 4.9 4.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>کاربران</span><em class="cnt" id="sb-users-count">0</em></button>
-      <button data-view="create"><svg viewBox="0 0 24 24"><circle cx="10" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 19c.9-3 2.9-4.4 5.5-4.4 1 0 2 .2 2.8.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17.5 14v6M14.5 17h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>ساخت اکانت</span></button>
+      <button data-view="create"><svg viewBox="0 0 24 24"><circle cx="10" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 19c.9-3 2.9-4.4 5.5-4.4 1 0 2 .2 2.8.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17.5 14v6M14.5 17h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>ساخت کاربر</span></button>
       <button data-view="subs"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>اشتراک‌ها</span></button>
       <button data-view="scanner"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>اسکنر IP</span></button>
       <button data-view="stats"><svg viewBox="0 0 24 24"><path d="M4 20V9M10 20V4M16 20v-8M22 20H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>آمار</span></button>
@@ -229,8 +229,8 @@
     <!-- bandwidth chart -->
     <section class="chart-sec">
       <div class="sec-title">
+        <b>پهنای باند زنده</b>
         <div class="tog"><label><input type="checkbox" id="tg-dl" checked><span>دانلود</span></label><label><input type="checkbox" id="tg-ul" checked><span>آپلود</span></label></div>
-        <select id="chart-range" class="select"><option>۱ ساعت اخیر</option><option>۲۴ ساعت اخیر</option><option>۱ هفته گذشته</option></select>
       </div>
       <canvas id="wave"></canvas>
     </section>
@@ -249,10 +249,10 @@
         <h3>اطلاعات سرور</h3>
         <ul class="kv" id="server-info">
           <li><span>نام سرور</span><b>DEEP-NETWORK-01</b></li>
-          <li><span>محل</span><b id="si-loc">—</b></li>
+          <li><span>موقعیت سرور</span><b id="si-loc">—</b></li>
           <li><span>سیستم عامل</span><b id="si-os">—</b></li>
-          <li><span>مدت روشن بودن</span><b id="si-uptime">—</b></li>
-          <li><span>نرخ فریم</span><b id="si-fps">— fps</b></li>
+          <li><span>مدت روشن بودن سرور</span><b id="si-uptime">—</b></li>
+          <li><span>نرخ فریم (دستگاه شما)</span><b id="si-fps">— fps</b></li>
           <li><span>نسخه</span><b>v__PANEL_VER__</b></li>
         </ul>
       </div>
@@ -277,6 +277,9 @@
 <div id="toast" class="toast" hidden></div>
 <div id="modal-root"></div>
 
+  <!-- Telegram Mini App SDK — bundled locally: loading it from telegram.org
+       would hang the panel inside Telegram for users in Iran (domain filtered). -->
+  <script src="/panel/tg-webapp.js?v=__PANEL_VER__"></script>
 <script src="/panel/fx.js?v=__PANEL_VER__"></script>
 <script src="/panel/app.js?v=__PANEL_VER__"></script>
 </body>

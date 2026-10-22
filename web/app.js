@@ -50,6 +50,34 @@
     return root;
   }
 
+  // ─────────── Telegram Mini App integration (v3.4) ───────────
+  // The SDK is bundled locally (/panel/tg-webapp.js) — telegram.org is
+  // filtered in Iran and a remote <script> would hang the whole panel inside
+  // the Mini App. Outside Telegram the SDK is inert.
+  function tgEnv() {
+    const w = window.Telegram && window.Telegram.WebApp;
+    if (!w || !w.initData) return null;
+    return w;
+  }
+  function tgInit() {
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (!tg) return;
+    try { tg.ready(); } catch { }
+    try { tg.expand(); } catch { }
+    try { if (tg.setHeaderColor) tg.setHeaderColor('#050505'); } catch { }
+    try { if (tg.setBackgroundColor) tg.setBackgroundColor('#000000'); } catch { }
+    // stable viewport height for iOS/Android webviews (100vh jumps around)
+    try {
+      if (tg.viewportStableHeight) {
+        document.documentElement.style.setProperty('--tgvh', tg.viewportStableHeight + 'px');
+      }
+      if (tg.onEvent) tg.onEvent('viewportChanged', ev => {
+        if (ev && ev.isStateStable && tg.viewportStableHeight)
+          document.documentElement.style.setProperty('--tgvh', tg.viewportStableHeight + 'px');
+      });
+    } catch { }
+  }
+
   // ─────────── login view ───────────
   function showLogin() {
     stopTimers();
@@ -250,7 +278,7 @@
     set('#r-cpu-model', st.cpu_model || '—');
     set('#si-os', st.os || '—');
     set('#si-uptime', fmtUptime(st.uptime));
-    set('#si-loc', st.geo ? (st.geo.city ? st.geo.city + '، ' : '') + st.geo.country : 'سوئیس');
+    set('#si-loc', st.geo ? (st.geo.city ? st.geo.city + '، ' : '') + st.geo.country : '—');
     set('#st-users', st.clients || 0);
     { const ps = S.state && S.state.settings.protocols || {}; let n = 0;
           for (const k of ['vless-ws','vless-xhttp','vless-hu','vmess-ws','trojan-ws']) if (ps[k]) n++;
@@ -421,6 +449,18 @@
       <label class="field" style="margin:10px 0"><input id="se-fmt" value="${esc(s.cfg_fmt || '')}" placeholder="قالب نام کانفیگ ({name}-{label})"></label>
       <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-randsni" ${s.random_sni ? 'checked' : ''}><span class="cbx"></span>SNI تصادفی ضد فیلتر (فقط *.lucity.app)</label>
 
+      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">ربات تلگرام — اجرای پنل داخل تلگرام</h4>
+      <p style="font-size:11px;color:#8d8d8d;margin-bottom:10px;line-height:2">در تلگرام به <b>@BotFather</b> بفرستید <code style="font-family:var(--mono)">/newbot</code>، اسم و یوزرنیم بدهید و <b>توکن</b> را کپی کنید. شناسه عددی خود را هم از <b>@userinfobot</b> بگیرید. بعد از «اتصال ربات»، دکمه منوی ربات و دستور <code style="font-family:var(--mono)">/start</code> خودکار ساخته می‌شوند و پنل مستقیم داخل تلگرام باز می‌شود — بدون نیاز به رمز.</p>
+      <div class="row2">
+      <label class="field"><input id="se-tg-token" type="password" placeholder="توکن ربات (123456789:AAF...)" autocomplete="off"></label>
+      <label class="field"><input id="se-tg-admin" inputmode="numeric" placeholder="شناسه عددی تلگرام شما" autocomplete="off"></label>
+      </div>
+      <div class="btns" style="margin-top:6px">
+        <button class="btn" id="tg-connect">اتصال ربات</button>
+        <button class="btn" id="tg-disconnect" style="display:none">قطع اتصال</button>
+      </div>
+      <p id="tg-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
+
       <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">پروتکل‌ها</h4>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">
       ${st.protocols.map(p => `<label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:10px;padding:9px 12px">
@@ -436,7 +476,7 @@
       </div>
       <div class="row2" style="margin-top:12px">
       <label class="field"><input id="se-fraglen" value="${esc(t.frag_lengths || '100-200')}" placeholder="طول فرگمنت (مثلاً 40-100)"></label>
-      <label class="field"><input id="se-fragdelay" value="${esc(t.frag_delays || '10-20')}" placeholder="تاخیر فرگمنت ms (مثلاً 10-20)"></label>
+      <label class="field"><input id="se-fragdelay" value="${esc(t.frag_delays || '10-20')}" placeholder="تأخیر فرگمنت به میلی‌ثانیه (مثلاً 10-20)"></label>
       </div>
       <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-fragon" ${t.frag_on ? 'checked' : ''}><span class="cbx"></span>فرگمنت TLS فعال (با پروفایل «اختصاصی» مقادیر بالا اعمال می‌شود)</label>
       <div class="btns"><button class="btn primary" id="se-save">ذخیره تنظیمات</button></div>
@@ -638,6 +678,40 @@
       });
     },
     settings() {
+      // ── Telegram bot section (v3.4) ──
+      const stEl = $('#tg-status'), connBtn = $('#tg-connect'), discBtn = $('#tg-disconnect');
+      const paintTg = () => {
+        const tg = (S.state && S.state.settings && S.state.settings.telegram) || {};
+        if (tg.connected) {
+          stEl.innerHTML = '<b style="color:var(--ok)">متصل: @' + esc(tg.bot_username || '') + '</b> — حالا در تلگرام ربات را باز کنید و <b>/start</b> بزنید؛ پنل با دکمه منو یا دکمه داخل گفتگو باز می‌شود.';
+          connBtn.style.display = 'none'; discBtn.style.display = '';
+        } else {
+          stEl.textContent = 'ربات متصل نیست.';
+          connBtn.style.display = ''; discBtn.style.display = 'none';
+        }
+      };
+      paintTg();
+      connBtn.addEventListener('click', async () => {
+        const token = ($('#se-tg-token') || {}).value || '';
+        const admin_id = ($('#se-tg-admin') || {}).value || '';
+        if (!token.trim() || !admin_id.trim()) return toast('توکن ربات و شناسه تلگرام را وارد کنید', 'err');
+        connBtn.disabled = true; connBtn.textContent = 'در حال اتصال…';
+        try {
+          const r = await api('telegram', { token: token.trim(), admin_id: admin_id.trim() });
+          toast('ربات @' + (r.bot_username || '') + ' متصل شد ✓ حالا در تلگرام /start بزنید', 'ok');
+          await stateLoop(); renderView('settings');
+        } catch (ex) { toast(ex.message, 'err'); }
+        connBtn.disabled = false; connBtn.textContent = 'اتصال ربات';
+      });
+      discBtn.addEventListener('click', async () => {
+        if (!confirm('ربات تلگرام قطع شود؟')) return;
+        try {
+          await api('telegram', null, 'DELETE');
+          toast('ربات قطع شد', 'ok');
+          await stateLoop(); renderView('settings');
+        } catch (ex) { toast(ex.message, 'err'); }
+      });
+
       // operator radio → sensible frag_on default (auto = off, others = on)
       $$('input[name="opprof"]').forEach(rd => rd.addEventListener('change', () => {
         const cb = $('#se-fragon');
@@ -697,7 +771,6 @@
     $('#hd-avatar-wrap').addEventListener('keydown', e => { if (e.key === 'Enter') pickAvatar(); });
     $('#theme-toggle').addEventListener('click', () => toast('حالت روشن در این نسخه فعال نیست — تم سینمایی تیره 🙂'));
     $('#bell').addEventListener('click', () => toast(S.stats && S.stats.online ? S.stats.online + ' تونل فعال است' : 'اعلان جدیدی نیست'));
-    $('#chart-range').addEventListener('change', () => toast('بازه زنده: ۱۵۰ ثانیه اخیر (سایر بازه‌ها به‌زودی)'));
     $('#tg-dl').addEventListener('change', e => S.fx.wave && S.fx.wave.set('rx', e.target.checked));
     $('#tg-ul').addEventListener('change', e => S.fx.wave && S.fx.wave.set('tx', e.target.checked));
     $$('#globe-tog input').forEach(r => r.addEventListener('change', () => { }));
@@ -755,6 +828,18 @@
   async function boot() {
     initLogin();
     initDash();
+    tgInit();
+    // Telegram Mini App: one-tap login via signed initData (bot must be
+    // connected in Settings and the Telegram user id must match the admin id).
+    const tg = tgEnv();
+    if (tg && tg.initData) {
+      try {
+        await api('login', { tg_init_data: tg.initData });
+        toast('ورود با تلگرام ✓', 'ok');
+        showDash();
+        return;
+      } catch (ex) { /* fall through — normal login flow */ }
+    }
     try {
       await api('ping');
       showDash(); // showDash() itself starts loops + detectOperator

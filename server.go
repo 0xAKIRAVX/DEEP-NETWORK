@@ -34,9 +34,11 @@ type tunnelCountWriter struct {
 }
 
 var securityHeaders = map[string]string{
-        "X-Frame-Options":        "DENY",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy":        "no-referrer",
+        // NOTE(v3.4): X-Frame-Options is intentionally NOT global anymore —
+        // the panel must be frameable so Telegram Web (web.telegram.org)
+        // can embed it as a Mini App. /sub and the decoy still send DENY.
 }
 
 type proxyRoute struct {
@@ -175,6 +177,12 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
                 return
         }
 
+        // 1b) Telegram webhook (secret-token guarded — no session auth)
+        if path == "/panel/tgwebhook" {
+                handleTelegramWebhook(w, r)
+                return
+        }
+
         // 2) panel UI
         if path == "/panel/avatar.png" {
                 serveAvatar(w, r)
@@ -308,6 +316,7 @@ func serveDecoy(w http.ResponseWriter, r *http.Request) {
         }
         w.Header().Set("Content-Type", "text/html; charset=utf-8")
         w.Header().Set("Cache-Control", "no-store")
+        w.Header().Set("X-Frame-Options", "DENY")
         w.Header().Set("Content-Length", itoa(len(b)))
         w.WriteHeader(200)
         _, _ = w.Write(b)

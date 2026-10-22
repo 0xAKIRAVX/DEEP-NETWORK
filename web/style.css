@@ -40,7 +40,7 @@ input,select,textarea{font-family:inherit;color:inherit}
 input::placeholder{color:#6b6b6b}
 [hidden]{display:none!important}
 
-.view{min-height:100vh}
+.view{min-height:100vh;min-height:100dvh} /* dvh: no address-bar jump on mobile */
 
 /* ════════════════ LOGIN ════════════════ */
 #login{display:flex;align-items:center;justify-content:center;padding:20px;overflow:hidden;position:relative}
@@ -450,6 +450,11 @@ section{margin-bottom:14px}
 .linkbox{display:flex;gap:8px;align-items:center;background:#0d0d0d;border:1px solid var(--line);
   border-radius:10px;padding:8px 12px;font-family:var(--mono);font-size:11px;direction:ltr;
   overflow-wrap:anywhere;word-break:break-all}
+
+/* .row2 outside modals (settings view uses it too — was unstyled before) */
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:520px){.row2{grid-template-columns:1fr}}
+.btns{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
 .linkbox button{flex:none;color:#bbb;width:28px;height:28px;border-radius:7px;display:grid;place-items:center;transition:.2s}
 .linkbox button:hover{color:#fff;background:rgba(255,255,255,.07)}
 .linkbox svg{width:14px;height:14px}
@@ -493,9 +498,26 @@ section{margin-bottom:14px}
 }
 @media (max-width:520px){
   .rings{grid-template-columns:1fr}
-  .tr{grid-template-columns:1.4fr 1fr .9fr}
-  .tr>:last-child{display:none}
+  /* users table: two-line rows so the ACTIONS stay reachable on phones
+     (the old rule hid the whole actions column → subs could not be copied) */
+  .tr{grid-template-columns:1.6fr 1fr;gap:6px 10px;padding:12px 4px}
+  .tr>:nth-child(3){grid-column:1}
+  .tr>:last-child{display:flex;grid-column:2;justify-self:end;align-self:start}
+  .tr.th>:last-child{display:none}
+  .u-act button{width:32px;height:32px} /* finger-friendly tap targets */
   .hd-user-text{display:none}
+  /* scanner rows: stack country under the IP so nothing is truncated */
+  .scan-row{grid-template-columns:1fr auto auto;padding:8px 10px;font-size:10.5px}
+  .scan-row .geo{grid-column:1/-1;padding-top:2px}
+  .modal{padding:16px 14px}
+  .info-sec,.users-sec{padding:15px 14px}
+  .g-card{min-width:96px;padding:7px 9px}
+  .g-card b{font-size:13px}
+  .hero{min-height:210px}
+  .hero h2{font-size:19px}
+  .ct{padding:13px 10px 22px}
+  .sec-title{flex-wrap:wrap}
+  .lc-title{font-size:25px}
 }
 
 /* reduced motion */
@@ -506,6 +528,13 @@ section{margin-bottom:14px}
 body[data-fx="low"] .lbg-ribbon,body[data-fx="low"] .lbg-planet,body[data-fx="low"] .lbg-mountains,
 body[data-fx="low"] .dbg-smoke,body[data-fx="low"] .hero-img{animation:none}
 body[data-fx="low"] .login-card,body[data-fx="low"] .g-card{backdrop-filter:none}
+
+/* ─── Telegram Mini App viewport (v3.4) ───
+   Inside Telegram the webview height is dynamic; --tgvh is set by app.js
+   from viewportStableHeight so the login card centers without jumps. */
+@supports (min-height:100dvh){
+  .view{min-height:100dvh}
+}
 
 /* mountains fade to pure black at the bottom */
 .lbg-mountains{-webkit-mask-image:linear-gradient(to bottom,#000 62%,rgba(0,0,0,.78) 88%,transparent 100%);mask-image:linear-gradient(to bottom,#000 62%,rgba(0,0,0,.78) 88%,transparent 100%)}
