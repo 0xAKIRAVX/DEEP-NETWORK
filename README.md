@@ -1,17 +1,17 @@
 <div align="center">
 
-<img src="nullgate-logo.png" alt="NullGate — Lion & Sun emblem" width="640">
+<img src="nullgate-logo.png" alt="DEEP NETWORK — chrome dragon emblem" width="640">
 
 <br><br>
 
 [![core](https://img.shields.io/badge/core-Xray--core-00ff66?style=flat-square&labelColor=000000)](https://github.com/XTLS/Xray-core)
 [![platform](https://img.shields.io/badge/platform-Lucity%20%7C%20Railway%20%7C%20VPS-7cff3f?style=flat-square&labelColor=000000)](https://lucity.cloud)
 [![ui](https://img.shields.io/badge/ui-RTL_Persian-d9b44a?style=flat-square&labelColor=000000)]()
-[![version](https://img.shields.io/badge/version-2.7.0-d9b44a?style=flat-square&labelColor=000000)]()
-[![new](https://img.shields.io/badge/v2.7.0-FinalMask_·_IP_Scanner_·_Operator_Profile-00d9ff?style=flat-square&labelColor=000000)]()
+[![version](https://img.shields.io/badge/version-2.9.0-d9b44a?style=flat-square&labelColor=000000)]()
+[![new](https://img.shields.io/badge/v2.9.0-DEEP_NETWORK_·_Live_FX_·_Ping_Metric-00d9ff?style=flat-square&labelColor=000000)]()
 [![use](https://img.shields.io/badge/use-personal_only-7cff3f?style=flat-square&labelColor=000000)]()
 
-**NullGate** یک سرویس مبتنی بر **Xray-core** با پنل وب فارسی، لینک اشتراک، **اسکنر آی‌پی تمیز**، **FinalMask و Cipher Suites** و **پروفایل اپراتورهای ایران** (ایرانسل، همراه اول، رایتل و…) است.
+**DEEP NETWORK** یک سرویس مبتنی بر **Xray-core** با پنل وب فارسی، لینک اشتراک، **اسکنر آی‌پی تمیز**، **FinalMask و Cipher Suites** و **پروفایل اپراتورهای ایران** (ایرانسل، همراه اول، رایتل و…) است.
 
 </div>
 
@@ -20,13 +20,17 @@
 
 ---
 
-## ⚡ تازه‌های نسخه ۲.۷.۰
+## ⚡ تازه‌های نسخه ۲.۹.۰ — DEEP NETWORK
 
 | قابلیت | توضیح |
 |---|---|
+| 🌐 **هویت DEEP NETWORK** | پنل و ریپو با نام و ظاهر جدید **DEEP NETWORK** — تم نقره‌ای/مشکی سینمایی |
+| ✨ **جلوه‌های زنده و واقعی** | پس‌زمینه ستاره‌ای متحرک، کره سه‌بعدی چرخان روی مختصات واقعی سرور، نمودار موج پهنای باند با داده واقعی |
+| 📶 **پینگ واقعی لحظه‌ای** | تاخیر واقعی مرورگر شما تا سرور، زنده روی داشبورد (سبز = زیر ۱۳۰ms) |
+| 🛰️ **همه اپراتورها + پینگ زیر ۱۳۰** | SNI تصادفی روی ساب‌دامین‌های `*.lucity.app`، اسکن لبه‌های bunny (ترکیه/آذربایجان/عراق ۲۳–۷۷ms)، فرگمنت per-operator |
 | 🚀 **دیپلوی روی Lucity** | `railpack.json` جای Dockerfile را می‌گیرد؛ nginx و Xray خودکار نصب می‌شوند — Railway و VPS هم همچنان کار می‌کنند |
 | 🤖 **متغیرهای اتوماتیک** | دیگر **هیچ متغیری را دستی نسازید** — UUID و رمز پنل خودکار ساخته می‌شوند و رمز در لاگ استقرار (Deploy Logs) چاپ می‌شود |
-| 📡 **اسکنر آی‌پی تمیز** | اسکن از داخل مرورگر خودتان روی رنج‌های Cloudflare (پورت ۴۴۳/۲۰۵۳/۲۰۸۳/۲۰۸۷/۲۰۹۶/۸۴۴۳)، مرتب‌سازی بر اساس تاخیر و اعمال بهترین IP روی همه کانفیگ‌ها با یک کلیک |
+| 📡 **اسکنر آی‌پی تمیز** | اسکن از داخل مرورگر خودتان + اسکن سمت سرور + لبه‌های CDN دامنه خود لسیتی |
 | 🥷 **FinalMask & Cipher Suites** | فرگمنت TLS برای عبور از فیلتر SNI + انتخاب اثر انگشت uTLS + مجموعه‌های رمزنگاری، همراه پیش‌نمایش زنده JSON |
 | 📶 **پروفایل اپراتور** | ایرانسل، همراه اول، رایتل، شاتل، پارس‌آنلاین، مبین‌نت، مخابرات، آسیاتک — با پیش‌تنظیم آماده و قابل ویرایش |
 | 🔧 **فیکس IP در کانفیگ‌ها** | وقتی آدرس اتصال IP است، SNI/Host روی دامنه واقعی می‌ماند تا گواهی TLS مطابقت کند و کانفیگ واقعاً وصل شود |

@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 START = time.time()
-PANEL_VERSION = "2.8.1"
+PANEL_VERSION = "2.9.0"
 
 # Protocol keys: built-in inbounds + the Reality TCP link. Each can
 # be turned off globally (Settings) or per-user (empty override = follow globals).
@@ -1793,7 +1793,7 @@ def server_geo():
     try:
         req = urllib.request.Request(
             "http://ip-api.com/json?fields=status,query,country,countryCode,city,lat,lon",
-            headers={"User-Agent": "NullGate-Edge/2.8"})
+            headers={"User-Agent": f"DeepNetwork/{PANEL_VERSION}"})
         with urllib.request.urlopen(req, timeout=6) as r:
             d = json.loads(r.read().decode() or "{}")
         if d.get("status") == "success" and isinstance(d.get("lat"), (int, float)):
@@ -2058,7 +2058,8 @@ class H(BaseHTTPRequestHandler):
         if path in ("/panel", "/panel/"):
             try:
                 with open(PANEL_HTML, "rb") as f:
-                    return self.send_bytes(200, f.read(), "text/html; charset=utf-8")
+                    body = f.read().replace(b"__PANEL_VER__", PANEL_VERSION.encode())
+                    return self.send_bytes(200, body, "text/html; charset=utf-8")
             except Exception:
                 return self.send_bytes(500, "panel.html is missing", "text/plain; charset=utf-8")
 
@@ -2115,7 +2116,7 @@ class H(BaseHTTPRequestHandler):
                 body = json.dumps(snap, ensure_ascii=False, indent=2)
                 return self.send_bytes(200, body, "application/json; charset=utf-8",
                                        {**self.auth_headers(),
-                                        "Content-Disposition": f"attachment; filename=nullgate-backup-{time.strftime('%Y%m%d')}.json"})
+                                        "Content-Disposition": f"attachment; filename=deepnetwork-backup-{time.strftime('%Y%m%d')}.json"})
             if path == "/panel/api/qr":
                 qs = urllib.parse.parse_qs(_qs)
                 data = (qs.get("data") or [""])[0]
@@ -2145,7 +2146,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send_bytes(200, json.dumps(cfg, ensure_ascii=False, indent=2),
                                        "application/json; charset=utf-8",
                                        {**self.auth_headers(),
-                                        "Content-Disposition": f"attachment; filename=nullgate-{safe}{suffix}.json"})
+                                        "Content-Disposition": f"attachment; filename=deepnetwork-{safe}{suffix}.json"})
         self.send_bytes(404, "not found", "text/plain; charset=utf-8")
 
     def state_payload(self):
@@ -2605,7 +2606,7 @@ def boot_report():
     # generated with it - print real URLs instead of the <your-domain> stub.
     dom = (env("DOMAIN") or "").strip() or None
     print("─" * 62, flush=True)
-    print(f"NullGate {PANEL_VERSION} is up", flush=True)
+    print(f"DEEP NETWORK {PANEL_VERSION} is up", flush=True)
     print(f"  panel     : https://{dom or '<your-domain>'}/panel", flush=True)
     print(f"  username  : {user}", flush=True)
     if is_auto:
