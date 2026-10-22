@@ -273,7 +273,7 @@
     set('#g-ul-tot', '(' + fmtGB(st.tx_total || 0) + ')');
     set('#r-up', fmtMBs(st.tx));
     set('#r-down', fmtMBs(st.rx));
-    set('#r-ram', (st.mem_used / 1024).toFixed(1) + ' / ' + (st.mem_total / 1024).toFixed(0) + ' GB');
+    set('#r-ram', st.mem_total >= 1024 ? (st.mem_used / 1024).toFixed(1) + ' / ' + (st.mem_total / 1024).toFixed(1) + ' GB' : st.mem_used + ' / ' + st.mem_total + ' MB');
     set('#r-disk', (st.disk.used || 0).toFixed(0) + ' / ' + (st.disk.total || 0).toFixed(1) + ' GB');
     set('#r-cpu-model', st.cpu_model || '—');
     set('#si-os', st.os || '—');
@@ -405,7 +405,7 @@
       <ul class="kv">
       <li><span>پردازنده</span><b>${esc(st.cpu_model || '—')}</b></li>
       <li><span>مصرف CPU</span><b>${(st.cpu || 0).toFixed(1)}%</b></li>
-      <li><span>حافظه</span><b>${(st.mem_used || 0)} / ${st.mem_total || 0} MB (${(Number(st.mem) || 0).toFixed(1)}%)</b></li>
+      <li><span>حافظه</span><b>${(st.mem_total || 0) >= 1024 ? ((st.mem_used || 0) / 1024).toFixed(1) + ' / ' + ((st.mem_total || 0) / 1024).toFixed(1) + ' GB' : (st.mem_used || 0) + ' / ' + (st.mem_total || 0) + ' MB'} (${(Number(st.mem) || 0).toFixed(1)}%)</b></li>
       <li><span>دیسک</span><b>${(st.disk && st.disk.used || 0)} / ${(st.disk && st.disk.total || 0)} GB</b></li>
       <li><span>دانلود کل</span><b>${fmtGB(st.rx_total || 0)}</b></li>
       <li><span>آپلود کل</span><b>${fmtGB(st.tx_total || 0)}</b></li>
