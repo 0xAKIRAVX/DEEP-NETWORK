@@ -164,6 +164,9 @@
   <!-- content -->
   <main class="ct" id="content">
 
+  <!-- dashboard sections (hidden when another view is open) -->
+  <div id="dash-views">
+
     <!-- HERO -->
     <section class="hero" id="hero">
       <img class="hero-img" src="/panel/assets/img/tehran.jpg" alt="" draggable="false">
@@ -262,6 +265,11 @@
     </section>
 
     <footer class="ft">DEEP NETWORK · <span id="ft-ver">v__PANEL_VER__</span> · DEEP-NETWORK-01</footer>
+  </div><!-- /dash-views -->
+
+  <!-- other views render here (same .ct margins — no more hidden-behind-header) -->
+  <div id="view-host" hidden></div>
+
   </main>
 </div>
 

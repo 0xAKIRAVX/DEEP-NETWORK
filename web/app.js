@@ -55,6 +55,7 @@
     stopTimers();
     $('#dash').hidden = true;
     $('#login').hidden = false;
+    setDashFX(false); // stop ALL dashboard canvases (not just the starfield)
     if (S.fx.dash) { try { S.fx.dash.stop(); } catch { } S.fx.dash = null; } // stop hidden canvas → real FPS
     if (!S.fx.login) S.fx.login = FX.starField($('#fx-login'), { stars: 100, drift: 7 });
   }
@@ -101,9 +102,11 @@
     const err = $('#login-error'), btn = $('.lc-submit');
     err.hidden = true; btn.disabled = true;
     try {
-      await api('login', { user: $('#f-user').value.trim(), pass: $('#f-pass').value });
-      if ($('#f-remember').checked) localStorage.setItem('dn-user', $('#f-user').value.trim());
+      const user = $('#f-user').value.trim();
+      await api('login', { user, pass: $('#f-pass').value });
+      if ($('#f-remember').checked) localStorage.setItem('dn-user', user);
       else localStorage.removeItem('dn-user');
+      const hd = $('#hd-user-name'); if (hd) hd.textContent = user || 'admin'; // was always static "admin"
       toast('خوش آمدید ✓', 'ok');
       showDash();
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
@@ -161,27 +164,37 @@
     }));
   }
 
-  // ─────────── dashboard rendering ───────────
-  function dashboardHTML() {
-    return $('#dash-template') ? '' : ''; // dashboard lives in the page (see index.html)
+  // ─────────── view rendering ───────────
+  // FIX: #view-host now lives INSIDE .ct (same margins as dashboard) and is
+  // properly hidden + cleared when returning to the dashboard. Before, it was
+  // appended at the end of #dash with no sidebar/header margin — view content
+  // rendered behind the fixed header → "menu items never load".
+  function setDashFX(on) {
+    for (const k of ['wave', 'spark', 'globeInst']) {
+      const fx = S.fx[k];
+      if (!fx) continue;
+      try { on ? (fx.resume ? fx.resume() : fx.start && fx.start()) : (fx.pause ? fx.pause() : fx.stop && fx.stop()); } catch { }
+    }
   }
   function renderView(v) {
     S.view = v;
     $$('#sb-nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-    const ct = $('#content');
+    const dashViews = $('#dash-views'), host = $('#view-host');
     if (v === 'dashboard') {
       history.replaceState(null, '', location.pathname); // location.hash='' scrolls & appends '#'
-      ct.style.display = '';
-      // re-init FX canvases if they were dropped by another view
-      if (!S.fx.wave) { S.fx.wave = FX.wave('#wave'); }
-      if (!S.fx.spark) { S.fx.spark = FX.spark('#spark'); }
+      dashViews.hidden = false;
+      host.hidden = true; host.innerHTML = ''; // drop stale view DOM + listeners
+      if (!S.fx.wave) S.fx.wave = FX.wave('#wave');
+      if (!S.fx.spark) S.fx.spark = FX.spark('#spark');
       if (!S.fx.globeInst) { S.fx.globeInst = FX.globe('#globe'); applyGlobeNodes(); }
+      setDashFX(true); // resume dashboard canvases
     } else {
-      ct.style.display = 'none';
-      let host = $('#view-host');
-      if (!host) { host = document.createElement('div'); host.id = 'view-host'; $('#dash').appendChild(host); }
-      host.hidden = false; host.innerHTML = views[v] ? views[v]() : '<p>به‌زودی</p>';
+      dashViews.hidden = true;
+      setDashFX(false); // pause hidden dashboard canvases → zero cost
+      host.hidden = false;
+      host.innerHTML = views[v] ? views[v]() : '<p>به‌زودی</p>';
       if (viewsInit[v]) viewsInit[v]();
+      window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     }
   }
 
@@ -487,19 +500,22 @@
           if (!r.edges || !r.edges.length) return out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>';
           // browser-side real RTT scan of the verified edges
           out.innerHTML = '';
+          prog.hidden = false; // FIX: progress bar was never un-hidden
           let done = 0;
           const rows = [];
           for (const ip of r.edges.slice(0, 40)) {
             rows.push({ ip, geo: (r.geo || {})[ip] || null, ms: null });
           }
           renderRows();
-          await Promise.all(rows.map(async (row, i) => {
+          await Promise.all(rows.map(async (row) => {
             const t0 = performance.now();
             try { await fetch('https://' + row.ip + '/', { mode: 'no-cors', cache: 'no-store' }); } catch { }
             row.ms = Math.round(performance.now() - t0);
             done++;
             $('i', prog).style.width = (done / rows.length * 100) + '%';
-            renderRows();
+            // FIX: re-render in batches (was: full re-render + 40 listener
+            // re-attachments on EVERY probe completion → scan-time jank)
+            if (done % 5 === 0 || done === rows.length) renderRows();
           }));
           prog.hidden = true;
         } catch (ex) { out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>'; }
@@ -677,13 +693,10 @@
     initDash();
     try {
       await api('ping');
-      showDash();
+      showDash(); // showDash() itself starts loops + detectOperator
     } catch {
       showLogin();
-      return;
     }
-    startLoops();
-    detectOperator();
   }
   document.addEventListener('DOMContentLoaded', boot);
 })();

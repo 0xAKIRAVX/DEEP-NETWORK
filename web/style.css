@@ -266,6 +266,12 @@ input::placeholder{color:#6b6b6b}
   padding:20px 24px 26px;max-width:1460px;transition:margin .3s var(--ease)}
 section{margin-bottom:14px}
 
+/* — alternate views (users/settings/scanner/…) render inside .ct now — */
+#dash-views[hidden],#view-host[hidden]{display:none}
+#view-host{position:relative;z-index:1;will-change:transform,opacity;animation:viewIn .26s var(--ease) both}
+@keyframes viewIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){#view-host{animation:none}}
+
 /* hero */
 .hero{position:relative;border-radius:var(--r-lg);overflow:hidden;border:1px solid var(--line);
   min-height:272px;display:flex;flex-direction:column;justify-content:flex-end;

@@ -1,6 +1,8 @@
 /* ═══════════════════════════════════════════════════════════
    DEEP NETWORK — FX engine (canvas: stars / globe / wave / spark)
    One rAF loop per active canvas · DPR cap · adaptive quality
+   · ResizeObserver-cached sizes (no per-frame layout reads)
+   · pause()/resume() so hidden canvases cost ZERO cpu
    All visuals driven by REAL data pushed via FX.data.*
    ═══════════════════════════════════════════════════════════ */
 'use strict';
@@ -17,14 +19,51 @@
   const $ = (s) => document.querySelector(s);
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
+  // ─────────── canvas sizing: measure ONCE via ResizeObserver ───────────
+  // getBoundingClientRect() per frame × 6 canvases × 60fps was forcing
+  // hundreds of layout recalcs per second → the "panel lag" root cause #1.
+  const cvDims = new WeakMap();
+  const RO = window.ResizeObserver ? new ResizeObserver(entries => {
+    for (const e of entries) {
+      const cv = e.target, r = e.contentRect;
+      let d = cvDims.get(cv); if (!d) { d = {}; cvDims.set(cv, d); }
+      d.w = Math.max(1, Math.round(r.width)); d.h = Math.max(1, Math.round(r.height));
+    }
+  }) : null;
+
   function ctx2d(cv) {
+    if (RO && !cvDims.has(cv)) { cvDims.set(cv, {}); RO.observe(cv); }
+    let d = cvDims.get(cv);
+    if (!d || !d.w) { // RO hasn't fired yet → one-time sync measure
+      const r = cv.getBoundingClientRect();
+      d = { w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)) };
+      cvDims.set(cv, d);
+    }
     const dpr = FX.dpr;
-    const r = cv.getBoundingClientRect();
-    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
-    if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+    if (cv.width !== d.w * dpr || cv.height !== d.h * dpr) { cv.width = d.w * dpr; cv.height = d.h * dpr; }
     const c = cv.getContext('2d');
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return [c, w, h];
+    return [c, d.w, d.h];
+  }
+
+  // ─────────── shared rAF loop with pause/resume ───────────
+  // (hidden canvases used to keep burning CPU — pause() actually stops the loop)
+  FX._loops = []; // debug registry: {name, isRunning}
+  function makeLoop(frameFn, name) {
+    let looping = false, running = true;
+    function tick(t) {
+      if (!running) { looping = false; return; }
+      requestAnimationFrame(tick);
+      frameFn(t);
+    }
+    const inst = {
+      start() { running = true; if (!looping) { looping = true; requestAnimationFrame(tick); } },
+      pause() { running = false; },
+      resume() { running = true; if (!looping) { looping = true; requestAnimationFrame(tick); } },
+      stop() { running = false; },
+    };
+    FX._loops.push({ name: name || 'anon', isRunning: () => running });
+    return inst;
   }
 
   // ─────────── coarse land mask (72×36, 5°/cell) — recognizable Earth ───────────
@@ -79,12 +118,12 @@
 
   // ─────────── star field (login + dashboard backgrounds) ───────────
   // NOTE: FPS is measured ONLY by fpsLoop below — animations must not
-  // accumulate into FX._fpsAcc themselves (a second accumulator double-counts
-  // and the FPS chip used to read 2–3× the real rate).
+  // accumulate into FX._fpsAcc themselves.
   const starfields = [];
   function starField(canvas, opts) {
+    if (!canvas) return { remake() { }, stop() { }, pause() { }, resume() { } };
     const o = Object.assign({ stars: 150, drift: 6, shoots: true }, opts);
-    let stars = [], shoots = [], t0 = performance.now();
+    let stars = [], shoots = [];
     function make(n) {
       stars = [];
       for (let i = 0; i < n; i++) stars.push({
@@ -94,14 +133,13 @@
       });
     }
     make(Math.round(o.stars * FX.quality));
-    let last = t0, running = true;
-    function frame(t) {
-      if (!running) return;
-      requestAnimationFrame(frame);
+    let last = performance.now();
+    const loop = makeLoop(function frame(t) {
       if (FX.paused) return; // tab hidden → save battery
       const dt = Math.min(50, t - last) / 1000; last = t;
       const [c, w, h] = ctx2d(canvas);
       c.clearRect(0, 0, w, h);
+      // stars — two size buckets to keep draw calls low
       for (const s of stars) {
         s.x += s.v * o.drift * dt / w;
         if (s.x > 1.02) s.x = -.02; if (s.x < -.02) s.x = 1.02;
@@ -123,22 +161,24 @@
         }
       }
       c.globalAlpha = 1;
-    }
-    requestAnimationFrame(frame);
+    });
+    loop.start();
     const inst = {
       remake() { make(Math.round(o.stars * FX.quality)); },
-      stop() { running = false; },
+      stop() { loop.stop(); },
+      pause() { loop.pause(); },
+      resume() { loop.resume(); },
     };
     starfields.push(inst);
     return inst;
   }
-
   // ─────────── globe (orthographic dot-earth, real rotation + real markers) ───────────
   function globe(canvasSel) {
-    const cv = $(canvasSel); if (!cv) return;
-    // fibonacci sphere points
+    const cv = $(canvasSel);
+    if (!cv) return { stop() { }, pause() { }, resume() { } };
+    // fibonacci sphere points — fewer on small screens (phones)
+    const N = Math.min(1500, window.innerWidth < 520 ? 850 : 1500);
     const pts = [];
-    const N = 1500;
     for (let i = 0; i < N; i++) {
       const y = 1 - (i / (N - 1)) * 2;
       const r = Math.sqrt(1 - y * y);
@@ -149,7 +189,8 @@
     }
     // arcs between real nodes
     let rot = -1.2, tilt = .35, spinV = .13, dragging = false, lastPX = 0, lastPY = 0, idleAt = 0;
-    let markers = [], arcs = [], running = true, lastT = 0;
+    let markers = [], arcs = [];
+    let skip = false; // low-quality half-rate
     // real network hub coordinates (world internet backbone)
     const HUBS = [
       { lat: 41.01, lon: 28.98 },  // Istanbul
@@ -171,16 +212,15 @@
     function proj(p, R, cx, cy) {
       // rotate around Y (rot) then X (tilt)
       const ca = Math.cos(rot), sa = Math.sin(rot);
-      let x = p.x * ca - p.z * sa, z = p.x * sa + p.z * ca, y = p.y;
+      const x = p.x * ca - p.z * sa, z = p.x * sa + p.z * ca, y = p.y;
       const cb = Math.cos(tilt), sb = Math.sin(tilt);
       const y2 = y * cb - z * sb, z2 = y * sb + z * cb;
       return [cx + x * R, cy - y2 * R, z2];
     }
-    function frame(t) {
-      if (!running) return;
-      requestAnimationFrame(frame);
+    const loop = makeLoop(function frame(t) {
       if (FX.paused) return;
-      const dt = Math.min(64, (t - lastT) / 1000); lastT = t;
+      if (FX.quality < .6) { skip = !skip; if (skip) return; } // half-rate under sustained load
+      const dt = Math.min(64, (t - (globe._lt || t)) / 1000); globe._lt = t;
       if (!dragging && t - idleAt > 2500) rot += spinV * dt; // frame-rate independent spin
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
@@ -196,7 +236,7 @@
       c.strokeStyle = 'rgba(255,255,255,.075)'; c.lineWidth = 1;
       for (let latI = -60; latI <= 60; latI += 20) {
         c.beginPath(); let started = false;
-        for (let lon = -180; lon <= 180; lon += 4) {
+        for (let lon = -180; lon <= 180; lon += 5) {
           const la = latI * Math.PI / 180, lo = lon * Math.PI / 180;
           const [X, Y, Z] = proj({ x: Math.cos(la) * Math.cos(lo), y: Math.sin(la), z: Math.cos(la) * Math.sin(lo) }, R, cx, cy);
           if (Z > -.02) { started ? c.lineTo(X, Y) : c.moveTo(X, Y); started = true; } else started = false;
@@ -205,14 +245,15 @@
       }
       for (let lonI = -180; lonI < 180; lonI += 20) {
         c.beginPath(); let started = false;
-        for (let lat = -88; lat <= 88; lat += 4) {
+        for (let lat = -88; lat <= 88; lat += 5) {
           const la = lat * Math.PI / 180, lo = lonI * Math.PI / 180;
           const [X, Y, Z] = proj({ x: Math.cos(la) * Math.cos(lo), y: Math.sin(la), z: Math.cos(la) * Math.sin(lo) }, R, cx, cy);
           if (Z > -.02) { started ? c.lineTo(X, Y) : c.moveTo(X, Y); started = true; } else started = false;
         }
         c.stroke();
       }
-      // dots (land bright, sea dim)
+      // dots (land bright, sea dim) — NO per-dot shadowBlur: it forced a
+      // GPU blur per land point per frame → the "lag/freeze" root cause #2
       const step = FX.quality > .6 ? 1 : 2;
       for (let i = 0; i < pts.length; i += step) {
         const p = pts[i];
@@ -223,9 +264,7 @@
           c.globalAlpha = depth * .95;
           c.fillStyle = Z > .25 ? '#fff' : '#c6c6c6';
           const sz = 1.5 + depth * 1.15;
-          if (Z > .3) { c.shadowColor = 'rgba(255,255,255,.55)'; c.shadowBlur = 3.2; }
           c.fillRect(X - sz / 2, Y - sz / 2, sz, sz);
-          c.shadowBlur = 0;
         } else {
           c.globalAlpha = depth * .16;
           c.fillStyle = '#fff';
@@ -274,9 +313,10 @@
         c.fillStyle = '#fff'; c.shadowColor = '#fff'; c.shadowBlur = 12;
         c.beginPath(); c.arc(X, Y, 2.6, 0, 6.283); c.fill(); c.shadowBlur = 0;
       }
-    }
+    });
+    loop.start();
     // drag interaction (real user control)
-    cv.addEventListener('pointerdown', e => { dragging = true; lastPX = e.clientX; lastPY = e.clientY; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointerdown', e => { dragging = true; lastPX = e.clientX; lastPY = e.clientY; try { cv.setPointerCapture(e.pointerId); } catch { } });
     cv.addEventListener('pointermove', e => {
       if (!dragging) return;
       rot += (e.clientX - lastPX) * .0065;
@@ -285,18 +325,21 @@
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => cv.addEventListener(ev, () => { dragging = false; idleAt = performance.now(); }));
     FX.setGlobeNodes = setNodes;
-    requestAnimationFrame(frame);
-    return { stop() { running = false; } };
+    return {
+      stop() { loop.stop(); },
+      pause() { loop.pause(); },
+      resume() { loop.resume(); },
+    };
   }
 
   // ─────────── wave chart (real bandwidth history, dual line + fill) ───────────
   function wave(canvasSel) {
-    const cv = $(canvasSel); if (!cv) return;
+    const cv = $(canvasSel);
+    if (!cv) return { set() { }, stop() { }, pause() { }, resume() { } };
     let show = { rx: true, tx: true };
     let lastDraw = 0;
-    function draw(t) {
-      requestAnimationFrame(draw);
-      if (t - lastDraw < 90 || FX.paused) return; // chart at ~10fps is plenty; saves GPU for globe/FX
+    const loop = makeLoop(function draw(t) {
+      if (t - lastDraw < 90 || FX.paused) return; // chart at ~10fps is plenty
       lastDraw = t;
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
@@ -309,7 +352,7 @@
       for (const p of hist) { if (show.rx) maxV = Math.max(maxV, p.rx); if (show.tx) maxV = Math.max(maxV, p.tx); }
       maxV = Math.max(maxV, 1) * 1.12;
       // grid + Y labels
-      c.font = '10px JB, monospace'; c.textAlign = 'left'; c.textBaseline = 'middle';
+      c.font = '10px ' + MONO; c.textAlign = 'left'; c.textBaseline = 'middle';
       c.strokeStyle = 'rgba(255,255,255,.06)'; c.fillStyle = '#7d7d7d'; c.lineWidth = 1;
       for (let i = 0; i <= 4; i++) {
         const y = padT + ih * i / 4;
@@ -350,25 +393,29 @@
       };
       line('rx', '#ffffff', true);
       line('tx', 'rgba(255,255,255,.45)', false);
-    }
-    function fmtNum(v) { // v is bytes/second
-      if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(1) + 'GB/s';
-      if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + 'MB/s';
-      if (v >= 1024) return (v / 1024).toFixed(1) + 'KB/s';
-      return Math.max(0, Math.round(v)) + 'B/s';
-    }
-    requestAnimationFrame(draw);
+    });
+    loop.start();
     return {
       set(k, v) { show[k] = v; },
+      stop() { loop.stop(); },
+      pause() { loop.pause(); },
+      resume() { loop.resume(); },
     };
+  }
+
+  function fmtNum(v) { // v is bytes/second
+    if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(1) + 'GB/s';
+    if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + 'MB/s';
+    if (v >= 1024) return (v / 1024).toFixed(1) + 'KB/s';
+    return Math.max(0, Math.round(v)) + 'B/s';
   }
 
   // ─────────── sparkline (network card) ───────────
   function spark(canvasSel) {
-    const cv = $(canvasSel); if (!cv) return;
+    const cv = $(canvasSel);
+    if (!cv) return { stop() { }, pause() { }, resume() { } };
     let last = 0;
-    function draw(t) {
-      requestAnimationFrame(draw);
+    const loop = makeLoop(function draw(t) {
       if (t - last < 500 || FX.paused) return; last = t;
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
@@ -387,9 +434,17 @@
       };
       line('rx', 'rgba(255,255,255,.9)');
       line('tx', 'rgba(255,255,255,.38)');
-    }
-    requestAnimationFrame(draw);
+    });
+    loop.start();
+    return { // FIX: return was missing — spark could never be paused
+      stop() { loop.stop(); },
+      pause() { loop.pause(); },
+      resume() { loop.resume(); },
+    };
   }
+
+  // mono font for canvas labels (matches --mono of the page)
+  const MONO = (getComputedStyle(document.documentElement).getPropertyValue('--mono') || 'monospace').trim() || 'monospace';
 
   // ─────────── FPS manager (real measured FPS + adaptive quality) ───────────
   let fpsLoopLast = performance.now();
@@ -401,7 +456,7 @@
       FX._fpsAcc = 0; FX._fpsN = 0;
       if (FX.onFps) FX.onFps(FX.fps);
       // adaptive quality
-      if (FX.fps < 42) { FX._lowStreak++; FX._hiStreak = 0; } 
+      if (FX.fps < 42) { FX._lowStreak++; FX._hiStreak = 0; }
       else if (FX.fps > 55) { FX._hiStreak++; FX._lowStreak = 0; }
       else { FX._lowStreak = 0; FX._hiStreak = 0; }
       if (FX._lowStreak >= 3 && FX.quality > .5) {
