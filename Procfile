@@ -1,1 +1,1 @@
-web: python3 -u panel.py
+web: ./out

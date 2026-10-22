@@ -1,2 +1,0 @@
-# NullGate runs on the Python standard library only - no PyPI packages needed.
-# This file exists so the platform builder detects a Python project.

@@ -1,9 +1,5 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "python",
-  "packages": {
-    "python": "3.12"
-  },
   "buildAptPackages": [
     "...",
     "curl",
@@ -29,17 +25,14 @@
     }
   },
   "deploy": {
-    "startCommand": "python3 -u panel.py",
+    "startCommand": "./out",
     "aptPackages": [
       "...",
-      "nginx",
-      "curl",
       "ca-certificates",
       "tzdata"
     ],
     "variables": {
-      "TZ": "UTC",
-      "PYTHONUNBUFFERED": "1"
+      "TZ": "UTC"
     }
   }
 }
