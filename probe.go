@@ -499,6 +499,18 @@ func bunnyEdgesFor(domain, family string) (edges []string, geo map[string]map[st
         }
         sort2d(verified)
 
+        // v6 fallback: many container hosts (incl. Lucity) have NO IPv6
+        // egress, so server-side probing can never reach the v6 edges. The
+        // user's browser is the real v6 client — hand it the geo-balanced
+        // shortlist unverified; the browser-side RTT sweep discards dead
+        // edges before anything is applied.
+        if family == "6" && len(verified) == 0 {
+                verified = append([]string(nil), shortlist...)
+                if len(verified) > 96 {
+                        verified = verified[:96]
+                }
+        }
+
         bunny.mu.Lock()
         if family == "6" {
                 geo = bunny.geo6
