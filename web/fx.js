@@ -346,67 +346,148 @@
     };
   }
 
-  // ─────────── wave chart (real bandwidth history, dual line + fill) ───────────
+  // ─────────── wave chart (live bandwidth — TRUE 60fps engine, v3.6) ───────────
+  // v3.6 full rewrite. The old chart throttled redraws to ~10fps while fresh
+  // data arrived only every 3s and was drawn with NO interpolation — the
+  // polyline snapped to its new shape twice per second = "frame by frame
+  // with lag". The new engine:
+  //   · draws EVERY requestAnimationFrame (display rate: 60/90/120Hz)
+  //   · time-anchored scroll: each point sits at its REAL timestamp and
+  //     glides left continuously → fluid motion BETWEEN polls, never static
+  //   · eased (exponential, dt-corrected) values + eased Y-scale → no
+  //     snapping and no violent rescale when a burst spike lands
+  //   · live head: the newest sample is extrapolated to "now" with the
+  //     eased instantaneous rx/tx → the head always advances, always glows
+  //   · wall-clock time ticks that scroll WITH the data (they never jump)
+  //   · server→client clock offset auto-corrected each payload
   function wave(canvasSel) {
     const cv = $(canvasSel);
     if (!cv) return { set() { }, stop() { }, pause() { }, resume() { } };
     let show = { rx: true, tx: true };
-    let lastDraw = 0;
-    const loop = makeLoop(function draw(t) {
-      if (t - lastDraw < 90 || FX.paused) return; // chart at ~10fps is plenty
-      lastDraw = t;
+    const WINDOW = 90;                 // seconds of history on screen
+    let srcRef = null;                 // identity of last-ingested FX.data.hist
+    let pts = [];                      // [{t, rx, tx, drx, dtx}] d*=eased display
+    let dMax = 1;                       // eased Y scale
+    let curRx = 0, curTx = 0, dCurRx = 0, dCurTx = 0;
+    let off = 0;                        // server→client clock offset (seconds)
+    let lastT = 0, lastDataT = 0;        // lastDataT = wall time of last NEW payload (snap detection)
+    function ingest(nowMs) {
+      curRx = +FX.data.rx || 0; curTx = +FX.data.tx || 0;
+      const h = FX.data.hist;
+      if (!h || h === srcRef) return;
+      srcRef = h;
+      // first paint, or frames kept running while data paused (>3.5s stale) → jump instantly
+      const snap = !pts.length || (lastDataT > 0 && nowMs - lastDataT > 3500);
+      const old = new Map(pts.map(p => [p.t, p]));
+      const next = [];
+      for (let i = 0; i < h.length; i++) {
+        const prev = old.get(h[i].t);
+        if (prev) {
+          next.push({ t: h[i].t, rx: h[i].rx, tx: h[i].tx, drx: prev.drx, dtx: prev.dtx });
+        } else {
+          // continuity: a brand-new point starts at its neighbour's CURRENT
+          // display value and eases to target — starting at 0 made the head
+          // of the curve dip to baseline once per second (1Hz artifact).
+          const base = next.length ? next[next.length - 1] : null;
+          next.push({
+            t: h[i].t, rx: h[i].rx, tx: h[i].tx,
+            drx: base ? base.drx : (snap ? h[i].rx : 0),
+            dtx: base ? base.dtx : (snap ? h[i].tx : 0),
+          });
+        }
+      }
+      pts = next;
+      lastDataT = nowMs;
+      const st = FX.data.serverT;
+      if (st) off = nowMs / 1000 - st;
+      if (snap) { dCurRx = curRx; dCurTx = curTx; }
+    }
+    const loop = makeLoop(function frame(t) {
+      if (FX.paused) { lastT = t; return; }
+      const dt = Math.min(64, (t - lastT) || 16) / 1000; lastT = t;
+      if (FX.quality < .7 && ((t / 16) | 0) % 2) return; // half-rate only under sustained load
+      ingest(t);
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
-      const padL = 42, padR = 12, padT = 12, padB = 24;
+      const padL = 48, padR = 14, padT = 14, padB = 24;
       const iw = w - padL - padR, ih = h - padT - padB;
-      const hist = FX.data.hist || [];
-      if (hist.length < 2) return;
-      const n = hist.length;
-      let maxV = 1;
-      for (const p of hist) { if (show.rx) maxV = Math.max(maxV, p.rx); if (show.tx) maxV = Math.max(maxV, p.tx); }
-      maxV = Math.max(maxV, 1) * 1.12;
-      // grid + Y labels
-      c.font = '10px ' + MONO; c.textAlign = 'left'; c.textBaseline = 'middle';
-      c.strokeStyle = 'rgba(255,255,255,.06)'; c.fillStyle = '#7d7d7d'; c.lineWidth = 1;
+      const nowS = t / 1000 - off;          // server time mapped onto client clock
+      const t0 = nowS - WINDOW;
+      // ── eased values (dt-corrected exponential smoothing) ──
+      const kV = 1 - Math.exp(-dt * 12);    // per-point catch-up: responsive yet smooth
+      const kC = 1 - Math.exp(-dt * 7);     // live head value
+      dCurRx += (curRx - dCurRx) * kC; dCurTx += (curTx - dCurTx) * kC;
+      let tMax = 1;
+      for (const p of pts) {
+        if (p.t < t0 - 2) continue;
+        if (show.rx && p.rx > tMax) tMax = p.rx;
+        if (show.tx && p.tx > tMax) tMax = p.tx;
+      }
+      if (show.rx && dCurRx > tMax) tMax = dCurRx;
+      if (show.tx && dCurTx > tMax) tMax = dCurTx;
+      tMax *= 1.15;
+      dMax += (tMax - dMax) * (1 - Math.exp(-dt * 3.2)); // gentle rescale = no flicker
+      for (const p of pts) { p.drx += (p.rx - p.drx) * kV; p.dtx += (p.tx - p.dtx) * kV; }
+      const X = tt => padL + iw * (tt - t0) / WINDOW;
+      const Y = v => padT + ih * (1 - clamp(v / dMax, 0, 1));
+      // ── grid + Y labels ──
+      c.font = '10px ' + MONO; c.textBaseline = 'middle'; c.lineWidth = 1;
+      c.lineJoin = 'round'; c.lineCap = 'round';
+      c.strokeStyle = 'rgba(255,255,255,.06)'; c.fillStyle = '#7d7d7d';
       for (let i = 0; i <= 4; i++) {
         const y = padT + ih * i / 4;
         c.beginPath(); c.moveTo(padL, y); c.lineTo(w - padR, y); c.stroke();
-        c.fillText(fmtNum(maxV * (4 - i) / 4), 4, y);
+        c.textAlign = 'left';
+        c.fillText(fmtNum(dMax * (4 - i) / 4), 4, y);
       }
-      // X labels: 5 evenly spaced
-      c.textAlign = 'center';
-      const now = Date.now() / 1000;
-      for (let k = 0; k <= 4; k++) {
-        const i = Math.round((n - 1) * k / 4);
-        const x = padL + iw * i / (n - 1);
-        const p = hist[i];
-        const d = new Date((p.t || now) * 1000);
-        c.fillText(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'), x, h - 9);
+      // ── wall-clock ticks (scroll with the data — never jump) ──
+      c.textAlign = 'center'; c.fillStyle = '#7d7d7d';
+      let step = 60;
+      for (const s of [5, 10, 15, 30]) { if (iw * s / WINDOW >= 56) { step = s; break; } }
+      const firstTick = Math.ceil(t0 / step) * step;
+      for (let tt = firstTick; tt <= nowS; tt += step) {
+        const x = X(tt);
+        c.strokeStyle = 'rgba(255,255,255,.045)';
+        c.beginPath(); c.moveTo(x, padT); c.lineTo(x, padT + ih); c.stroke();
+        const d = new Date(tt * 1000);
+        c.fillText(String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') +
+          (step < 30 ? ':' + String(d.getSeconds()).padStart(2, '0') : ''), x, h - 9);
       }
-      // lines
-      const line = (key, color, fill) => {
+      // ── curves + live head ──
+      const line = (key, dkey, color, fill) => {
         if (!show[key]) return;
+        let started = false, px = 0, py = 0, sx = 0;
         c.beginPath();
-        let px = 0, py = 0;
-        for (let i = 0; i < n; i++) {
-          const x = padL + iw * i / (n - 1), y = padT + ih * (1 - clamp(hist[i][key] / maxV, 0, 1));
-          if (i === 0) { c.moveTo(x, y); px = x; py = y; }
+        for (const p of pts) {
+          if (p.t < t0) continue;
+          const x = X(p.t), y = Y(p[dkey]);
+          if (!started) { c.moveTo(x, y); started = true; px = x; py = y; sx = x; }
           else { c.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2); px = x; py = y; }
         }
-        c.lineTo(px, py);
-        c.strokeStyle = color; c.lineWidth = 1.8; c.stroke();
+        if (!started) return;
+        const hv = key === 'rx' ? dCurRx : dCurTx;
+        const hx = X(nowS), hy = Y(hv);
+        c.quadraticCurveTo(px, py, (px + hx) / 2, (py + hy) / 2);
+        c.lineTo(hx, hy);
+        c.strokeStyle = color; c.lineWidth = 2; c.stroke();
         if (fill) {
-          c.lineTo(padL + iw, padT + ih); c.lineTo(padL, padT + ih); c.closePath();
+          c.lineTo(hx, padT + ih); c.lineTo(sx, padT + ih); c.closePath();
           const g = c.createLinearGradient(0, padT, 0, padT + ih);
-          g.addColorStop(0, 'rgba(255,255,255,.16)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+          g.addColorStop(0, 'rgba(255,255,255,.17)'); g.addColorStop(1, 'rgba(255,255,255,0)');
           c.fillStyle = g; c.fill();
         }
-        // head dot
-        const lx = padL + iw, ly = padT + ih * (1 - clamp(hist[n - 1][key] / maxV, 0, 1));
-        c.fillStyle = '#fff'; c.beginPath(); c.arc(lx, ly, 2.4, 0, 6.283); c.fill();
+        // head dot with glow (ONE shadow per frame — cheap, unlike the old per-dot blur)
+        c.fillStyle = '#fff'; c.shadowColor = color; c.shadowBlur = 10;
+        c.beginPath(); c.arc(hx, hy, 2.6 + .5 * Math.sin(t / 300), 0, 6.283); c.fill();
+        c.shadowBlur = 0;
       };
-      line('rx', '#ffffff', true);
-      line('tx', 'rgba(255,255,255,.45)', false);
+      line('rx', 'drx', '#ffffff', true);
+      line('tx', 'dtx', 'rgba(255,255,255,.45)', false);
+      if (!pts.length) {
+        c.fillStyle = 'rgba(255,255,255,.28)'; c.textAlign = 'center';
+        c.font = '11px ' + MONO;
+        c.fillText('در انتظار داده\u200cهای زنده…', padL + iw / 2, padT + ih / 2);
+      }
     });
     loop.start();
     return {
@@ -424,30 +505,88 @@
     return Math.max(0, Math.round(v)) + 'B/s';
   }
 
-  // ─────────── sparkline (network card) ───────────
+  // ─────────── sparkline (network card — same 60fps live engine) ───────────
   function spark(canvasSel) {
     const cv = $(canvasSel);
     if (!cv) return { stop() { }, pause() { }, resume() { } };
-    let last = 0;
-    const loop = makeLoop(function draw(t) {
-      if (t - last < 500 || FX.paused) return; last = t;
+    const WINDOW = 45;                  // seconds on screen
+    let srcRef = null, pts = [];
+    let curRx = 0, curTx = 0, dCurRx = 0, dCurTx = 0;
+    let dMax = 1, off = 0, lastT = 0, lastDataT = 0;
+    function ingest(nowMs) {
+      curRx = +FX.data.rx || 0; curTx = +FX.data.tx || 0;
+      const h = FX.data.hist;
+      if (!h || h === srcRef) return;
+      srcRef = h;
+      const snap = !pts.length || (lastDataT > 0 && nowMs - lastDataT > 3500);
+      const old = new Map(pts.map(p => [p.t, p]));
+      const next = [];
+      for (let i = 0; i < h.length; i++) {
+        const prev = old.get(h[i].t);
+        if (prev) {
+          next.push({ t: h[i].t, rx: h[i].rx, tx: h[i].tx, drx: prev.drx, dtx: prev.dtx });
+        } else {
+          const base = next.length ? next[next.length - 1] : null;
+          next.push({
+            t: h[i].t, rx: h[i].rx, tx: h[i].tx,
+            drx: base ? base.drx : (snap ? h[i].rx : 0),
+            dtx: base ? base.dtx : (snap ? h[i].tx : 0),
+          });
+        }
+      }
+      pts = next;
+      lastDataT = nowMs;
+      const st = FX.data.serverT;
+      if (st) off = nowMs / 1000 - st;
+      if (snap) { dCurRx = curRx; dCurTx = curTx; }
+    }
+    const loop = makeLoop(function frame(t) {
+      if (FX.paused) { lastT = t; return; }
+      const dt = Math.min(64, (t - lastT) || 16) / 1000; lastT = t;
+      if (FX.quality < .7 && ((t / 16) | 0) % 2) return;
+      ingest(t);
       const [c, w, h] = ctx2d(cv);
       c.clearRect(0, 0, w, h);
-      const hist = FX.data.hist || []; if (hist.length < 2) return;
-      const n = Math.min(hist.length, 60);
-      const seg = hist.slice(-n);
-      let maxV = 1;
-      for (const p of seg) maxV = Math.max(maxV, p.rx, p.tx);
-      const line = (key, color) => {
+      const nowS = t / 1000 - off, t0 = nowS - WINDOW;
+      const kV = 1 - Math.exp(-dt * 12), kC = 1 - Math.exp(-dt * 7);
+      dCurRx += (curRx - dCurRx) * kC; dCurTx += (curTx - dCurTx) * kC;
+      let tMax = 1;
+      for (const p of pts) {
+        if (p.t < t0 - 2) continue;
+        if (p.rx > tMax) tMax = p.rx;
+        if (p.tx > tMax) tMax = p.tx;
+      }
+      if (dCurRx > tMax) tMax = dCurRx;
+      if (dCurTx > tMax) tMax = dCurTx;
+      tMax *= 1.15;
+      dMax += (tMax - dMax) * (1 - Math.exp(-dt * 3.2));
+      for (const p of pts) { p.drx += (p.rx - p.drx) * kV; p.dtx += (p.tx - p.dtx) * kV; }
+      const X = tt => w * (tt - t0) / WINDOW;
+      const Y = v => h - 3 - (h - 8) * clamp(v / dMax, 0, 1);
+      const line = (key, dkey, color, fill) => {
+        let started = false, px = 0, py = 0, sx = 0;
         c.beginPath();
-        for (let i = 0; i < seg.length; i++) {
-          const x = w * i / (seg.length - 1), y = h - 3 - (h - 8) * clamp(seg[i][key] / maxV, 0, 1);
-          i ? c.lineTo(x, y) : c.moveTo(x, y);
+        for (const p of pts) {
+          if (p.t < t0) continue;
+          const x = X(p.t), y = Y(p[dkey]);
+          if (!started) { c.moveTo(x, y); started = true; px = x; py = y; sx = x; }
+          else { c.quadraticCurveTo(px, py, (px + x) / 2, (py + y) / 2); px = x; py = y; }
         }
-        c.strokeStyle = color; c.lineWidth = 1.2; c.stroke();
+        if (!started) return;
+        const hv = key === 'rx' ? dCurRx : dCurTx;
+        const hx = X(nowS), hy = Y(hv);
+        c.quadraticCurveTo(px, py, (px + hx) / 2, (py + hy) / 2);
+        c.lineTo(hx, hy);
+        c.strokeStyle = color; c.lineWidth = 1.4; c.stroke();
+        if (fill) {
+          c.lineTo(hx, h); c.lineTo(sx, h); c.closePath();
+          const g = c.createLinearGradient(0, 0, 0, h);
+          g.addColorStop(0, 'rgba(255,255,255,.14)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+          c.fillStyle = g; c.fill();
+        }
       };
-      line('rx', 'rgba(255,255,255,.9)');
-      line('tx', 'rgba(255,255,255,.38)');
+      line('rx', 'drx', 'rgba(255,255,255,.9)', true);
+      line('tx', 'dtx', 'rgba(255,255,255,.38)', false);
     });
     loop.start();
     return { // FIX: return was missing — spark could never be paused
@@ -491,6 +630,31 @@
   document.addEventListener('visibilitychange', () => {
     FX.paused = document.hidden;
   });
+
+  // ─────────── number tweens (values GLIDE instead of jumping, v3.6) ───────────
+  // Driven by its own rAF loop, independent of chart loops, so it animates on
+  // every view. Entries whose element left the DOM (view re-render) are GC'd.
+  const tweens = new Map(); // el → {cur, target, fmt, last}
+  let numLast = 0;
+  function numLoop(t) {
+    requestAnimationFrame(numLoop);
+    const dt = Math.min(64, (t - numLast) || 16) / 1000; numLast = t;
+    if (FX.paused) return;
+    for (const [el, tw] of tweens) {
+      if (!el.isConnected) { tweens.delete(el); continue; }
+      tw.cur += (tw.target - tw.cur) * (1 - Math.exp(-dt * 6));
+      const s = tw.fmt(tw.cur);
+      if (s !== tw.last) { el.textContent = s; tw.last = s; } // write only when the text actually changes
+    }
+  }
+  requestAnimationFrame(numLoop);
+  FX.tweenNum = function (el, target, fmt) {
+    if (!el) return;
+    let tw = tweens.get(el);
+    if (!tw) { tweens.set(el, { cur: target, target, fmt: fmt || String, last: '' }); return; }
+    tw.target = target;
+    if (fmt) tw.fmt = fmt;
+  };
 
   // ─────────── public API ───────────
   FX.starField = starField;

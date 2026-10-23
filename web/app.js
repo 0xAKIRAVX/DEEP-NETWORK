@@ -41,8 +41,19 @@
     const t = $('#toast'); t.textContent = msg; t.className = 'toast show ' + (cls || '');
     clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2600);
   }
-  function fmtGB(b) { return (b / 1073741824).toFixed(1) + ' GB'; }
-  function fmtMBs(bps) { return (bps / 1048576).toFixed(1); }
+  // v3.6: adaptive units — tiny values no longer render as "0.0 GB"/"0.0 MB/s"
+  function fmtGB(b) {
+    if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+    if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+    return Math.max(0, Math.round(b)) + ' B';
+  }
+  function fmtRate(bps) { // bytes/second with adaptive unit
+    if (bps >= 1073741824) return (bps / 1073741824).toFixed(2) + ' GB/s';
+    if (bps >= 1048576) return (bps / 1048576).toFixed(1) + ' MB/s';
+    if (bps >= 1024) return (bps / 1024).toFixed(1) + ' KB/s';
+    return Math.max(0, Math.round(bps)) + ' B/s';
+  }
   function fmtUptime(s) {
     if (s < 60) return s + ' ثانیه';
     if (s < 3600) return Math.floor(s / 60) + ' دقیقه';
@@ -184,7 +195,10 @@
       try {
         const st = await api('state');
         const main = st.clients.find(c => c.main) || st.clients[0];
-        location.href = '/panel/api/client/' + main.id + '?profile=fast';
+        // v3.6 FIX: was ?profile=fast — forced fragmentation OFF, the opposite
+        // of "اتصال امن". No profile → serves the CURRENT saved tuning
+        // (fragmentation/anti-DPI exactly as configured in Settings).
+        location.href = '/panel/api/client/' + main.id;
       } catch (ex) { toast(ex.message, 'err'); }
     });
     $$('.lc-ico').forEach(b => b.addEventListener('click', async () => {
@@ -266,28 +280,37 @@
       paintStats(st);
     } catch { /* transient */ }
   }
+  let pingEma = null; // v3.6: EMA display — the raw median jumps around every poll
   async function pingLoop() {
     const t0 = performance.now();
     try { await api('ping'); } catch { return; }
     const ms = Math.round(performance.now() - t0);
     pingHist.push(ms); if (pingHist.length > 8) pingHist.shift();
     const med = pingHist.slice().sort((a, b) => a - b)[Math.floor(pingHist.length / 2)];
-    const el = $('#g-ping'); if (el) el.textContent = med + ' ms';
+    pingEma = pingEma == null ? med : pingEma * .7 + med * .3;
+    const el = $('#g-ping'); if (el) el.textContent = Math.round(pingEma) + ' ms';
     const st = $('#g-status');
-    if (st) st.textContent = med < 130 ? 'عالی' : med < 280 ? 'خوب' : 'متوسط';
+    if (st) st.textContent = pingEma < 130 ? 'عالی' : pingEma < 280 ? 'خوب' : 'متوسط';
     FX.data.ping = med;
   }
 
   function paintStats(st) {
-    FX.data.hist = st.hist.rx.map((v, i) => ({ t: (st.t || 0) - (st.hist.rx.length - 1 - i), rx: v, tx: st.hist.tx[i] }));
+    // v3.6: prefer the REAL per-sample timestamps from the server (sampler
+    // jitter no longer shifts points); fall back to index-based estimates.
+    const n = (st.hist && st.hist.rx) ? st.hist.rx.length : 0;
+    const ts = (st.hist && st.hist.t && st.hist.t.length === n)
+      ? st.hist.t : Array.from({ length: n }, (_, i) => (st.t || 0) - (n - 1 - i));
+    FX.data.serverT = st.t || (n ? ts[n - 1] : 0);
+    FX.data.hist = ts.map((t, i) => ({ t, rx: st.hist.rx[i], tx: st.hist.tx[i] }));
     FX.data.rx = st.rx; FX.data.tx = st.tx;
     const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
-    set('#g-dl', fmtMBs(st.rx));
-    set('#g-ul', fmtMBs(st.tx));
+    // live numbers — eased via FX.tweenNum so they GLIDE at full frame rate
+    FX.tweenNum($('#g-dl'), st.rx || 0, fmtRate);
+    FX.tweenNum($('#g-ul'), st.tx || 0, fmtRate);
+    FX.tweenNum($('#r-up'), st.tx || 0, fmtRate);
+    FX.tweenNum($('#r-down'), st.rx || 0, fmtRate);
     set('#g-dl-tot', '(' + fmtGB(st.rx_total || 0) + ')');
     set('#g-ul-tot', '(' + fmtGB(st.tx_total || 0) + ')');
-    set('#r-up', fmtMBs(st.tx));
-    set('#r-down', fmtMBs(st.rx));
     set('#r-ram', st.mem_total >= 1024 ? (st.mem_used / 1024).toFixed(1) + ' / ' + (st.mem_total / 1024).toFixed(1) + ' GB' : st.mem_used + ' / ' + st.mem_total + ' MB');
     set('#r-disk', (st.disk.used || 0).toFixed(0) + ' / ' + (st.disk.total || 0).toFixed(1) + ' GB');
     set('#r-cpu-model', st.cpu_model || '—');
@@ -303,10 +326,21 @@
     ring('ram', st.mem || 0);
     ring('disk', st.disk.percent || 0);
     applyGlobeNodes();
+    // v3.6: stats view updates IN PLACE (the old 5s full re-render flashed
+    // and reset scroll position every refresh)
+    const memStr = st.mem_total >= 1024 ? (st.mem_used / 1024).toFixed(1) + ' / ' + (st.mem_total / 1024).toFixed(1) + ' GB' : st.mem_used + ' / ' + st.mem_total + ' MB';
+    set('#sv-cpu', (st.cpu || 0).toFixed(1) + '%');
+    set('#sv-mem', memStr + ' (' + (Number(st.mem) || 0).toFixed(1) + '%)');
+    set('#sv-disk', (st.disk.used || 0).toFixed(0) + ' / ' + (st.disk.total || 0).toFixed(1) + ' GB');
+    set('#sv-dl', fmtGB(st.rx_total || 0));
+    set('#sv-ul', fmtGB(st.tx_total || 0));
+    set('#sv-t30', st.traffic30 && st.traffic30.bytes ? fmtGB(st.traffic30.bytes) : '—');
+    set('#sv-online', st.online || 0);
+    set('#sv-up', fmtUptime(st.uptime || 0));
   }
   function ring(name, pct) {
     const el = $('.ring[data-ring="' + name + '"]'); if (!el) return;
-    $('b', el).textContent = Math.round(pct) + '%';
+    FX.tweenNum($('b', el), pct, v => Math.round(v) + '%'); // number glides; arc has CSS transition
     const C = 2 * Math.PI * 34;
     const fg = $('circle.fg', el);
     fg.style.strokeDashoffset = C * (1 - Math.min(pct, 100) / 100);
@@ -445,18 +479,21 @@
     },
     stats() {
       const st = S.stats || {};
+      const memStr = (st.mem_total || 0) >= 1024 ? ((st.mem_used || 0) / 1024).toFixed(1) + ' / ' + ((st.mem_total || 0) / 1024).toFixed(1) + ' GB' : (st.mem_used || 0) + ' / ' + (st.mem_total || 0) + ' MB';
+      // v3.6: sv-* ids → statLoop refreshes these IN PLACE every second
+      // (paintStats) instead of re-rendering the whole view every 5s.
       return `<section class="info-sec" style="margin-top:20px">
       <h3>آمار زنده سرور</h3>
       <ul class="kv">
       <li><span>پردازنده</span><b>${esc(st.cpu_model || '—')}</b></li>
-      <li><span>مصرف CPU</span><b>${(st.cpu || 0).toFixed(1)}%</b></li>
-      <li><span>حافظه</span><b>${(st.mem_total || 0) >= 1024 ? ((st.mem_used || 0) / 1024).toFixed(1) + ' / ' + ((st.mem_total || 0) / 1024).toFixed(1) + ' GB' : (st.mem_used || 0) + ' / ' + (st.mem_total || 0) + ' MB'} (${(Number(st.mem) || 0).toFixed(1)}%)</b></li>
-      <li><span>دیسک</span><b>${(st.disk && st.disk.used || 0)} / ${(st.disk && st.disk.total || 0)} GB</b></li>
-      <li><span>دانلود کل</span><b>${fmtGB(st.rx_total || 0)}</b></li>
-      <li><span>آپلود کل</span><b>${fmtGB(st.tx_total || 0)}</b></li>
-      <li><span>ترافیک ۳۰ روز</span><b>${st.traffic30 && st.traffic30.bytes ? fmtGB(st.traffic30.bytes) : '—'}</b></li>
-      <li><span>کانال‌های فعال</span><b>${st.online || 0}</b></li>
-      <li><span>زمان روشن</span><b>${fmtUptime(st.uptime || 0)}</b></li>
+      <li><span>مصرف CPU</span><b id="sv-cpu">${(st.cpu || 0).toFixed(1)}%</b></li>
+      <li><span>حافظه</span><b id="sv-mem">${memStr} (${(Number(st.mem) || 0).toFixed(1)}%)</b></li>
+      <li><span>دیسک</span><b id="sv-disk">${(st.disk && st.disk.used || 0)} / ${(st.disk && st.disk.total || 0)} GB</b></li>
+      <li><span>دانلود کل</span><b id="sv-dl">${fmtGB(st.rx_total || 0)}</b></li>
+      <li><span>آپلود کل</span><b id="sv-ul">${fmtGB(st.tx_total || 0)}</b></li>
+      <li><span>ترافیک ۳۰ روز</span><b id="sv-t30">${st.traffic30 && st.traffic30.bytes ? fmtGB(st.traffic30.bytes) : '—'}</b></li>
+      <li><span>کانال‌های فعال</span><b id="sv-online">${st.online || 0}</b></li>
+      <li><span>زمان روشن</span><b id="sv-up">${fmtUptime(st.uptime || 0)}</b></li>
       <li><span>نسخه</span><b>v${VER}</b></li></ul></section>`;
     },
     tools() {
@@ -1094,12 +1131,26 @@
     $('#bell').addEventListener('click', () => toast(S.stats && S.stats.online ? S.stats.online + ' تونل فعال است' : 'اعلان جدیدی نیست'));
     $('#tg-dl').addEventListener('change', e => S.fx.wave && S.fx.wave.set('rx', e.target.checked));
     $('#tg-ul').addEventListener('change', e => S.fx.wave && S.fx.wave.set('tx', e.target.checked));
-    $$('#globe-tog input').forEach(r => r.addEventListener('change', () => { }));
+    // v3.6 FIX: the دانلود/آپلود radios in the globe section were wired to an
+    // EMPTY handler — a visible control that did nothing. They now filter the
+    // live chart to the selected direction (chart checkboxes stay in sync).
+    $$('#globe-tog input').forEach(r => r.addEventListener('change', () => {
+      if (!r.checked || !S.fx.wave) return;
+      const rx = r.value === 'rx';
+      S.fx.wave.set('rx', rx); S.fx.wave.set('tx', !rx);
+      const dl = $('#tg-dl'), ul = $('#tg-ul');
+      if (dl) dl.checked = rx;
+      if (ul) ul.checked = !rx;
+    }));
+    let searchT; // v3.6: debounce — re-rendering the users view on EVERY keystroke was janky
     $('#search').addEventListener('input', e => {
+      clearTimeout(searchT);
       const q = e.target.value.trim().toLowerCase();
       if (!q || !S.state) return;
-      const hit = S.state.clients.find(c => c.name.toLowerCase().includes(q));
-      if (hit) { renderView('users'); }
+      searchT = setTimeout(() => {
+        const hit = S.state.clients.find(c => c.name.toLowerCase().includes(q));
+        if (hit) { renderView('users'); }
+      }, 300);
     });
     // live FPS display (real)
     FX.onFps = f => {
@@ -1138,10 +1189,13 @@
     // FIX(v3.3): gentler polling — 2s full-stats + 5s pings over a filtered
     // Iranian mobile link made the whole panel feel laggy; also everything
     // pauses while the tab is hidden (bandwidth + battery).
-    S.timers.push(setInterval(() => { if (!document.hidden) statLoop(); }, 3000));
+    // v3.6: 1s polling — matches the server's 1s sampler tick exactly, so the
+    // 60fps chart engine receives a fresh sample every second and interpolates
+    // in between (payload is gzipped, ~1.5KB/s). Stats view refreshes in place
+    // via paintStats (sv-* ids) — no more full re-render every 5s.
+    S.timers.push(setInterval(() => { if (!document.hidden) statLoop(); }, 1000));
     S.timers.push(setInterval(() => { if (!document.hidden) pingLoop(); }, 6000));
     S.timers.push(setInterval(() => { if (!document.hidden) stateLoop(); }, 45000));
-    S.timers.push(setInterval(() => { if (S.view === 'stats' && !document.hidden) renderView('stats'); }, 5000));
   }
   async function refreshAll() { await stateLoop(); if (S.view !== 'dashboard') renderView(S.view); }
 

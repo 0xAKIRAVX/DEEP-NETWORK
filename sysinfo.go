@@ -433,12 +433,16 @@ func statsPayload() map[string]any {
         rxT, txT := sampler.rxTot, sampler.txTot
         sampler.mu.RUnlock()
         diskU, diskT, diskP := diskInfo()
-        hm := map[string][]float64{"cpu": {}, "mem": {}, "rx": {}, "tx": {}}
+        // v3.6: "t" carries the REAL per-sample timestamps — the client chart
+        // engine anchors each point to its true time (sampler jitter tolerant
+        // + enables smooth 60fps time-scroll instead of index spacing).
+        hm := map[string][]float64{"cpu": {}, "mem": {}, "rx": {}, "tx": {}, "t": {}}
         for _, p := range hist {
                 hm["cpu"] = append(hm["cpu"], p.CPU)
                 hm["mem"] = append(hm["mem"], p.Mem)
                 hm["rx"] = append(hm["rx"], p.RX)
                 hm["tx"] = append(hm["tx"], p.TX)
+                hm["t"] = append(hm["t"], float64(p.T))
         }
         stateMu.RLock()
         var clients int64
@@ -456,7 +460,7 @@ func statsPayload() map[string]any {
                 "cores":  cores, "os": osInfo(), "cpu_model": cpuModel(),
                 "version": Version, "traffic30": traffic30d(), "geo": serverGeo(),
                 "online": onlineTunnels(), "clients": clients,
-                "hist": map[string][]float64{"cpu": hm["cpu"], "mem": hm["mem"], "rx": hm["rx"], "tx": hm["tx"]},
+                "hist": map[string][]float64{"cpu": hm["cpu"], "mem": hm["mem"], "rx": hm["rx"], "tx": hm["tx"], "t": hm["t"]},
                 "interval": 1.0,
         }
 }
