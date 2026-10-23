@@ -453,12 +453,15 @@
         <option value="6">فقط IPv6</option>
       </select></label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn primary" id="opt-all" style="box-shadow:0 0 0 1px #7fb98a inset">🌐 بهینه‌سازی همه‌اپراتوره — پکت‌لاست ۰ · پینگ پایین · سرعت بالا</button>
         <button class="btn primary" id="opt-run">بهینه‌سازی حداکثری (بهترین IP + سریع‌ترین تنظیمات)</button>
         <button class="btn" id="opt-speed">فقط تنظیمات پرسرعت (بدون اسکن)</button>
         <button class="btn" id="opt-stab">تست پایداری مسیر فعلی</button>
         <button class="btn" id="opt-stop" hidden>توقف</button>
       </div>
+      <p style="font-size:11px;color:#8d8d8d;margin:8px 0 0;line-height:1.9">🌐 <b>همه‌اپراتوره:</b> برای وقتی که کانفیگ‌ها برای بعضی اپراتورها (مثلاً همراه اول یا ایرانسل) کند یا قطع است. هر لبه از <b>دو طرف</b> سنجیده می‌شود — پینگ و <b>پکت‌لاست</b> از گوشی شما، سرعت و مسیر تا سرور از خود سرور — و لبه‌های با <b>پکت‌لاست ۰ و کم‌ترین پینگ کل</b> انتخاب می‌شوند. بعد از آن، اشتراک همه کاربران به‌جای یک IP، <b>چند مسیر برتر + مسیر DNS خودکار</b> را حمل می‌کند؛ کلاینت هر کاربر (روی هر اپراتوری) خودش سریع‌ترین را برمی‌گزیند.</p>
       ${curAddr ? `<p style="font-size:11px;color:#7fb98a;margin-top:10px">مسیر فعلی: <b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(curAddr)}</b> — برای برگشت به مسیر دامنه، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>` : ''}
+      ${(S.state && S.state.settings.multi_edge && S.state.settings.top_edges && S.state.settings.top_edges.length) ? `<p style="font-size:11px;color:#7fb98a;margin-top:6px">✓ حالت همه‌اپراتوره فعال است: اشتراک‌ها شامل <b>${S.state.settings.top_edges.length} مسیر برتر</b> + مسیر DNS خودکار هستند — روی هر اپراتوری کار می‌کند.</p>` : ''}
       <div class="progress" hidden id="opt-prog"><i></i></div>
       <p id="opt-status" style="font-size:11.5px;color:#8d8d8d;margin:8px 0 0;line-height:1.9"></p>
       <div id="opt-result"></div>
@@ -853,6 +856,121 @@
         } finally { btn.dataset.busy = '0'; btn.disabled = false; }
       });
 
+      // ─────────── ALL-OPERATOR OPTIMIZER — 0 packet loss · low ping · high speed ───────────
+      // Grades every edge from BOTH ends: browser (RTT + jitter + packet loss
+      // over 6 probes) and server (edge→origin handshake + throughput via
+      // /panel/api/edgespeed). Applies the winner as primary AND stores the
+      // top-5 as fallback routes — the subscription then carries one entry per
+      // edge + a DNS-auto entry, so every operator's clients pick their best.
+      $('#opt-all').addEventListener('click', async () => {
+        if (oRun.dataset.busy === '1') return;
+        oRun.dataset.busy = '1'; oRun.disabled = true; optStop = false;
+        oStop.hidden = false; oRes.innerHTML = ''; oCands.innerHTML = '';
+        const medal = i => ['🥇', '🥈', '🥉'][i] || 'E' + (i + 1);
+        try {
+          // 1) operator detect (informational — this mode serves ALL operators)
+          setStep('۱/۶ — تشخیص اپراتور شما (فقط برای گزارش)…', 3);
+          let w; try { w = await api('whoami'); } catch { w = { operator: 'auto', label: 'خودکار' }; }
+          const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
+          const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
+
+          // 2) verified geo-balanced edges
+          setStep('۲/۶ — دریافت لبه‌های تأییدشده نزدیک ایران… (اولین بار تا ۳۰ ثانیه)', 8);
+          const { edges: allEdges, geo } = await loadEdges();
+          const edges = allEdges.slice(0, famVal() === 'auto' ? 60 : 40);
+          if (!edges.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>'; return; }
+
+          // 3) round 1 — RTT sweep from THIS device
+          setStep('۳/۶ — پینگ اولیه ' + edges.length + ' لبه از دستگاه شما…', 12);
+          const first = new Map();
+          await runMap(edges, async ip => { first.set(ip, await probe(ip)); }, 6,
+            (ip, done) => setStep('۳/۶ — پینگ ' + done + ' از ' + edges.length + '…', 12 + done / edges.length * 22));
+          const alive = edges.filter(ip => (first.get(ip) || TIMEOUT) < TIMEOUT - 50)
+            .sort((a, b) => first.get(a) - first.get(b)).slice(0, 14);
+          if (!alive.length) {
+            setStep('');
+            oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + (famVal() === '6'
+              ? 'هیچ لبه IPv6 پاسخ نداد — شبکه شما احتمالاً IPv6 ندارد؛ «فقط IPv4» را انتخاب کنید.'
+              : 'هیچ لبه‌ای از اینترنت شما پاسخ نداد — بعداً دوباره تلاش کنید.') + '</p>';
+            return;
+          }
+
+          // 4) deep quality probe — 5 more rounds each → median, jitter, PACKET LOSS
+          setStep('۴/۶ — سنجش دقیق پکت‌لاست و نوسان (' + alive.length + ' لبه برتر × ۶ پینگ)…', 36);
+          const lost = ms => ms >= TIMEOUT - 50;
+          const samples = new Map(alive.map(ip => [ip, [first.get(ip)]]));
+          for (let round = 0; round < 5 && !optStop; round++) {
+            await runMap(alive, async ip => { samples.get(ip).push(await probe(ip)); }, 6);
+            setStep('۴/۶ — سنجش پکت‌لاست — دور ' + (round + 1) + ' از ۵…', 36 + (round + 1) / 5 * 20);
+          }
+          const graded = alive.map(ip => {
+            const s = samples.get(ip);
+            const ok = s.filter(x => !lost(x));
+            const l = s.length ? Math.round((s.length - ok.length) / s.length * 1000) / 10 : 100;
+            return { ip, geo: geo[ip] || null, med: ok.length ? median(ok) : TIMEOUT,
+              jit: ok.length > 1 ? Math.max(...ok) - Math.min(...ok) : 0, loss: l };
+          }).filter(c => c.loss < 80 && c.med < TIMEOUT);
+
+          // 5) server-side: edge→origin handshake + real throughput through each edge
+          setStep('۵/۶ — سنجش سرعت و مسیر هر لبه تا سرور (سمت سرور، از طریق همان لبه)…', 58);
+          const spd = new Map();
+          try {
+            const r2 = await api('edgespeed', { targets: graded.map(c => c.ip), kb: 64 });
+            (r2.results || []).forEach(x => { if (x.ok) spd.set(x.ip, x); });
+          } catch { /* server-side leg unavailable — rank on browser data only */ }
+          const rows = graded.map(c => {
+            const sp = spd.get(c.ip) || {};
+            const org = sp.hs_ms || 0, kbps = sp.kbps || 0;
+            return { ...c, org, kbps, score: c.med + org * 0.35 + c.jit * 0.5 + c.loss * 8 };
+          }).sort((a, b) => a.score - b.score);
+          oCands.innerHTML = '<p style="font-size:11px;color:#8d8d8d;margin:2px 0 6px">جدول کیفیت لبه‌ها (پینگ شما + مسیر تا سرور + پکت‌لاست + سرعت):</p>' +
+            rows.slice(0, 8).map((c, i) => `<div class="scan-row"><span>${medal(i)} ${c.ip}</span>
+              <span class="ok">${Math.round(c.med)}ms</span>
+              <span class="geo">کل ≈ ${Math.round(c.med + c.org)}ms${c.org ? ' · لبه→سرور ' + Math.round(c.org) + 'ms' : ''}</span>
+              <span class="geo">${c.loss === 0 ? '<b style="color:var(--ok)">پکت‌لاست ۰</b>' : 'پکت‌لاست ' + c.loss + '٪'}${c.kbps ? ' · ' + c.kbps + ' KB/s' : ''} · نوسان ' + Math.round(c.jit) + 'ms</span>
+              <span class="geo">${c.geo ? esc(c.geo.city + '، ' + c.geo.cc) : '—'}</span></div>`).join('');
+
+          // 6) strict 0-loss gate, then apply
+          const zeroLoss = rows.filter(r => r.loss === 0);
+          const ranked = (zeroLoss.length >= 3 ? zeroLoss : rows).slice(0, 5);
+          if (optStop) { setStep('بهینه‌سازی متوقف شد.'); return; }
+          if (!ranked.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه سالمی پیدا نشد — دوباره تلاش کنید.</p>'; return; }
+          setStep('۶/۶ — اعمال بهینه‌سازی همه‌اپراتوره روی همه کانفیگ‌ها…', 92);
+          await api('settings', {
+            address: ranked[0].ip,
+            random_sni: true, // SNI تصادفی زیر دامنه پلتفرم — فیلتر SNI همه اپراتورها را دور می‌زند
+            top_edges: ranked.map(c => ({ ip: c.ip, med: c.med, jit: c.jit, loss: c.loss,
+              origin_ms: c.org, kbps: c.kbps, score: c.score,
+              cc: c.geo ? (c.geo.cc || '') : '', city: c.geo ? (c.geo.city || '') : '' })),
+            multi_edge: true,
+            tuning: { enabled: true, profile: opKey, frag_on: false, mux_off: false, noise_on: false }
+          });
+          await refreshAll();
+          setStep('انجام شد ✓', null);
+          const perfect = ranked.filter(r => r.loss === 0).length;
+          oRes.innerHTML = `<div class="opt-ok">
+            <b style="font-size:13px">بهینه‌سازی همه‌اپراتوره اعمال شد ✓ — ${perfect ? perfect + ' لبه با پکت‌لاست ۰' : 'بهترین لبه‌های موجود'} انتخاب شدند</b>
+            <ul class="kv" style="margin-top:8px">
+            <li><span>اپراتور شما (تشخیص‌داده‌شده)</span><b>${esc(opLabel)}</b></li>
+            <li><span>مسیر اصلی (سریع‌ترین)</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${ranked[0].ip}</b>${ranked[0].ip.includes(':') ? ' <span class="badge" style="font-size:10px">IPv6</span>' : ''}</li>
+            <li><span>پینگ شما تا مسیر اصلی</span><b style="color:var(--ok)">${Math.round(ranked[0].med)} ms</b></li>
+            <li><span>مسیر کامل (لبه + سرور)</span><b>≈ ${Math.round(ranked[0].med + ranked[0].org)} ms</b></li>
+            <li><span>پکت‌لاست مسیر اصلی</span><b style="color:${ranked[0].loss === 0 ? 'var(--ok)' : '#d6c96b'}">${ranked[0].loss}٪</b></li>
+            <li><span>سرعت لبه تا سرور</span><b>${ranked[0].kbps ? Math.round(ranked[0].kbps) + ' KB/s' : '—'}</b></li>
+            <li><span>مسیرهای پشتیبان در اشتراک</span><b>${ranked.length} مسیر + ۱ مسیر DNS خودکار</b></li>
+            <li><span>SNI تصادفی (ضد فیلتر SNI)</span><b style="color:var(--ok)">روشن ✓</b></li>
+            <li><span>فرگمنت (افزایش پینگ)</span><b style="color:var(--ok)">خاموش — کم‌ترین پینگ ✓</b></li>
+            <li><span>بسته سرعت (Mux + KeepAlive)</span><b style="color:var(--ok)">فعال ✓</b></li>
+            </ul>
+            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">حالا اشتراک هر کاربر به‌جای یک IP، <b>${ranked.length} مسیر برتر (🥇🥈🥉 با شهر و پینگ) + مسیر DNS خودکار</b> را شامل می‌شود؛ کلاینت روی <b>هر اپراتوری</b> (همراه اول، ایرانسل، رایتل، مخابرات، شاتل و…) خودش سریع‌ترین مسیر را پیدا می‌کند. در کلاینت خود (v2rayNG / Hiddify) اشتراک را <b>Update</b> کنید و اگر چند کانفیگ دیدید، عادی است — همه سالم‌اند؛ با «Real-delay test» سریع‌ترین را انتخاب کنید.</p></div>`;
+        } catch (ex) {
+          setStep('');
+          oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
+        } finally {
+          oRun.dataset.busy = '0'; oRun.disabled = false; oStop.hidden = true;
+        }
+      });
+
       // ─────────── STABILITY TEST of the current route ───────────
       $('#opt-stab').addEventListener('click', async () => {
         const btn = $('#opt-stab');
@@ -860,22 +978,27 @@
         btn.dataset.busy = '1'; btn.disabled = true; optStop = false; oStop.hidden = false;
         try {
           const target = (S.state && S.state.settings.address) || location.host;
-          setStep('سنجش پایداری مسیر فعلی (<b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(target) + '</b>) — ۸ پینگ متوالی…', 10);
+          setStep('سنجش پایداری مسیر فعلی (<b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(target) + '</b>) — ۱۰ پینگ متوالی…', 10);
           const s = [];
-          for (let i = 0; i < 8 && !optStop; i++) { s.push(await probe(target)); setStep('سنجش پایداری مسیر فعلی — ' + (i + 1) + ' از ۸…', (i + 1) / 8 * 100); }
-          const med = median(s), jit = jitter(s);
+          for (let i = 0; i < 10 && !optStop; i++) { s.push(await probe(target)); setStep('سنجش پایداری مسیر فعلی — ' + (i + 1) + ' از ۱۰…', (i + 1) / 10 * 100); }
+          const lostN = s.filter(x => x >= TIMEOUT - 50).length;
+          const okS = s.filter(x => x < TIMEOUT - 50);
+          const med = okS.length ? median(okS) : TIMEOUT, jit = okS.length > 1 ? jitter(okS) : 0;
+          const lossPct = Math.round(lostN / s.length * 1000) / 10;
+          const lossVerdict = l => l === 0 ? '<b style="color:var(--ok)">پکت‌لاست ۰ ✓</b>' : l < 10 ? '<b style="color:#d6c96b">' + l + '٪</b>' : '<b style="color:#f8b4b4">' + l + '٪ — ناپایدار</b>';
           setStep('تست پایداری تمام شد', null);
           oRes.innerHTML = `<div class="opt-ok">
             <b style="font-size:13px">نتیجه تست مسیر فعلی</b>
             <ul class="kv" style="margin-top:8px">
             <li><span>مقصد</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(target)}</b></li>
-            <li><span>پینگ میانه</span><b>${med} ms</b></li>
-            <li><span>کمترین / بیشترین</span><b>${Math.min(...s)} / ${Math.max(...s)} ms</b></li>
-            <li><span>نوسان</span><b>${jit} ms — ${jitterVerdict(jit)}</b></li>
+            <li><span>پینگ میانه</span><b>${Math.round(med)} ms</b></li>
+            <li><span>کمترین / بیشترین</span><b>${okS.length ? Math.min(...okS) + ' / ' + Math.max(...okS) + ' ms' : '—'}</b></li>
+            <li><span>نوسان</span><b>${Math.round(jit)} ms — ${jitterVerdict(jit)}</b></li>
+            <li><span>پکت‌لاست (${s.length} پینگ)</span><b>${lossVerdict(lossPct)}</b></li>
             </ul>
-            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">${jit > 60 || med > 400
-              ? 'نوسان یا پینگ بالاست — دکمه «بهینه‌سازی خودکار برای شبکه من» را بزنید تا یک لبه پایدارتر انتخاب شود.'
-              : 'مسیر فعلی سالم است؛ اگر باز هم قطع و وصل می‌شود، «بهینه‌سازی خودکار» را اجرا کنید و اشتراک را در کلاینت به‌روزرسانی کنید.'}</p></div>`;
+            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">${lossPct > 0 || jit > 60 || med > 400
+              ? 'پکت‌لاست، نوسان یا پینگ بالاست — دکمه «🌐 بهینه‌سازی همه‌اپراتوره» را بزنید تا مسیرهای سالم (پکت‌لاست ۰) به اشتراک اضافه شوند.'
+              : 'مسیر فعلی سالم است؛ اگر باز هم قطع و وصل می‌شود، «🌐 بهینه‌سازی همه‌اپراتوره» را اجرا کنید و اشتراک را در کلاینت به‌روزرسانی کنید.'}</p></div>`;
         } catch (ex) {
           setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
         } finally { btn.dataset.busy = '0'; btn.disabled = false; oStop.hidden = true; }

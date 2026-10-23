@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.8.0"
+const Version = "3.9.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
