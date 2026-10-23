@@ -242,7 +242,7 @@ func buildXrayConfig() map[string]any {
 		"outbounds": []map[string]any{
 			{"tag": "direct", "protocol": "freedom", "settings": map[string]any{
 				"domainStrategy": "UseIPv4",
-				"sockopt":        map[string]any{"tcpNoDelay": true, "tcpKeepAliveIdle": 300, "tcpFastOpen": true}}},
+				"sockopt":        map[string]any{"tcpNoDelay": true, "tcpKeepAliveIdle": 150, "tcpKeepAliveInterval": 15, "tcpFastOpen": true}}},
 			{"tag": "block", "protocol": "blackhole"},
 		},
 		"routing": map[string]any{"domainStrategy": "IPIfNonMatch", "rules": []map[string]any{

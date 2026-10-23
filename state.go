@@ -58,6 +58,10 @@ type Tuning struct {
         NoiseOn      bool   `json:"noise_on"`
         NoiseRand    string `json:"noise_rand"`
         NoiseDelay   string `json:"noise_delay"`
+        // Speed pack (v3.7): MuxOff=true disables connection multiplexing in the
+        // exported client JSON configs. Default false = mux ON (faster on Iranian
+        // mobile networks: one handshake per tunnel instead of one per request).
+        MuxOff bool `json:"mux_off"`
 }
 
 type State struct {

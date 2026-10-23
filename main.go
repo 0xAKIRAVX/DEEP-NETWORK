@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.6.0"
+const Version = "3.7.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -228,9 +228,13 @@ func main() {
 			dom = "deep-network-development-w4a86.lucity.app"
 		}
 		if dom != "" && !isIPLiteral(dom) {
-			logf("pre-warming CDN edge cache for %s …", dom)
-			bunnyEdgesFor(dom)
-			logf("CDN edge cache ready")
+			logf("pre-warming CDN edge cache for %s (v4+v6) …", dom)
+			bunnyEdgesFor(dom, "4")
+			logf("CDN edge cache ready (IPv4)")
+			go func() {
+				bunnyEdgesFor(dom, "6")
+				logf("CDN edge cache ready (IPv6)")
+			}()
 		}
 	}()
 

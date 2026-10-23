@@ -51,6 +51,28 @@ func defaultTuning() *Tuning {
                 FragDelays: "10-20", FragMaxsplit: "3-6", NoiseOn: false, NoiseRand: "1-64", NoiseDelay: "10-20"}
 }
 
+// bracketV6 wraps a bare IPv6 literal in [] for URI-style links
+// (vless://uuid@[2400:52e0::1]:443). IPv4 and hostnames pass through.
+func bracketV6(addr string) string {
+        a := strings.TrimSpace(addr)
+        if strings.HasPrefix(a, "[") {
+                return a
+        }
+        if ip := net.ParseIP(a); ip != nil && ip.To4() == nil {
+                return "[" + a + "]"
+        }
+        return a
+}
+
+// muxPayload is the v3.7 speed-pack outbound mux block: enabled with
+// concurrency 8 + xudp 8, or fully disabled (xhttp / Reality / mux_off).
+func muxPayload(on bool) map[string]any {
+        if !on {
+                return map[string]any{"enabled": false, "concurrency": -1}
+        }
+        return map[string]any{"enabled": true, "concurrency": 8, "xudpConcurrency": 8}
+}
+
 var rangeCleanRe = regexp.MustCompile(`[^0-9\-,]`)
 
 func cleanRange(v, fallback string) string {
@@ -122,6 +144,8 @@ func tuningSanitize(t *Tuning) *Tuning {
         base.NoiseOn = t.NoiseOn
         base.NoiseRand = cleanRange(t.NoiseRand, base.NoiseRand)
         base.NoiseDelay = cleanRange(t.NoiseDelay, base.NoiseDelay)
+        // v3.7 speed pack: default (false) = Mux ON in exported JSON configs.
+        base.MuxOff = t.MuxOff
         return base
 }
 
@@ -287,6 +311,7 @@ func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
         if fp == "" {
                 fp = "chrome"
         }
+        uriAddr := bracketV6(addr)
         alpnOv := strings.TrimSpace(t.ALPN)
         sniHost := sniFor(addr, host)
         if sec == "reality" {
@@ -302,7 +327,7 @@ func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
                         p["serviceName"] = strings.TrimPrefix(path, "/")
                         p["mode"] = "gun"
                 }
-                return "vless://" + cid + "@" + addr + ":" + itoa(ib.Port) + "?" + encParams(p) + "#" + frag
+                return "vless://" + cid + "@" + uriAddr + ":" + itoa(ib.Port) + "?" + encParams(p) + "#" + frag
         }
         alpn := alpnOv
         if alpn == "" {
@@ -336,7 +361,7 @@ func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
         if net_ == "xhttp" {
                 p["mode"] = "packet-up"
         }
-        return proto + "://" + cid + "@" + addr + ":443?" + encParams(p) + "#" + frag
+        return proto + "://" + cid + "@" + uriAddr + ":443?" + encParams(p) + "#" + frag
 }
 
 func encParams(p map[string]string) string {
@@ -374,6 +399,7 @@ func buildLinks(c *Client, host string) []Link {
         }
         alpnOv := strings.TrimSpace(t.ALPN)
         cid := c.ID
+        uriAddr := bracketV6(addr)
         allowed := userProtocols(c)
         var links []Link
 
@@ -385,21 +411,21 @@ func buildLinks(c *Client, host string) []Link {
                 n1 := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", addr)
                 addLink("vless-ws", "VLESS · WebSocket",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=ws&host=%s&path=%s#%s",
-                                cid, addr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
+                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
                                 pyQuote(wsPath()+"?ed=2048"), pyQuote(n1)))
         }
         if allowed["vless-xhttp"] {
                 n2 := fmtName(fmtStr, c, "VLESS-XHTTP", "VLESS", "XHTTP", "TLS", addr)
                 addLink("vless-xhttp", "VLESS · XHTTP",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
-                                cid, addr, tlsParam, pyQuote(orStr(alpnOv, "h2,http/1.1")), pyQuote(sniHost),
+                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "h2,http/1.1")), pyQuote(sniHost),
                                 pyQuote(xhttpPath()), pyQuote(n2)))
         }
         if allowed["vless-hu"] {
                 n3 := fmtName(fmtStr, c, "VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", addr)
                 addLink("vless-hu", "VLESS · HTTPUpgrade",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
-                                cid, addr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
+                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
                                 pyQuote(huPath()), pyQuote(n3)))
         }
         if allowed["vmess-ws"] {
@@ -414,7 +440,7 @@ func buildLinks(c *Client, host string) []Link {
                 n5 := fmtName(fmtStr, c, "Trojan-WS", "Trojan", "WS", "TLS", addr)
                 addLink("trojan-ws", "Trojan · WebSocket",
                         fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
-                                cid, addr, pyQuote(tlsName), pyQuote(fp), pyQuote(orStr(alpnOv, "http/1.1")),
+                                cid, uriAddr, pyQuote(tlsName), pyQuote(fp), pyQuote(orStr(alpnOv, "http/1.1")),
                                 pyQuote(sniHost), pyQuote(trojanPath()+"?ed=2048"), pyQuote(n5)))
         }
         if tcpReady() && allowed["vless-reality"] {
@@ -507,12 +533,12 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
                 return stream
         }
 
-        vlessOut := func(tag string, port int, stream map[string]any) map[string]any {
+        vlessOut := func(tag string, port int, stream map[string]any, muxOn bool) map[string]any {
                 return map[string]any{"tag": tag, "protocol": "vless",
                         "settings": map[string]any{"vnext": []map[string]any{{
                                 "address": addr, "port": port,
                                 "users":   []map[string]any{{"id": cid, "encryption": "none", "flow": "", "level": 0}}}}},
-                        "streamSettings": stream, "mux": map[string]any{"enabled": false, "concurrency": -1}}
+                        "streamSettings": stream, "mux": muxPayload(muxOn)}
         }
 
         var outbounds []map[string]any
@@ -538,17 +564,17 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
         }
         if allowed["vless-ws"] {
                 tag := tagFor("alt-vless-ws")
-                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("ws", wsPath(), []string{"http/1.1"})))
+                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("ws", wsPath(), []string{"http/1.1"}), !t.MuxOff))
                 order = append(order, tag)
         }
         if allowed["vless-hu"] {
                 tag := tagFor("alt-vless-hu")
-                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("httpupgrade", huPath(), []string{"http/1.1"})))
+                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("httpupgrade", huPath(), []string{"http/1.1"}), !t.MuxOff))
                 order = append(order, tag)
         }
         if allowed["vless-xhttp"] {
                 tag := tagFor("alt-vless-xhttp")
-                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("xhttp", xhttpPath(), []string{"h2", "http/1.1"})))
+                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("xhttp", xhttpPath(), []string{"h2", "http/1.1"}), false))
                 order = append(order, tag)
         }
         if allowed["vmess-ws"] {
@@ -557,7 +583,7 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
                         "settings": map[string]any{"vnext": []map[string]any{{"address": addr, "port": 443,
                                 "users": []map[string]any{{"id": cid, "alterId": 0, "security": "auto", "level": 0}}}}},
                         "streamSettings": tlsStream("ws", vmessPath(), []string{"http/1.1"}),
-                        "mux":            map[string]any{"enabled": false, "concurrency": -1}})
+                        "mux":            muxPayload(!t.MuxOff)})
                 order = append(order, tag)
         }
         if allowed["trojan-ws"] {
@@ -565,7 +591,7 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
                 outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "trojan",
                         "settings": map[string]any{"servers": []map[string]any{{"address": addr, "port": 443, "password": cid, "level": 0}}},
                         "streamSettings": tlsStream("ws", trojanPath(), []string{"http/1.1"}),
-                        "mux":            map[string]any{"enabled": false, "concurrency": -1}})
+                        "mux":            muxPayload(!t.MuxOff)})
                 order = append(order, tag)
         }
         if len(outbounds) == 0 {

@@ -5,6 +5,7 @@ import (
         "encoding/json"
         "fmt"
         "io"
+        "net"
         "net/http"
         "regexp"
         "strconv"
@@ -92,7 +93,9 @@ func trunc(s string, n int) string {
         return string(out[:n])
 }
 
-// handleSub serves /sub/<token> — base64 link list + client metadata headers.
+// handleSub serves /sub/<token> — default: base64 link list for v2rayNG-style
+// clients. ?fmt=json → [{name,url}] array; ?fmt=xray → full ready-to-import
+// Xray client config (the "most optimal" JSON sub — speed pack baked in).
 func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
         if tok == "" {
                 sendBytes(w, 404, []byte("not found"), "text/plain; charset=utf-8", nil)
@@ -112,13 +115,6 @@ func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
                 sendBytes(w, 404, []byte("not found"), "text/plain; charset=utf-8", nil)
                 return
         }
-        links := buildLinks(match, requestHost(r))
-        var lines []string
-        for _, l := range links {
-                lines = append(lines, l.URL)
-        }
-        body := base64.StdEncoding.EncodeToString([]byte(strings.Join(lines, "\n")))
-        title := base64.StdEncoding.EncodeToString([]byte(match.Name))
         info := []string{fmt.Sprintf("upload=%d", match.Up), fmt.Sprintf("download=%d", match.Down)}
         if match.Quota > 0 {
                 info = append(info, fmt.Sprintf("total=%d", match.Quota))
@@ -126,12 +122,38 @@ func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
         if match.ExpireAt > 0 {
                 info = append(info, fmt.Sprintf("expire=%d", match.ExpireAt))
         }
-        sendBytes(w, 200, []byte(body), "text/plain; charset=utf-8", map[string]string{
-                "Profile-Title":             "base64:" + title,
-                "Profile-Update-Interval":    "12",
-                "Subscription-Userinfo":      strings.Join(info, "; "),
-                "X-Frame-Options":            "DENY",
-        })
+        hdrs := map[string]string{
+                "Profile-Title":          "base64:" + base64.StdEncoding.EncodeToString([]byte(match.Name)),
+                "Profile-Update-Interval": "12",
+                "Subscription-Userinfo":   strings.Join(info, "; "),
+                "X-Frame-Options":         "DENY",
+        }
+        switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("fmt"))) {
+        case "json":
+                links := buildLinks(match, requestHost(r))
+                var arr []map[string]string
+                for _, l := range links {
+                        arr = append(arr, map[string]string{"name": l.Label, "url": l.URL})
+                }
+                b, _ := json.MarshalIndent(arr, "", "  ")
+                sendBytes(w, 200, b, "application/json; charset=utf-8", hdrs)
+        case "xray":
+                cfg := clientConfigJSON(match, requestHost(r), "")
+                if _, hasErr := cfg["error"]; hasErr {
+                        sendJSON(w, 400, cfg)
+                        return
+                }
+                b, _ := json.MarshalIndent(cfg, "", "  ")
+                sendBytes(w, 200, b, "application/json; charset=utf-8", hdrs)
+        default:
+                links := buildLinks(match, requestHost(r))
+                var lines []string
+                for _, l := range links {
+                        lines = append(lines, l.URL)
+                }
+                body := base64.StdEncoding.EncodeToString([]byte(strings.Join(lines, "\n")))
+                sendBytes(w, 200, []byte(body), "text/plain; charset=utf-8", hdrs)
+        }
 }
 
 // ─────────── main API dispatcher ───────────
@@ -446,6 +468,20 @@ func sanitizeName(n string) string {
                 return "user"
         }
         return s
+}
+
+// validAddress accepts a hostname, an IPv4 literal, or an IPv6 literal
+// (bare or [bracketed]) for the settings "address" field (v3.7 IPv6).
+func validAddress(a string) bool {
+        a = strings.TrimSpace(a)
+        if a == "" || len(a) > 253 {
+                return false
+        }
+        bare := strings.Trim(a, "[]")
+        if ip := net.ParseIP(bare); ip != nil {
+                return !(ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified())
+        }
+        return hostRe.MatchString(a)
 }
 
 func handleBackup(w http.ResponseWriter) {
@@ -1004,6 +1040,9 @@ func mergeTuning(cur *Tuning, patch map[string]any) *Tuning {
         if s, ok := patch["noise_delay"].(string); ok {
                 base.NoiseDelay = s
         }
+        if b, ok := patch["mux_off"].(bool); ok {
+                base.MuxOff = b
+        }
         return tuningSanitize(base)
 }
 
@@ -1189,7 +1228,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
         }
         if v, ok := d["address"]; ok {
                 a := strings.TrimSpace(fmt.Sprintf("%v", v))
-                if a != "" && !hostRe.MatchString(a) {
+                if a != "" && !validAddress(a) {
                         stateMu.Unlock()
                         sendJSON(w, 400, map[string]any{"error": "آدرس نامعتبر است"})
                         return
@@ -1344,8 +1383,21 @@ func handleBunnyEdges(w http.ResponseWriter, r *http.Request) {
                 sendJSON(w, 400, map[string]any{"error": "دامنه عمومی سرویس پیدا نشد — متغیر DOMAIN را روی دامنه لوسیتی ست کنید"})
                 return
         }
-        edges, geo, cached := bunnyEdgesFor(dom)
-        sendJSONGz(r, w, 200, map[string]any{"ok": true, "domain": dom, "edges": edges, "geo": geo,
+        // v3.7 IPv6: ?family=4 (default) | 6 — which bunny edge list to verify.
+        fam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("family")))
+        if fam == "" {
+                if d := readJSONBody(r); d != nil {
+                        if s, ok := d["family"].(string); ok {
+                                fam = strings.ToLower(strings.TrimSpace(s))
+                        }
+                }
+        }
+        if fam != "6" {
+                fam = "4"
+        }
+        edges, geo, cached := bunnyEdgesFor(dom, fam)
+        sendJSONGz(r, w, 200, map[string]any{"ok": true, "domain": dom, "family": fam,
+                "edges": edges, "geo": geo,
                 "verified": len(edges), "cached": cached})
 }
 

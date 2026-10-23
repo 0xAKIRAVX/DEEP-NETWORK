@@ -175,11 +175,17 @@ type bunnyCache struct {
         mu     sync.Mutex
         listT  time.Time
         ips    []string
+        list6T time.Time
+        ips6   []string
         verT   time.Time
+        ver6T  time.Time
         dom    string
         ok     []string
+        ok6    []string
         geoT   time.Time
         geo    map[string]map[string]string
+        geo6T  time.Time
+        geo6   map[string]map[string]string
 }
 
 var bunny = &bunnyCache{}
@@ -216,6 +222,41 @@ func (b *bunnyCache) ipList() []string {
         return b.ips
 }
 
+// ipList6 fetches bunny's official IPv6 edge list (321 addresses, 2400:52e0::/32
+// and friends) from the legacy bunnycdn.com endpoint — the api.bunny.net list is
+// IPv4-only. Cached 5 minutes like the v4 list. (v3.7 IPv6 scanner support.)
+func (b *bunnyCache) ipList6() []string {
+        b.mu.Lock()
+        defer b.mu.Unlock()
+        if len(b.ips6) > 0 && time.Since(b.list6T) < 5*time.Minute {
+                return b.ips6
+        }
+        c := http.Client{Timeout: 8 * time.Second}
+        resp, err := c.Get("https://bunnycdn.com/api/system/edgeserverlist/IPv6")
+        if err != nil {
+                return b.ips6
+        }
+        defer resp.Body.Close()
+        body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+        var raw []string
+        if json.Unmarshal(body, &raw) == nil {
+                var clean []string
+                for _, ip := range raw {
+                        if isValidScanTarget(ip) {
+                                clean = append(clean, ip)
+                        }
+                }
+                if len(clean) > 600 {
+                        clean = clean[:600]
+                }
+                if len(clean) > 0 {
+                        b.ips6 = clean
+                        b.list6T = time.Now()
+                }
+        }
+        return b.ips6
+}
+
 func isValidScanTarget(t string) bool {
         t = strings.TrimSpace(t)
         if t == "" || len(t) > 253 {
@@ -237,10 +278,45 @@ func isValidScanTarget(t string) bool {
 
 func (b *bunnyCache) geoBatch(ips []string) map[string]map[string]string {
         b.mu.Lock()
-        defer b.mu.Unlock()
         if len(b.geo) > 0 && time.Since(b.geoT) < 6*time.Hour {
-                return b.geo
+                cached := b.geo
+                b.mu.Unlock()
+                return cached
         }
+        b.mu.Unlock()
+        geo := b.geoBatchFetch(ips)
+        b.mu.Lock()
+        if len(geo) > 0 {
+                b.geo = geo
+                b.geoT = time.Now()
+        }
+        out := b.geo
+        b.mu.Unlock()
+        return out
+}
+
+func (b *bunnyCache) geoBatch6(ips []string) map[string]map[string]string {
+        b.mu.Lock()
+        if len(b.geo6) > 0 && time.Since(b.geo6T) < 6*time.Hour {
+                cached := b.geo6
+                b.mu.Unlock()
+                return cached
+        }
+        b.mu.Unlock()
+        geo := b.geoBatchFetch(ips)
+        b.mu.Lock()
+        if len(geo) > 0 {
+                b.geo6 = geo
+                b.geo6T = time.Now()
+        }
+        out := b.geo6
+        b.mu.Unlock()
+        return out
+}
+
+// geoBatchFetch does the actual ip-api.com batch lookup (IPv4 + IPv6 both
+// supported by the batch endpoint). Caller must NOT hold b.mu.
+func (b *bunnyCache) geoBatchFetch(ips []string) map[string]map[string]string {
         geo := map[string]map[string]string{}
         c := http.Client{Timeout: 12 * time.Second}
         for i := 0; i < len(ips); i += 100 {
@@ -269,10 +345,6 @@ func (b *bunnyCache) geoBatch(ips []string) map[string]map[string]string {
                                 }
                         }
                 }
-        }
-        if len(geo) > 0 {
-                b.geo = geo
-                b.geoT = time.Now()
         }
         return geo
 }
@@ -320,30 +392,60 @@ func verifyEdge(ip, domain string, timeout time.Duration) bool {
 // Iran. Now every edge is geo-tagged first and a tiered per-country quota
 // guarantees near-Iran regions dominate the shortlist; the browser then
 // measures the real user-side RTT. Cached 6h per domain.
-func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]string, cached bool) {
+// v3.7: family "6" verifies bunny's IPv6 edges (bunnycdn.com/…/IPv6 list)
+// instead of the IPv4 list; the browser-side RTT sweep then tells whether the
+// user's mobile network actually has IPv6 to that edge.
+func bunnyEdgesFor(domain, family string) (edges []string, geo map[string]map[string]string, cached bool) {
         domain = strings.TrimSpace(strings.Split(domain, ":")[0])
+        if family != "6" {
+                family = "4"
+        }
         if domain == "" || isIPLiteral(domain) || !hostRe.MatchString(domain) {
                 return nil, nil, false
         }
         bunny.mu.Lock()
-        if len(bunny.ok) > 0 && bunny.dom == domain && time.Since(bunny.verT) < 6*time.Hour {
-                edges := append([]string(nil), bunny.ok...)
-                geo := bunny.geo
-                bunny.mu.Unlock()
-                return edges, geo, true
+        if family == "6" {
+                if len(bunny.ok6) > 0 && bunny.dom == domain && time.Since(bunny.ver6T) < 6*time.Hour {
+                        edges := append([]string(nil), bunny.ok6...)
+                        geo := bunny.geo6
+                        bunny.mu.Unlock()
+                        return edges, geo, true
+                }
+        } else {
+                if len(bunny.ok) > 0 && bunny.dom == domain && time.Since(bunny.verT) < 6*time.Hour {
+                        edges := append([]string(nil), bunny.ok...)
+                        geo := bunny.geo
+                        bunny.mu.Unlock()
+                        return edges, geo, true
+                }
         }
+        bunny.dom = domain
         bunny.mu.Unlock()
 
-        ips := bunny.ipList()
+        var ips []string
+        var geoAll map[string]map[string]string
+        if family == "6" {
+                ips = bunny.ipList6()
+        } else {
+                ips = bunny.ipList()
+        }
         if len(ips) == 0 {
                 return nil, nil, false
         }
 
-        // 1) geo-tag every bunny edge once (ip-api batch, 6h cache).
-        geoAll := bunny.geoBatch(ips)
+        // 1) geo-tag every bunny edge once (ip-api batch, 6h cache — v6 capable).
+        if family == "6" {
+                geoAll = bunny.geoBatch6(ips)
+        } else {
+                geoAll = bunny.geoBatch(ips)
+        }
 
         // 2) tiered, per-country quota — near-Iran regions first.
-        shortlist := pickEdgesByRegion(ips, geoAll, 130)
+        budget := 130
+        if family == "6" {
+                budget = 96
+        }
+        shortlist := pickEdgesByRegion(ips, geoAll, budget)
         if len(shortlist) == 0 {
                 shortlist = ips
         }
@@ -397,11 +499,18 @@ func bunnyEdgesFor(domain string) (edges []string, geo map[string]map[string]str
         }
         sort2d(verified)
 
-        geo = bunny.geoBatch(verified)
         bunny.mu.Lock()
-        bunny.ok = verified
-        bunny.dom = domain
-        bunny.verT = time.Now()
+        if family == "6" {
+                geo = bunny.geo6
+                bunny.ok6 = verified
+                bunny.dom = domain
+                bunny.ver6T = time.Now()
+        } else {
+                geo = bunny.geo
+                bunny.ok = verified
+                bunny.dom = domain
+                bunny.verT = time.Now()
+        }
         bunny.mu.Unlock()
         return verified, geo, false
 }

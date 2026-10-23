@@ -391,22 +391,36 @@
       const st = S.state || { clients: [] };
       return `<section class="info-sec" style="margin-top:20px">
       <h3>اشتراک‌ها</h3>
-      ${st.clients.map(c => `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed rgba(255,255,255,.08)">
+      <p style="font-size:11.5px;color:#8d8d8d;margin:6px 0 14px;line-height:2"><b>استاندارد:</b> فهرست لینک‌ها (base64) — برای افزودن به عنوان Subscription در v2rayNG / Hiddify. <b>JSON بهینه:</b> پیکربندی کامل Xray با سریع‌ترین تنظیمات (Mux + KeepAlive + پروفایل اپراتور) — لینک را در مرورگر باز کنید، متن JSON را کپی کنید و در v2rayNG از منوی + ← «Import config from clipboard» وارد کنید.</p>
+      ${st.clients.map(c => `<div style="padding:12px 0;border-bottom:1px dashed rgba(255,255,255,.08)">
+        <div style="display:flex;align-items:center;gap:10px">
         <i class="u-ava">${esc(c.name[0] || '·').toUpperCase()}</i>
-        <div style="flex:1;min-width:0"><b style="font-size:13px">${esc(c.name)}</b>
-        <div class="linkbox" style="margin-top:5px"><span style="flex:1">${esc(c.sub_url)}</span>
+        <b style="font-size:13px;flex:1">${esc(c.name)}</b></div>
+        <div style="margin-top:8px"><small style="font-size:10.5px;color:#8d8d8d">استاندارد (Subscription)</small>
+        <div class="linkbox" style="margin-top:4px"><span style="flex:1">${esc(c.sub_url)}</span>
         <button data-copy="${esc(c.sub_url)}" title="کپی"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
-        <button data-qr="${esc(c.sub_url)}" title="QR"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h2v2h-2zm4 0h2v2h-2zm-4 4h2v2h-2zm4 0h2v2h-2z" fill="currentColor"/></svg></button></div></div></div>`).join('')}
+        <button data-qr="${esc(c.sub_url)}" title="QR"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h2v2h-2zm4 0h2v2h-2zm-4 4h2v2h-2zm4 0h2v2h-2z" fill="currentColor"/></svg></button></div></div>
+        <div style="margin-top:8px"><small style="font-size:10.5px;color:#7fb98a">JSON بهینه — پرسرعت‌ترین (Mux فعال)</small>
+        <div class="linkbox" style="margin-top:4px"><span style="flex:1">${esc(c.sub_url)}?fmt=xray</span>
+        <button data-copy="${esc(c.sub_url)}?fmt=xray" title="کپی لینک JSON"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+        <button data-qr="${esc(c.sub_url)}?fmt=xray" title="QR لینک JSON"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h2v2h-2zm4 0h2v2h-2zm-4 4h2v2h-2zm4 0h2v2h-2z" fill="currentColor"/></svg></button></div></div>
+        </div>`).join('')}
       </section>`;
     },
     scanner() {
       const t = (S.state && S.state.settings.tuning) || {};
       const curAddr = (S.state && S.state.settings.address) || '';
       return `<section class="info-sec" style="margin-top:20px">
-      <h3>بهینه‌ساز هوشمند — بهترین IP برای شبکه گوشی شما</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">فقط <b>یک دکمه</b> بزنید؛ سنجش از داخل مرورگر گوشی شما (یعنی دقیقاً روی اینترنت خودتان) انجام می‌شود: اپراتور تشخیص داده می‌شود، همه لبه‌های نزدیک ایران چند بار پینگ می‌شوند، <b>سریع‌ترین و کم‌نوسان‌ترین</b> لبه انتخاب و روی همه کانفیگ‌ها اعمال می‌شود و پروفایل ضد فیلتر اپراتور شما (FinalMask) هم خودکار فعال می‌گردد.</p>
+      <h3>بهینه‌ساز هوشمند — بهترین و سریع‌ترین تنظیمات برای شبکه گوشی شما</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">فقط <b>یک دکمه</b> بزنید؛ سنجش از داخل مرورگر گوشی شما (یعنی دقیقاً روی اینترنت خودتان) انجام می‌شود: اپراتور تشخیص داده می‌شود، همه لبه‌های نزدیک ایران (IPv4 و IPv6) چند بار پینگ می‌شوند، <b>سریع‌ترین و کم‌نوسان‌ترین</b> لبه انتخاب و روی همه کانفیگ‌ها اعمال می‌شود، پروفایل ضد فیلتر اپراتور شما (FinalMask) و <b>بسته سرعت (Mux + KeepAlive)</b> هم خودکار فعال می‌گردد.</p>
+      <label class="field sel" style="max-width:280px;margin-bottom:10px"><select id="scan-fam">
+        <option value="auto" selected>خانواده IP: خودکار (IPv4 + IPv6)</option>
+        <option value="4">فقط IPv4</option>
+        <option value="6">فقط IPv6</option>
+      </select></label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn primary" id="opt-run">بهینه‌سازی خودکار برای شبکه من</button>
+        <button class="btn primary" id="opt-run">بهینه‌سازی حداکثری (بهترین IP + سریع‌ترین تنظیمات)</button>
+        <button class="btn" id="opt-speed">فقط تنظیمات پرسرعت (بدون اسکن)</button>
         <button class="btn" id="opt-stab">تست پایداری مسیر فعلی</button>
         <button class="btn" id="opt-stop" hidden>توقف</button>
       </div>
@@ -418,10 +432,10 @@
       </section>
       <section class="info-sec" style="margin-top:20px">
       <h3>اسکن دستی لبه‌ها</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">پینگ لبه‌های bunny.net (CDN خود Lucity) از <b>مرورگر خودتان</b> سنجیده می‌شود تا دقیقاً مطابق مسیر اینترنت شما باشد. لبه‌های نزدیک ایران (ترکیه، قفقاز، عراق، اروپا) اولویت دارند. روی «اعمال» بزنید تا همه کانفیگ‌ها از آن IP سرو شوند؛ برای برگشت، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">پینگ لبه‌های bunny.net (CDN خود Lucity) از <b>مرورگر خودتان</b> سنجیده می‌شود تا دقیقاً مطابق مسیر اینترنت شما باشد. لبه‌های نزدیک ایران (ترکیه، قفقاز، عراق، اروپا) اولویت دارند. با گزینه «خانواده IP» می‌توانید فقط IPv6 یا هر دو را اسکن کنید. روی «اعمال» بزنید تا همه کانفیگ‌ها از آن IP سرو شوند؛ برای برگشت، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn primary" id="scan-bunny">اسکن لبه‌های CDN</button>
-        <button class="btn" id="scan-custom">اسکن IP های دلخواه</button>
+        <button class="btn" id="scan-custom">اسکن IP های دلخواه (IPv4 / IPv6)</button>
         <button class="btn" id="scan-stop" hidden>توقف اسکن</button>
       </div>
       <div class="progress" hidden id="scan-prog"><i></i></div>
@@ -574,8 +588,12 @@
           modal(`<h3>اشتراک ${esc(c.name)} <button>✕</button></h3>
           <div class="linkbox"><span>${esc(c.sub_url)}</span><button id="m-copy"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button></div>
           <div class="qr-box"><img src="/panel/api/qr?data=${encodeURIComponent(c.sub_url)}" alt="QR"></div>
-          <p style="font-size:11px;color:#8d8d8d">در v2rayNG: Import from clipboard — در Hiddify: + و سپس Paste</p>`);
+          <p style="font-size:11px;color:#8d8d8d">در v2rayNG: Import from clipboard — در Hiddify: + و سپس Paste</p>
+          <div style="margin-top:12px"><small style="font-size:10.5px;color:#7fb98a">JSON بهینه — پرسرعت‌ترین (Mux فعال)</small>
+          <div class="linkbox" style="margin-top:4px"><span>${esc(c.sub_url)}?fmt=xray</span><button id="m-copy-json"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button></div>
+          <p style="font-size:11px;color:#8d8d8d">لینک را در مرورگر باز کنید، JSON را کپی کنید و در v2rayNG: + ← «Import config from clipboard»</p></div>`);
           $('#m-copy').addEventListener('click', () => copy(c.sub_url));
+          $('#m-copy-json').addEventListener('click', () => copy(c.sub_url + '?fmt=xray'));
         } else if (act === 'edit') {
           const p = c.protocols || [];
           modal(`<h3>ویرایش ${esc(c.name)} <button>✕</button></h3>
@@ -627,12 +645,42 @@
       });
       const probe = async (host, ms) => {
         const t0 = performance.now();
-        await timedFetch('https://' + host + '/', ms || TIMEOUT);
+        // IPv6 literals must be bracketed in URLs (https://[2400:52e0::1]/)
+        const h = (String(host).includes(':') && !String(host).startsWith('[')) ? '[' + host + ']' : host;
+        await timedFetch('https://' + h + '/', ms || TIMEOUT);
         return Math.round(performance.now() - t0);
       };
       const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
       const jitter = a => a.length < 2 ? 0 : Math.max(...a) - Math.min(...a);
       const jitterVerdict = j => j <= 25 ? '<b style="color:var(--ok)">بسیار پایدار</b>' : j <= 60 ? '<b style="color:#d6c96b">پایدار</b>' : '<b style="color:#f8b4b4">نوسان بالا</b>';
+
+      // IP family selector (v3.7): "auto" = IPv4 + IPv6 merged, "6" = IPv6 only
+      const famVal = () => { const s = $('#scan-fam'); return s ? s.value : 'auto'; };
+      const loadEdges = async () => {
+        const fam = famVal();
+        const geo = {};
+        let edges = [];
+        const grab = async f => {
+          try {
+            const r = await api('bunnyedges?family=' + f, {});
+            (r.edges || []).forEach(e => edges.push(e));
+            Object.assign(geo, r.geo || {});
+          } catch { /* family unavailable on this deploy */ }
+        };
+        if (fam === '6') { await grab('6'); }
+        else {
+          await grab('4');
+          if (fam === 'auto') {
+            // only sweep v6 if this phone actually has IPv6 — quick 1-edge probe
+            try {
+              const probe6 = await api('bunnyedges?family=6', {});
+              const cand = (probe6.edges || [])[0];
+              if (cand) { const ms = await probe(cand, 1800); if (ms < 1700) await grab('6'); }
+            } catch { }
+          }
+        }
+        return { edges, geo };
+      };
 
       // ─────────── SMART OPTIMIZER — one button: best IP + operator tuning ───────────
       const oStatus = $('#opt-status'), oProg = $('#opt-prog'), oRes = $('#opt-result'),
@@ -667,11 +715,12 @@
           const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
           const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
 
-          // 2) verified geo-balanced edges
+          // 2) verified geo-balanced edges (IPv4 + IPv6 per family selector)
           setStep('۲/۵ — دریافت لبه‌های تأییدشده نزدیک ایران… (اولین بار ممکن است تا ۳۰ ثانیه طول بکشد)', 15);
-          const r = await api('bunnyedges', {});
-          const edges = (r.edges || []).slice(0, 40);
+          const { edges: allEdges, geo } = await loadEdges();
+          const edges = allEdges.slice(0, famVal() === 'auto' ? 60 : 40);
           if (!edges.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>'; return; }
+          const r = { geo };
 
           // 3) round 1 — first RTT sweep from THIS phone
           setStep('۳/۵ — سنجش پینگ ' + edges.length + ' لبه از مرورگر شما…', 20);
@@ -680,7 +729,14 @@
             (ip, done) => setStep('۳/۵ — سنجش پینگ ' + done + ' از ' + edges.length + ' لبه…', 20 + done / edges.length * 40));
           const alive = edges.filter(ip => (first.get(ip) || TIMEOUT) < TIMEOUT - 50)
             .sort((a, b) => first.get(a) - first.get(b)).slice(0, 12);
-          if (!alive.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای از اینترنت شما پاسخ نداد — بعداً دوباره تلاش کنید.</p>'; return; }
+          if (!alive.length) {
+            setStep('');
+            const noV6 = famVal() === '6';
+            oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + (noV6
+              ? 'هیچ لبه IPv6 از اینترنت شما پاسخ نداد — به نظر می‌رسد شبکه شما IPv6 ندارد؛ گزینه «فقط IPv4» را انتخاب کنید.'
+              : 'هیچ لبه‌ای از اینترنت شما پاسخ نداد — بعداً دوباره تلاش کنید.') + '</p>';
+            return;
+          }
 
           // 4) rounds 2-3 on the top 12 → median + jitter (stability!)
           setStep('۴/۵ — سنجش پایداری ۱۲ لبه برتر (هرکدام ۳ بار)…', 65);
@@ -707,28 +763,57 @@
           if (optStop) { setStep('بهینه‌سازی متوقف شد.'); return; }
           if (!best) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای پایدار پاسخ نداد — دوباره تلاش کنید.</p>'; return; }
 
-          // apply: best edge IP + operator FinalMask profile in one shot
-          const tuning = { enabled: true, profile: opKey, frag_on: opKey !== 'auto' };
+          // apply: best edge IP + operator FinalMask profile + SPEED PACK in one shot
+          const tuning = { enabled: true, profile: opKey, frag_on: opKey !== 'auto', mux_off: false, noise_on: false };
           await api('settings', { address: best.ip, tuning });
           await refreshAll();
           setStep('انجام شد ✓', null);
           oRes.innerHTML = `<div class="opt-ok">
-            <b style="font-size:13px">بهترین مسیر برای شبکه شما فعال شد ✓</b>
+            <b style="font-size:13px">بهترین مسیر و سریع‌ترین تنظیمات برای شبکه شما فعال شد ✓</b>
             <ul class="kv" style="margin-top:8px">
             <li><span>اپراتور شناسایی‌شده</span><b>${esc(opLabel)}</b></li>
             <li><span>پروفایل FinalMask اعمال‌شده</span><b>${opKey === 'auto' ? 'خودکار (بدون فرگمنت — کم‌ترین پینگ)' : esc(opLabel)}</b></li>
-            <li><span>بهترین لبه</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${best.ip}</b></li>
+            <li><span>بهترین لبه</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${best.ip}</b>${best.ip.includes(':') ? ' <span class="badge" style="font-size:10px">IPv6</span>' : ''}</li>
             <li><span>موقعیت</span><b>${best.geo ? esc(best.geo.city + '، ' + best.geo.cc) : '—'}</b></li>
             <li><span>پینگ میانه</span><b style="color:var(--ok)">${best.med} ms</b></li>
             <li><span>نوسان (پایداری)</span><b>${best.jit} ms — ${jitterVerdict(best.jit)}</b></li>
+            <li><span>بسته سرعت</span><b style="color:var(--ok)">Mux فعال + KeepAlive سریع ✓</b></li>
             </ul>
-            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">همه کانفیگ‌ها حالا از این لبه سرو می‌شوند. در کلاینت خود (v2rayNG / Hiddify) اشتراک را <b>به‌روزرسانی (Update)</b> کنید تا لینک‌های جدید گرفته شود. اگر باز هم قطع و وصل شد، دوباره همین دکمه را بزنید تا لبه تازه‌ای انتخاب شود.</p></div>`;
+            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">همه کانفیگ‌ها حالا از این لبه با سریع‌ترین تنظیمات سرو می‌شوند. در کلاینت خود (v2rayNG / Hiddify) اشتراک را <b>به‌روزرسانی (Update)</b> کنید تا لینک‌های جدید گرفته شود. برای بیشترین سرعت، از بخش «اشتراک‌ها» لینک <b>JSON بهینه</b> را هم می‌توانید مستقیم وارد کلاینت کنید. اگر باز هم قطع و وصل شد، دوباره همین دکمه را بزنید تا لبه تازه‌ای انتخاب شود.</p></div>`;
         } catch (ex) {
           setStep('');
           oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
         } finally {
           oRun.dataset.busy = '0'; oRun.disabled = false; oStop.hidden = true;
         }
+      });
+
+      // ─────────── SPEED-ONLY BUTTON: apply the fastest settings without scanning ───────────
+      $('#opt-speed').addEventListener('click', async () => {
+        const btn = $('#opt-speed');
+        if (btn.dataset.busy === '1') return;
+        btn.dataset.busy = '1'; btn.disabled = true;
+        try {
+          setStep('تشخیص اپراتور و اعمال بسته سرعت روی همه کانفیگ‌ها…', 40);
+          let w; try { w = await api('whoami'); } catch { w = { operator: 'auto' }; }
+          const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
+          const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
+          await api('settings', { tuning: { enabled: true, profile: opKey, frag_on: opKey !== 'auto', mux_off: false, noise_on: false } });
+          await refreshAll();
+          setStep('بسته سرعت اعمال شد ✓', null);
+          oRes.innerHTML = `<div class="opt-ok">
+            <b style="font-size:13px">سریع‌ترین تنظیمات روی همه کانفیگ‌ها اعمال شد ✓</b>
+            <ul class="kv" style="margin-top:8px">
+            <li><span>اپراتور شناسایی‌شده</span><b>${esc(opLabel)}</b></li>
+            <li><span>Mux (چند جریان روی یک اتصال)</span><b style="color:var(--ok)">فعال — concurrency 8 ✓</b></li>
+            <li><span>KeepAlive تهاجمی + NoDelay</span><b style="color:var(--ok)">فعال ✓</b></li>
+            <li><span>فرگمنت TLS</span><b>${opKey !== 'auto' ? 'روشن (مطابق پروفایل ' + esc(opLabel) + ')' : 'خاموش (کم‌ترین پینگ)'}</b></li>
+            <li><span>نویز تصادفی</span><b>خاموش</b></li>
+            </ul>
+            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">این دکمه مسیر (IP) فعلی را نگه می‌دارد و فقط تنظیمات سرعت را بهینه می‌کند. اگر پینگ هم بالاست، دکمه «بهینه‌سازی حداکثری» را بزنید. برای استفاده از Mux، لینک <b>JSON بهینه</b> را از بخش «اشتراک‌ها» در کلاینت وارد کنید یا اشتراک استاندارد را Update کنید.</p></div>`;
+        } catch (ex) {
+          setStep(''); toast(ex.message, 'err');
+        } finally { btn.dataset.busy = '0'; btn.disabled = false; }
       });
 
       // ─────────── STABILITY TEST of the current route ───────────
@@ -777,22 +862,19 @@
       $('#scan-bunny').addEventListener('click', async () => {
         if (out.dataset.busy === '1') return;
         out.dataset.busy = '1'; stopped = false; stopBtn.hidden = false;
-        statusEl.textContent = 'در حال دریافت لبه‌های تأییدشده… (اولین اسکن ممکن است تا ۳۰ ثانیه طول بکشد؛ دفعات بعد سریع است)';
+        const fam = famVal();
+        statusEl.textContent = 'در حال دریافت لبه‌های تأییدشده' + (fam === '6' ? ' (IPv6)' : fam === 'auto' ? ' (IPv4 + IPv6)' : '') + '… (اولین اسکن ممکن است تا ۳۰ ثانیه طول بکشد؛ دفعات بعد سریع است)';
         out.innerHTML = '';
         try {
-          const r = await api('bunnyedges', {});
-          if (!r.edges || !r.edges.length) {
+          const { edges: allE, geo } = await loadEdges();
+          if (!allE.length) {
             statusEl.textContent = '';
-            out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>';
+            out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.' + (fam === '6' ? ' یا شبکه شما IPv6 ندارد.' : '') + '</p>';
             return;
           }
           const CONC = 6; // capped parallelism — 40 hanging fetches used to saturate mobile links
-          const edges = r.edges.slice(0, 60);
-          // FIX(v3.3): `rows` was declared inside the try-block while renderRows
-          // was declared outside → ReferenceError "rows is not defined" and the
-          // scanner did NOTHING. Both now share one scope, and re-renders are
-          // single-listener (event delegation), sorted as results arrive.
-          const rows = edges.map(ip => ({ ip, geo: (r.geo || {})[ip] || null, ms: null }));
+          const edges = allE.slice(0, fam === 'auto' ? 70 : 60);
+          const rows = edges.map(ip => ({ ip, geo: geo[ip] || null, ms: null }));
           const byIp = new Map(rows.map(x => [x.ip, x]));
           const renderRows = () => {
             const fin = rows.filter(x => x.ms != null).sort((a, b) => a.ms - b.ms);
@@ -837,7 +919,7 @@
       });
       $('#scan-custom').addEventListener('click', () => {
         modal(`<h3>اسکن IP های دلخواه <button>✕</button></h3>
-        <label class="field"><textarea id="sc-list" rows="4" style="width:100%;background:none;border:0;outline:0;color:#eee;font-family:var(--mono);font-size:11px" placeholder="1.2.3.4&#10;5.6.7.8"></textarea>
+        <label class="field"><textarea id="sc-list" rows="4" style="width:100%;background:none;border:0;outline:0;color:#eee;font-family:var(--mono);font-size:11px" placeholder="1.2.3.4&#10;2400:52e0:1500::714:1&#10;5.6.7.8"></textarea>
         <div class="btns"><button class="btn primary" id="sc-go">اسکن (سمت سرور)</button></div>`);
         $('#sc-go').addEventListener('click', async () => {
           const targets = $('#sc-list').value.split('\n').map(s => s.trim()).filter(Boolean);
