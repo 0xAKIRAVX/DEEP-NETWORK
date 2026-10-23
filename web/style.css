@@ -602,3 +602,24 @@ body[data-fx="low"] .login-card{backdrop-filter:none;-webkit-backdrop-filter:non
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
   .dbg-smoke,.lbg-ribbon,.lbg-planet{display:none}
 }
+
+/* ═══════════════ v3.10 — online users monitor ═══════════════ */
+.onl-sec .tr{grid-template-columns:1.35fr 1.05fr .95fr 1.3fr 1.15fr}
+.onl-pill{display:inline-block;vertical-align:2px;margin-inline-start:10px;font-size:11px;font-family:var(--mono);
+  color:#9fe8b0;background:rgba(127,185,138,.1);border:1px solid rgba(127,185,138,.4);border-radius:99px;padding:3px 12px}
+.onl-pill.zero{color:#8d8d8d;background:rgba(255,255,255,.04);border-color:var(--line)}
+.onl-mono{font-family:var(--mono);direction:ltr;font-size:11.5px;overflow-wrap:anywhere}
+.onl-empty{padding:26px 10px;text-align:center;color:#8d8d8d;font-size:12px}
+.u-status.on .dot{animation:dotPulse 1.5s ease-in-out infinite}
+.u-status.on.idle{color:#f3e2b3}
+.u-status.on.idle .dot{background:var(--warn);box-shadow:0 0 7px var(--warn)}
+.u-status.off{color:#9d9d9d}
+.u-status.off .dot{background:#5c5c5c;box-shadow:none;animation:none}
+.sb-nav .cnt.live{color:#9fe8b0;background:rgba(127,185,138,.16)}
+.sb-nav .cnt.none{visibility:hidden}
+@media (max-width:520px){
+  /* online tables: same two-line stacking pattern as the users table */
+  .onl-sec .tr{grid-template-columns:1.5fr 1fr;gap:6px 10px;padding:12px 4px}
+  .onl-sec .tr>:nth-child(3){grid-column:1}
+  .onl-sec .tr.th>:last-child{display:none}
+}

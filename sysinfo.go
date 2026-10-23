@@ -460,6 +460,7 @@ func statsPayload() map[string]any {
                 "cores":  cores, "os": osInfo(), "cpu_model": cpuModel(),
                 "version": Version, "traffic30": traffic30d(), "geo": serverGeo(),
                 "online": onlineTunnels(), "clients": clients,
+                "online_users": onlineCount(),
                 "hist": map[string][]float64{"cpu": hm["cpu"], "mem": hm["mem"], "rx": hm["rx"], "tx": hm["tx"], "t": hm["t"]},
                 "interval": 1.0,
         }
@@ -468,7 +469,11 @@ func statsPayload() map[string]any {
 func healthPayload() map[string]any {
         t0 := time.Now()
         if xrayRunning() {
-                xrayStats()
+                // v3.10 FIX: this used the destructive -reset read, so every health
+                // probe silently discarded uncounted user traffic. Peek instead.
+                statsReadMu.Lock()
+                xrayStatsPeek()
+                statsReadMu.Unlock()
         }
         lat := time.Since(t0).Milliseconds()
         return map[string]any{

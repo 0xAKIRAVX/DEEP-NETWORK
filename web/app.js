@@ -60,6 +60,27 @@
     if (s < 86400) return Math.floor(s / 3600) + ' ساعت';
     return Math.floor(s / 86400) + ' روز';
   }
+  // v3.10: online-monitor helpers — session duration / relative & clock time
+  function fmtDur(s) {
+    s = Math.max(0, Math.floor(s));
+    if (s < 60) return s + ' ثانیه';
+    if (s < 3600) return Math.floor(s / 60) + ' دقیقه';
+    if (s < 86400) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return m ? h + ' ساعت و ' + m + ' دقیقه' : h + ' ساعت'; }
+    const d = Math.floor(s / 86400), h2 = Math.floor((s % 86400) / 3600);
+    return h2 ? d + ' روز و ' + h2 + ' ساعت' : d + ' روز';
+  }
+  function relTime(unix) {
+    if (!unix) return '';
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));
+    if (s < 60) return 'همین حالا';
+    if (s < 3600) return Math.floor(s / 60) + ' دقیقه پیش';
+    if (s < 86400) return Math.floor(s / 3600) + ' ساعت پیش';
+    return Math.floor(s / 86400) + ' روز پیش';
+  }
+  function clockTime(unix) {
+    try { return new Date(unix * 1000).toLocaleTimeString('fa-IR-u-nu-latn', { hour: '2-digit', minute: '2-digit' }); }
+    catch { return new Date(unix * 1000).toTimeString().slice(0, 5); }
+  }
   async function copy(text, msg) {
     try { await navigator.clipboard.writeText(text); toast(msg || 'کپی شد ✓', 'ok'); }
     catch { toast('کپی ممکن نشد', 'err'); }
@@ -249,6 +270,8 @@
       dashViews.hidden = true;
       setDashFX(false); // pause hidden dashboard canvases → zero cost
       host.hidden = false;
+      // v3.10: leaving the online view stops its 2s poller (nothing burns hidden)
+      if (v !== 'online') stopOnlineLoop();
       // FIX(v3.3): views that need S.state used to render ONCE with empty data
       // (state arrives a beat later on slow links) and never refresh → "menu
       // items never load". Now we mark the view stale and re-render it the
@@ -322,6 +345,11 @@
           for (const k of ['vless-ws','vless-xhttp','vless-hu','vmess-ws','trojan-ws']) if (ps[k]) n++;
           set('#st-proto', n); }
     set('#sb-users-count', st.clients || 0);
+    // v3.10: live online users — sidebar badge, dashboard chip, stats view
+    const onl = st.online_users || 0;
+    set('#sv-onl-users', onl);
+    { const sb = $('#sb-online-count'); if (sb) { sb.textContent = onl; sb.classList.toggle('none', !onl); } }
+    { const dl = $('#st-users-delta'); if (dl) dl.textContent = onl ? onl + ' آنلاین' : ''; }
     ring('cpu', st.cpu || 0);
     ring('ram', st.mem || 0);
     ring('disk', st.disk.percent || 0);
@@ -356,23 +384,24 @@
     } catch { }
   }
   function paintState(st) {
-    // traffic + users delta
+    // traffic total
     let up = 0, down = 0;
     for (const c of st.clients) { up += c.up || 0; down += c.down || 0; }
     const tEl = $('#st-traffic'); if (tEl) tEl.textContent = fmtGB(up + down);
-    const active = st.clients.filter(c => c.status === 'active').length;
-    const dEl = $('#st-users-delta');
-    if (dEl) dEl.textContent = '+' + (S.lastActive >= 0 && S.lastActive < active ? active - S.lastActive : 0);
-    S.lastActive = active;
-    // users table (top 5)
+    // v3.10: the old "+0" delta chip (delta-since-login) was meaningless —
+    // the dashboard "کاربران" card now shows the LIVE online count instead.
+    // users table (top 5) — online users are marked with a pulsing dot
     const tbl = $('#users-table');
     if (tbl) {
       $$('.tr:not(.th)', tbl).forEach(r => r.remove());
       for (const c of st.clients.slice(0, 5)) {
         const row = document.createElement('div');
         row.className = 'tr';
+        const statusCell = c.online
+          ? '<span class="u-status on"><i class="dot"></i>آنلاین · ' + fmtDur(c.online_dur || 0) + '</span>'
+          : '<span class="u-status ' + (c.status !== 'active' ? c.status : 'off') + '"><i class="dot"></i>' + (c.status === 'active' ? 'آفلاین' : c.status === 'quota' ? 'پایان حجم' : 'منقضی') + (c.status === 'active' && c.last_seen ? ' <small style="color:#777">· ' + relTime(c.last_seen) + '</small>' : '') + '</span>';
         row.innerHTML = `<span class="u-name"><i class="u-ava">${esc(c.name[0] || '·').toUpperCase()}</i><b>${esc(c.name)}</b></span>
-          <span class="u-status ${c.status !== 'active' ? c.status : ''}"><i class="dot"></i>${c.status === 'active' ? 'فعال' : c.status === 'quota' ? 'پایان حجم' : 'منقضی'}</span>
+          ${statusCell}
           <span class="u-use">${fmtGB((c.up || 0) + (c.down || 0))}</span>
           <span class="u-act"></span>`;
         tbl.appendChild(row);
@@ -401,7 +430,9 @@
         <div class="tr th"><span>نام کاربری</span><span>وضعیت</span><span>حجم مصرف</span><span>عملیات</span></div>
         ${st.clients.map(c => `<div class="tr" data-id="${c.id}">
           <span class="u-name"><i class="u-ava">${esc(c.name[0] || '·').toUpperCase()}</i><b>${esc(c.name)}${c.main ? ' <small style="color:#777">(اصلی)</small>' : ''}</b></span>
-          <span class="u-status ${c.status !== 'active' ? c.status : ''}"><i class="dot"></i>${c.status === 'active' ? 'فعال' : c.status === 'quota' ? 'پایان حجم' : 'منقضی'}</span>
+          ${c.online ? `<span class="u-status on"><i class="dot"></i>آنلاین · ${fmtDur(c.online_dur || 0)}</span>`
+            : c.status !== 'active' ? `<span class="u-status ${c.status}"><i class="dot"></i>${c.status === 'quota' ? 'پایان حجم' : 'منقضی'}</span>`
+            : `<span class="u-status off"><i class="dot"></i>آفلاین${c.last_seen ? ' <small style="color:#777">· ' + relTime(c.last_seen) + '</small>' : ''}</span>`}
           <span class="u-use">${fmtGB((c.up || 0) + (c.down || 0))}</span>
           <span class="u-act">
             <button title="لینک اشتراک" data-act="sub"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
@@ -409,6 +440,24 @@
             <button title="حذف" data-act="del" ${c.main ? 'disabled style="opacity:.3"' : ''}><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-7 0 1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </span></div>`).join('')}
       </div></section>`;
+    },
+    // v3.10: live online-users monitor — who is using the configs RIGHT NOW.
+    online() {
+      return `<section class="info-sec onl-sec" style="margin-top:20px">
+      <h3>کاربران آنلاین <span class="onl-pill" id="onl-count">در حال دریافت…</span></h3>
+      <p style="font-size:11.5px;color:#8d8d8d;margin:6px 0 12px;line-height:2">هر کاربری که در همین لحظه در حال استفاده از کانفیگ‌ها باشد، زنده (هر ۲ ثانیه) اینجا دیده می‌شود: مدت اتصال، سرعت لحظه‌ای و مصرف همین نشست. اگر ترافیک کاربری حدود ۹۰ ثانیه قطع بماند به فهرست «اخیراً آفلاین شده‌ها» با ساعت دقیق آفلاین‌شدن منتقل می‌شود. <b>وضعیت «بی‌تحرک»</b> یعنی اتصال هنوز باز است اما لحظه‌ای داده رد و بدل نشده.</p>
+      <div class="tbl" id="onl-users">
+        <div class="tr th"><span>کاربر</span><span>وضعیت</span><span>مدت اتصال</span><span>سرعت لحظه‌ای</span><span>مصرف این نشست</span></div>
+      </div>
+      <div class="onl-empty" id="onl-empty" hidden>در این لحظه هیچ کاربری آنلاین نیست</div>
+      </section>
+      <section class="info-sec onl-sec" style="margin-top:20px">
+      <h3>اخیراً آفلاین شده‌ها</h3>
+      <div class="tbl" id="off-users">
+        <div class="tr th"><span>کاربر</span><span>مدت استفاده</span><span>زمان آفلاین شدن</span><span>مصرف نشست</span></div>
+      </div>
+      <div class="onl-empty" id="off-empty" hidden>هنوز سابقه‌ای ثبت نشده است</div>
+      </section>`;
     },
     create() {
       return `<section class="info-sec" style="margin-top:20px;max-width:560px">
@@ -496,6 +545,7 @@
       <li><span>آپلود کل</span><b id="sv-ul">${fmtGB(st.tx_total || 0)}</b></li>
       <li><span>ترافیک ۳۰ روز</span><b id="sv-t30">${st.traffic30 && st.traffic30.bytes ? fmtGB(st.traffic30.bytes) : '—'}</b></li>
       <li><span>کانال‌های فعال</span><b id="sv-online">${st.online || 0}</b></li>
+      <li><span>کاربران آنلاین</span><b id="sv-onl-users">${st.online_users || 0}</b></li>
       <li><span>زمان روشن</span><b id="sv-up">${fmtUptime(st.uptime || 0)}</b></li>
       <li><span>نسخه</span><b>v${VER}</b></li></ul></section>`;
     },
@@ -1229,7 +1279,71 @@
         } catch (ex) { toast(ex.message, 'err'); }
       });
     },
+    // v3.10: starts the 2s live poller while the view is open
+    online() { startOnlineLoop(); },
   };
+
+  // ─────────── v3.10: live online-users loop ───────────
+  let onlTimer = null, onlDurTimer = null;
+  function stopOnlineLoop() {
+    if (onlTimer) { clearInterval(onlTimer); onlTimer = null; }
+    if (onlDurTimer) { clearInterval(onlDurTimer); onlDurTimer = null; }
+  }
+  function startOnlineLoop() {
+    stopOnlineLoop();
+    pollOnline(); // immediate first paint
+    onlTimer = setInterval(() => { if (!document.hidden && S.view === 'online') pollOnline(); }, 2000);
+    // durations glide every second WITHOUT re-requesting anything
+    onlDurTimer = setInterval(() => { if (S.view === 'online' && !document.hidden) tickOnlineDurs(); }, 1000);
+  }
+  async function pollOnline() {
+    let d; try { d = await api('online'); } catch { return; }
+    S.online = d;
+    paintOnlineBadge(d.count || 0);
+    if (S.view === 'online') paintOnline(d);
+  }
+  function paintOnlineBadge(n) {
+    const sb = $('#sb-online-count');
+    if (sb) { sb.textContent = n; sb.classList.toggle('none', !n); }
+    const del = $('#st-users-delta');
+    if (del) del.textContent = n ? n + ' آنلاین' : '';
+  }
+  function onlRow(o) {
+    const idle = o.status === 'idle';
+    return `<div class="tr onl-row">
+      <span class="u-name"><i class="u-ava">${esc((o.name || '·')[0] || '·').toUpperCase()}</i><b>${esc(o.name)}</b></span>
+      <span class="u-status on ${idle ? 'idle' : ''}"><i class="dot"></i>${idle ? 'بی‌تحرک' : 'در حال استفاده'}</span>
+      <span class="onl-mono onl-dur" data-since="${o.since}">${fmtDur(o.dur_s)}</span>
+      <span class="onl-mono">↓ ${fmtRate(o.down_bps)} · ↑ ${fmtRate(o.up_bps)}</span>
+      <span class="onl-mono" style="color:#b9b9b9">↓${fmtGB(o.down)} · ↑${fmtGB(o.up)}</span>
+    </div>`;
+  }
+  function offRow(e) {
+    return `<div class="tr onl-row off">
+      <span class="u-name"><i class="u-ava">${esc((e.name || '·')[0] || '·').toUpperCase()}</i><b>${esc(e.name)}</b></span>
+      <span class="onl-mono">${fmtDur(e.dur_s)}</span>
+      <span class="onl-mono"><b>${clockTime(e.offline_at)}</b> <small style="color:#8d8d8d">(${relTime(e.offline_at)})</small></span>
+      <span class="onl-mono" style="color:#b9b9b9">${fmtGB((e.up || 0) + (e.down || 0))}</span>
+    </div>`;
+  }
+  function paintOnline(d) {
+    const pill = $('#onl-count'); if (!pill) return;
+    const c = d.count || 0;
+    pill.textContent = c ? c + ' کاربر' : 'هیچ‌کس';
+    pill.classList.toggle('zero', !c);
+    const onl = d.online || [], off = d.offline || [];
+    const tbl = $('#onl-users');
+    if (tbl) tbl.innerHTML = '<div class="tr th"><span>کاربر</span><span>وضعیت</span><span>مدت اتصال</span><span>سرعت لحظه‌ای</span><span>مصرف این نشست</span></div>' + onl.map(onlRow).join('');
+    const emp = $('#onl-empty'); if (emp) emp.hidden = !!c;
+    const ftbl = $('#off-users');
+    if (ftbl) ftbl.innerHTML = '<div class="tr th"><span>کاربر</span><span>مدت استفاده</span><span>زمان آفلاین شدن</span><span>مصرف نشست</span></div>' + off.map(offRow).join('');
+    const femp = $('#off-empty'); if (femp) femp.hidden = !!off.length;
+  }
+  function tickOnlineDurs() {
+    $$('.onl-dur[data-since]').forEach(el => {
+      el.textContent = fmtDur(Math.floor(Date.now() / 1000 - (+el.dataset.since)));
+    });
+  }
 
   // ─────────── sidebar / header wiring ───────────
   function initDash() {
@@ -1251,7 +1365,7 @@
     $('#hd-avatar-wrap').addEventListener('click', pickAvatar);
     $('#hd-avatar-wrap').addEventListener('keydown', e => { if (e.key === 'Enter') pickAvatar(); });
     $('#theme-toggle').addEventListener('click', () => toast('حالت روشن در این نسخه فعال نیست — تم سینمایی تیره 🙂'));
-    $('#bell').addEventListener('click', () => toast(S.stats && S.stats.online ? S.stats.online + ' تونل فعال است' : 'اعلان جدیدی نیست'));
+    $('#bell').addEventListener('click', () => toast(S.stats && S.stats.online_users ? S.stats.online_users + ' کاربر در همین لحظه در حال استفاده است' : 'در این لحظه کاربر آنلاینی نیست'));
     $('#tg-dl').addEventListener('change', e => S.fx.wave && S.fx.wave.set('rx', e.target.checked));
     $('#tg-ul').addEventListener('change', e => S.fx.wave && S.fx.wave.set('tx', e.target.checked));
     // v3.6 FIX: the دانلود/آپلود radios in the globe section were wired to an
@@ -1320,7 +1434,7 @@
     S.timers.push(setInterval(() => { if (!document.hidden) pingLoop(); }, 6000));
     S.timers.push(setInterval(() => { if (!document.hidden) stateLoop(); }, 45000));
   }
-  async function refreshAll() { await stateLoop(); if (S.view !== 'dashboard') renderView(S.view); }
+  async function refreshAll() { await stateLoop(); if (S.view === 'online') { startOnlineLoop(); return; } if (S.view !== 'dashboard') renderView(S.view); }
 
   // ─────────── boot ───────────
   async function boot() {

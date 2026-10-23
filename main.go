@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.9.0"
+const Version = "3.10.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -90,12 +90,9 @@ func watchdogLoop() {
 }
 
 func usageLoop() {
-        for {
-                time.Sleep(30 * time.Second)
-                collectUsage()
-                syncXray()
-                trafficSnapshot()
-        }
+        // v3.10: superseded by sessionLoop (2s sampling of the Xray user
+        // counters feeding the online monitor + the same 30s housekeeping).
+        sessionLoop()
 }
 
 // ─────────── boot report (zero-variable deployment) ───────────
@@ -198,6 +195,7 @@ func main() {
 
         loadState()
         initReality()
+        loadOfflineLog()
 
         ensureXray()
         xrayMu.Lock()
@@ -219,24 +217,24 @@ func main() {
                 go ibotWatchdog(tok)
         }
 
-	// v3.3: pre-warm the CDN edge list in the background so the first
-	// scanner click in the panel is instant instead of a ~20s cold scan.
-	go func() {
-		time.Sleep(15 * time.Second)
-		dom := strings.TrimSpace(osGetenv("DOMAIN"))
-		if dom == "" {
-			dom = "deep-network-development-w4a86.lucity.app"
-		}
-		if dom != "" && !isIPLiteral(dom) {
-			logf("pre-warming CDN edge cache for %s (v4+v6) …", dom)
-			bunnyEdgesFor(dom, "4")
-			logf("CDN edge cache ready (IPv4)")
-			go func() {
-				bunnyEdgesFor(dom, "6")
-				logf("CDN edge cache ready (IPv6)")
-			}()
-		}
-	}()
+        // v3.3: pre-warm the CDN edge list in the background so the first
+        // scanner click in the panel is instant instead of a ~20s cold scan.
+        go func() {
+                time.Sleep(15 * time.Second)
+                dom := strings.TrimSpace(osGetenv("DOMAIN"))
+                if dom == "" {
+                        dom = "deep-network-development-w4a86.lucity.app"
+                }
+                if dom != "" && !isIPLiteral(dom) {
+                        logf("pre-warming CDN edge cache for %s (v4+v6) …", dom)
+                        bunnyEdgesFor(dom, "4")
+                        logf("CDN edge cache ready (IPv4)")
+                        go func() {
+                                bunnyEdgesFor(dom, "6")
+                                logf("CDN edge cache ready (IPv6)")
+                        }()
+                }
+        }()
 
         bootReport()
 
