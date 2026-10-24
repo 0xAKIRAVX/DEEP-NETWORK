@@ -221,6 +221,37 @@ func buildLocalLinks(c *Client, host string) []Link {
                                         pyQuote(trojanPath()+"?ed=2048"), pyQuote(nm)))
                 }
         }
+
+        // ── 4) 🇮🇷 Iranian-CDN front — the NO-VPS path: a domestic CDN
+        //    (ArvanCloud / Derak / …) put in front of the panel. The CDN edge
+        //    is inside Iran (always reachable on the national network) and
+        //    keeps its international transit to the origin during local-mode
+        //    cutoffs, exactly like a relay VPS would. sni=host=<cdn domain>
+        //    because the CDN terminates TLS itself (valid cert for its zone).
+        if lm.RelayHost != "" && !isIPLiteral(lm.RelayHost) {
+                dom := strings.Trim(lm.RelayHost, "[]")
+                if allowed["vless-ws"] {
+                        nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", dom) + " 🇮🇷 CDN ایرانی"
+                        add("vless-ws-cdn", "VLESS · WS · CDN ایرانی",
+                                fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                        cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
+                                        pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
+                }
+                if allowed["vless-hu"] {
+                        nm := fmtName(fmtStr, c, "VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", dom) + " 🇮🇷 CDN ایرانی"
+                        add("vless-hu-cdn", "VLESS · HTTPUpgrade · CDN ایرانی",
+                                fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
+                                        cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
+                                        pyQuote(huPath()), pyQuote(nm)))
+                }
+                if allowed["trojan-ws"] {
+                        nm := fmtName(fmtStr, c, "Trojan-WS", "Trojan", "WS", "TLS", dom) + " 🇮🇷 CDN ایرانی"
+                        add("trojan-ws-cdn", "Trojan · WS · CDN ایرانی",
+                                fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                        cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
+                                        pyQuote(trojanPath()+"?ed=2048"), pyQuote(nm)))
+                }
+        }
         return out
 }
 
@@ -263,6 +294,30 @@ func localModePayload(host string) map[string]any {
         }
 }
 
+// freeCDNGuide is the NO-VPS survival path: put an Iranian CDN in front of
+// the panel. The user needs no server at all — a domestic CDN account (and
+// the domain it asks for) is the whole cost. Persian, plain steps.
+func freeCDNGuide(panelHost string) string {
+        target := panelHost
+        if target == "" {
+                target = "<panel-domain>"
+        }
+        return fmt.Sprintf(`۱) در یک CDN ایرانی حساب بسازید — رایگان: آروان‌کلاد (arvancloud.ir) یا ابر دراک (derak.cloud)
+۲) یک دامنه لازم است: ارزان‌ترین دامنه ایرانی (حدود ده‌ها هزار تومان در سال) یا هر دامنه‌ای که دارید.
+   نکته: دامنه را از همین حالا تنظیم کنید — در روز قطعی، تغییر DNS ممکن نیست.
+۳) دامنه را در پنل CDN اضافه کنید (تأیید مالکیت با NS که پنل CDN می‌دهد).
+۴) یک رکورد برای دامنه بسازید که به پنل اشاره کند:
+     نوع: CNAME  |  نام: @  |  مقصد: %s  |  پراکسی CDN: روشن (ابر سبز)
+۵) در تنظیمات CDN، گزینه WebSocket / وب‌سوکت را فعال کنید (برای مسیرهای /ws و /hu ضروری است).
+۶) حالا آدرس همان دامنه را در کادر «آدرس رله داخلی» بالا وارد و ذخیره کنید —
+   کانفیگ‌های «🇮🇷 CDN ایرانی» برای همه کاربران ساخته می‌شوند.
+
+چرا کار می‌کند؟ لبه‌های CDN داخل ایران‌اند و روی شبکه ملی همیشه در دسترس‌اند؛
+و ترانزیت بین‌الملل دیتاسنترهای CDN در همه‌ی رخدادهای قطعی تا امروز برقرار مانده است.
+تذکر امنیتی: در حالت CDN، رمزنگاری TLS روی لبه‌ی CDN تمام می‌شود (اپراتور CDN ترافیک متن‌ساده را می‌تواند ببیند)؛
+اگر حریم خصوصی کامل می‌خواهید، رله TCP خام (socat روی VPS) بهتر است.`, target)
+}
+
 // relayGuide builds the ready-to-paste domestic-relay setup commands.
 func relayGuide(panelHost, originIP string) map[string]string {
         target := panelHost
@@ -276,7 +331,8 @@ func relayGuide(panelHost, originIP string) map[string]string {
                 }
         }
         return map[string]string{
-                "socat": fmt.Sprintf("socat TCP-LISTEN:443,fork,reuseaddr,keepalive TCP:%s:443", target),
+                "freecdn": freeCDNGuide(target),
+                "socat":   fmt.Sprintf("socat TCP-LISTEN:443,fork,reuseaddr,keepalive TCP:%s:443", target),
                 "gost":  fmt.Sprintf("gost -L \"tcp://:443/%s:443\"", target),
                 "docker": fmt.Sprintf("docker run -d --restart=always --name deeprelay -p 443:443 " +
                         "alpine/socat TCP-LISTEN:443,fork,reuseaddr TCP:%s:443", target),
@@ -334,6 +390,14 @@ func localModeKitText(host string) string {
         b.WriteString("   هیچ مسیر نرم‌افزاری وجود ندارد. صادقانه.\n\n")
         b.WriteString("در همه حالت‌ها کلاینت خود را روی «تست همه کانفیگ‌ها» بگذارید\n")
         b.WriteString("تا اولین مسیر سالم را خودکار پیدا کند.\n\n")
+
+        b.WriteString("── بدون VPS؟ مسیر رایگان: CDN ایرانی ────────────────────────\n\n")
+        b.WriteString("سرور لازم نیست! یک CDN ایرانی (آروان‌کلاد/دراک) جلوی پنل\n")
+        b.WriteString("می‌نشیند و نقش رله را بازی می‌کند:\n\n")
+        for _, ln := range strings.Split(freeCDNGuide(panelHost), "\n") {
+                b.WriteString("    " + ln + "\n")
+        }
+        b.WriteString("\n")
 
         b.WriteString("── راه‌اندازی رله داخلی (روی سرور ایرانی، فقط یک بار) ────────\n\n")
         b.WriteString("هر سرور/VPS داخل ایران (پارس‌پک، آروان‌کلاد، هامروشن و …)\n")

@@ -258,6 +258,71 @@ func TestLocalModeSettingsRoundTrip(t *testing.T) {
         }
 }
 
+// v3.12: a DOMAIN relay emits BOTH the dumb-relay variants (sni=panel) and
+// the Iranian-CDN-front variants (sni=host=domain, port 443); an IP relay
+// emits relay-only (a CDN cannot be an IP literal).
+func TestCDNFrontVariantsForDomainRelay(t *testing.T) {
+        t.Setenv("DATA_DIR", t.TempDir())
+        loadState()
+        stateMu.Lock()
+        state.LocalMode = &LocalModeState{Enabled: true, RelayHost: "net.myrelay.ir", RelayPort: 8443}
+        state.Tuning = defaultTuning()
+        stateMu.Unlock()
+        links := buildLocalLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
+        keys := map[string]Link{}
+        for _, l := range links {
+                keys[l.Key] = l
+        }
+        for _, k := range []string{"vless-ws-relay", "vless-hu-relay", "trojan-ws-relay",
+                "vless-ws-cdn", "vless-hu-cdn", "trojan-ws-cdn"} {
+                if _, ok := keys[k]; !ok {
+                        t.Fatalf("domain relay missing variant %q (have %v)", k, keys)
+                }
+        }
+        cdn := keys["vless-ws-cdn"].URL
+        if !strings.Contains(cdn, "@net.myrelay.ir:443") {
+                t.Errorf("CDN variant must connect to the CDN domain on 443: %s", cdn)
+        }
+        if !strings.Contains(cdn, "sni=net.myrelay.ir") || !strings.Contains(cdn, "host=net.myrelay.ir") {
+                t.Errorf("CDN variant must present the CDN domain as both sni and host: %s", cdn)
+        }
+        if strings.Contains(cdn, "allowInsecure=1") {
+                t.Errorf("CDN variant must trust the CDN's valid certificate: %s", cdn)
+        }
+        // dumb relay keeps panel SNI + configured port
+        relay := keys["vless-ws-relay"].URL
+        if !strings.Contains(relay, "@net.myrelay.ir:8443") {
+                t.Errorf("relay variant must use the configured relay port: %s", relay)
+        }
+        if !strings.Contains(relay, "host=deep-network-development-w4a86.lucity.app") {
+                t.Errorf("relay variant must keep the panel host header: %s", relay)
+        }
+}
+
+func TestNoCDNVariantsForIPRelay(t *testing.T) {
+        t.Setenv("DATA_DIR", t.TempDir())
+        loadState()
+        stateMu.Lock()
+        state.LocalMode = &LocalModeState{Enabled: true, RelayHost: "79.175.129.200", RelayPort: 443}
+        state.Tuning = defaultTuning()
+        stateMu.Unlock()
+        links := buildLocalLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
+        for _, l := range links {
+                if strings.HasSuffix(l.Key, "-cdn") {
+                        t.Errorf("IP relay must not emit CDN variants, got %q", l.Key)
+                }
+        }
+        found := false
+        for _, l := range links {
+                if l.Key == "vless-ws-relay" {
+                        found = true
+                }
+        }
+        if !found {
+                t.Fatalf("IP relay must still emit the dumb-relay variants")
+        }
+}
+
 func TestLocalModeKitText(t *testing.T) {
         t.Setenv("DATA_DIR", t.TempDir())
         loadState()
@@ -267,7 +332,7 @@ func TestLocalModeKitText(t *testing.T) {
         stateMu.Unlock()
         kit := localModeKitText("deep-network-development-w4a86.lucity.app")
         for _, want := range []string{
-                "کیت بقا برای شبکه ملی", "🇮🇷", "socat", "systemd", "iptables",
+                "کیت بقا برای شبکه ملی", "🇮🇷", "socat", "systemd", "iptables", "CDN ایرانی", "arvancloud.ir",
                 "79.175.129.200:443", "185.59.222.196:443", "آبان ۹۸",
         } {
                 if !strings.Contains(kit, want) {

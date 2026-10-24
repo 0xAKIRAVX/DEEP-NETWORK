@@ -584,7 +584,7 @@
         </div>
         <div style="background:rgba(240,160,90,.07);border:1px solid rgba(240,160,90,.3);border-radius:12px;padding:12px 14px">
           <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">یک سرور داخل ایران که ترافیک را لوله‌کشی می‌کند — <b>تنها راه‌حل واقعی قطع بین‌الملل.</b> راه‌اندازی‌اش یک خط است (پایین صفحه).</p>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">یک سرور داخل ایران که ترافیک را لوله‌کشی می‌کند — <b>راه‌حل واقعی قطع بین‌الملل.</b> راه‌اندازی‌اش یک خط است (پایین صفحه). <b>بدون VPS؟ از CDN ایرانی رایگان استفاده کنید — راهنمای زیر.</b></p>
         </div>
       </div>
       <div style="margin-top:12px;background:rgba(248,180,180,.05);border:1px solid rgba(248,180,180,.18);border-radius:12px;padding:11px 14px">
@@ -606,6 +606,12 @@
       <div class="btns" style="margin-top:12px"><button class="btn primary" id="lm-save">ذخیره تنظیمات کیت</button></div>
       <p id="lm-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
       <div id="lm-variants"></div>
+      </section>
+
+      <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.35)">
+      <h3>🆓 بدون VPS — با CDN ایرانی رایگان (پیشنهادی برای شروع)</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">سرور و هزینه ماهانه لازم نیست: یک <b>CDN داخل ایران</b> (آروان‌کلاد یا دراک) جلوی پنل می‌نشیند، داخل شبکه ملی همیشه در دسترس است و ترانزیت بین‌الملل خود را در قطعی‌ها حفظ کرده است. فقط یک دامنه لازم دارید (ارزان‌ترین دامنه ایرانی کافی است) و دامنه را <b>از همین حالا</b> تنظیم کنید — در روز قطعی تغییر DNS ممکن نیست:</p>
+      <div id="lm-freecdn">در حال دریافت راهنما…</div>
       </section>
 
       <section class="info-sec" style="margin-top:20px">
@@ -1347,6 +1353,10 @@
         const lm = await api('localmode');
         if (lm.resolved_ip && $('#lm-direct') && !$('#lm-direct').value) {
           $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + lm.resolved_ip + ')';
+        }
+        const freeBox = $('#lm-freecdn');
+        if (freeBox && lm.guide && lm.guide.freecdn) {
+          freeBox.innerHTML = '<pre style="background:#0d0d0d;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:11px;overflow:auto;white-space:pre-wrap;line-height:2">' + esc(lm.guide.freecdn) + '</pre>';
         }
         const guideBox = $('#lm-guide');
         if (guideBox && lm.guide) {

@@ -6,3 +6,4 @@ out
 __pycache__/
 _js_check/
 rust-probe/target/
+deepnetwork
