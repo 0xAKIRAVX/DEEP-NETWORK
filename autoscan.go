@@ -20,6 +20,7 @@ package main
 
 import (
         "fmt"
+        "net"
         "sort"
         "strings"
         "sync"
@@ -103,12 +104,17 @@ func probeEdge(ip, domain string, geo map[string]map[string]string) EdgeScore {
         return es
 }
 
-// ─────────── v3.19: edge blocklist (the admin's ground truth) ───────────
+// ─────────── v3.19+3.21: edge blocklist (the admin's ground truth) ───────────
 // The 6 Iranian probe nodes and every sandbox measurement can pass an edge
-// that the ADMIN's own ISP still kills (measured live: Stockholm
-// 195.181.166.158 and the bunny.net SNI front passed 6/6 probes while the
-// user's v2rayNG reported -1). parseEdgeBlock accepts a JSON array or a
-// comma/space separated string and keeps only valid IP literals.
+// that the ADMIN's own ISP still kills (measured live, three times in a row:
+// Stockholm 195.181.166.158 → Athens 169.150.252.209 → Prague 89.187.188.228
+// — every one passed probes 6/6 while the user's v2rayNG said -1).
+// parseEdgeBlock accepts a JSON array or a comma/space separated string and
+// keeps only valid IP literals.
+// v3.21: blocking is FAMILY-WIDE (/16 for v4, /48 for v6). Iranian
+// filtering kills the partner's whole address range, not one PoP — blocking
+// one Prague edge must also remove its siblings so a dead partner can never
+// return under a neighbouring IP.
 func parseEdgeBlock(v any) []string {
         var raw []string
         switch x := v.(type) {
@@ -132,11 +138,27 @@ func parseEdgeBlock(v any) []string {
         return out
 }
 
-// edgeBlocked reports whether ip sits on the blocklist (NO lock taken —
-// callers already hold stateMu or use edgeBlockedState).
+// ipFamilyOf groups an IP into its network family — /16 for IPv4 (the
+// partner/carrier block Iranian filtering acts on) and /48 for IPv6.
+// Non-IP input falls back to the raw string so matching stays predictable.
+func ipFamilyOf(ip string) string {
+        nip := net.ParseIP(strings.Trim(strings.TrimSpace(ip), "[]"))
+        if nip == nil {
+                return strings.TrimSpace(ip)
+        }
+        if v4 := nip.To4(); v4 != nil {
+                return fmt.Sprintf("%d.%d.0.0/16", v4[0], v4[1])
+        }
+        v6 := nip.To16()
+        return fmt.Sprintf("%02x%02x:%02x%02x:%02x%02x::/48", v6[0], v6[1], v6[2], v6[3], v6[4], v6[5])
+}
+
+// edgeBlocked reports whether ip's FAMILY sits on the blocklist (NO lock
+// taken — callers already hold stateMu or use edgeBlockedState).
 func edgeBlockedLocked(ip string) bool {
+        fam := ipFamilyOf(ip)
         for _, b := range state.EdgeBlock {
-                if b == ip {
+                if ipFamilyOf(b) == fam {
                         return true
                 }
         }
@@ -388,11 +410,23 @@ func autoScanLastAt() int64 {
 
 // autoScanLoop: first run 90s after boot, then every 5 min decide whether the
 // (default 1h) cadence is due — cheap check, heavy work stays rare.
+// v3.21: each run is wrapped in a recover — a panic inside a scan used to
+// kill the ticker goroutine (and with it the whole process), silently
+// stopping every future scan until the next deploy.
+func safeAutoScan() {
+        defer func() {
+                if r := recover(); r != nil {
+                        logf("auto-scan panic recovered: %v", r)
+                }
+        }()
+        autoScanOnce()
+}
+
 func autoScanLoop() {
         go func() {
                 time.Sleep(90 * time.Second)
                 if autoScanEnabled() {
-                        autoScanOnce()
+                        safeAutoScan()
                 }
                 t := time.NewTicker(5 * time.Minute)
                 defer t.Stop()
@@ -401,7 +435,7 @@ func autoScanLoop() {
                                 continue
                         }
                         if time.Since(time.Unix(autoScanLastAt(), 0)) >= autoScanInterval() {
-                                autoScanOnce()
+                                safeAutoScan()
                         }
                 }
         }()

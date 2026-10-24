@@ -733,7 +733,7 @@
       <label class="field"><input id="se-address" value="${esc(s.address || '')}" placeholder="آدرس تمیز (IP یا دامنه)"></label>
       <label class="field"><input id="se-sni" value="${esc(s.reality_sni || '')}" placeholder="SNI برای Reality"></label>
       </div>
-      <label class="field" style="margin:10px 0"><input id="se-fmt" value="${esc(s.cfg_fmt || '')}" placeholder="قالب نام کانفیگ ({label} — کوتاه)"></label>
+      <label class="field" style="margin:10px 0"><input id="se-fmt" value="${esc(s.cfg_fmt || '')}" placeholder="⟦ {user} • {proto} • {net} • {geo} ⟧ (پیش‌فرض)"></label>
       <label class="field" style="margin:10px 0"><input id="se-edgeblock" style="direction:ltr;font-family:var(--mono)" value="${esc((s.edge_block || []).join(', '))}" placeholder="حذف لبه‌ها (IP با کاما) — کانفیگ‌های -1 شما"></label>
       <p style="font-size:11px;color:#8d8d8d;margin:6px 2px 0;line-height:1.9">🗑 <b>حذف لبه‌ها:</b> اگر کانفیگی با برچسب یک شهر (مثل استکهلم) در کلاینت شما <b>منفی یک (-1)</b> می‌دهد ولی برای اسکنر سالم است، IP آن لبه را اینجا وارد کنید — دیگر هیچ‌وقت در اشتراک نمی‌آید. جعبه‌ابزار دقیق: در v2rayNG روی کانفیگ بزنید تا IP را ببینید.</p>
       <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-randsni" ${s.random_sni ? 'checked' : ''}><span class="cbx"></span>SNI تصادفی ضد فیلتر (فقط *.lucity.app)</label>

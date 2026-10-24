@@ -170,16 +170,15 @@ func TestLocalDirectUsesProvenPrimary(t *testing.T) {
         if strings.Contains(direct.URL, "@185.111.111.156") {
                 t.Errorf("direct variant must never ship the IR-dead geo answer")
         }
-        // short pretty name
-        if !strings.Contains(direct.URL, "#main-VLESS-WS+") || !strings.Contains(direct.URL, "%F0%9F%9B%A1%EF%B8%8F+%D9%85%D8%B3%D8%AA%D9%82%DB%8C%D9%85") {
-                if nm := linkDisplayName(*direct); !strings.Contains(nm, "🛡️ مستقیم") {
-                        t.Errorf("direct variant name must be the short «🛡️ مستقیم», got %q", nm)
-                }
+        // v3.21 name format: ⟦ 𝗠𝗔𝗜𝗡 • 𝗩𝗟𝗘𝗦𝗦 • 𝗪𝗦 • 𝗗𝗜𝗥𝗘𝗖𝗧 🛡️ ⟧
+        if nm := linkDisplayName(*direct); !strings.Contains(nm, "𝗗𝗜𝗥𝗘𝗖𝗧 🛡️") || !strings.Contains(nm, "⟦") || !strings.HasSuffix(nm, "⟧") {
+                t.Errorf("direct variant name must be the ⟦ … DIRECT 🛡️ ⟧ form, got %q", nm)
         }
 }
 
-// Names: primary 🥇, edges 🥈🥉 with SHORT Persian city names and no
-// latency noise; DNS variant is «🌐 دامنه».
+// Names (v3.21): ⟦ 𝗠𝗔𝗜𝗡 • 𝗩𝗟𝗘𝗦𝗦 • 𝗪𝗦 • 𝗖𝗜𝗧𝗬 🇩🇪⁰¹ ⟧ — bold math font,
+// flag + superscript rank for city variants (medals retired), NO latency
+// noise; DNS variant is ⟦ … AUTO 🌐 ⟧.
 func TestNamingPersianShortMedals(t *testing.T) {
         v318Setup(t)
         stateMu.Lock()
@@ -199,27 +198,24 @@ func TestNamingPersianShortMedals(t *testing.T) {
                                 primary = nm
                         }
                 }
-                if strings.Contains(l.URL, "@169.150.215.115") && strings.Contains(nm, "🥈") {
+                if strings.Contains(l.URL, "@169.150.215.115") && strings.Contains(nm, "⁰²") {
                         silver = nm
                 }
                 if strings.Contains(l.URL, "@deep-network-development-w4a86.lucity.app") {
                         dns = nm
                 }
         }
-        if !strings.Contains(primary, "🥇") {
-                t.Errorf("primary name must carry 🥇, got %q", primary)
+        if !strings.Contains(primary, "𝗠𝗔𝗜𝗡") || !strings.Contains(primary, "⁰¹") || !strings.Contains(primary, "⟦") {
+                t.Errorf("primary name must be ⟦ MAIN • … ⁰¹ ⟧ bold, got %q", primary)
         }
-        if silver == "" || !strings.Contains(silver, "استانبول") {
-                t.Errorf("edge name must use the short Persian city, got %q", silver)
+        if silver == "" || !strings.Contains(silver, "𝗜𝗦𝗧𝗔𝗡𝗕𝗨𝗟") || !strings.Contains(silver, "🇹🇷") {
+                t.Errorf("edge name must be bold ISTANBUL + flag + rank, got %q", silver)
         }
         if strings.Contains(silver, "ms") || strings.Contains(silver, "122") {
                 t.Errorf("edge name must not carry latency noise, got %q", silver)
         }
-        if !strings.Contains(dns, "🌐 دامنه") {
-                t.Errorf("DNS variant must be named «🌐 دامنه», got %q", dns)
-        }
-        if strings.Contains(dns, "DNS") {
-                t.Errorf("DNS variant must use the Persian label, got %q", dns)
+        if !strings.Contains(dns, "𝗔𝗨𝗧𝗢 🌐") {
+                t.Errorf("DNS variant must be ⟦ … AUTO 🌐 ⟧, got %q", dns)
         }
 }
 
@@ -285,8 +281,8 @@ func TestSubRendersShortPersianNames(t *testing.T) {
         // names live URL-encoded in fragments — check the decoded display name
         for _, l := range buildLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app") {
                 if strings.Contains(l.URL, "@169.150.215.115") {
-                        if nm := linkDisplayName(l); !strings.Contains(nm, "استانبول") {
-                                t.Errorf("sub edge names must be Persian, got %q", nm)
+                        if nm := linkDisplayName(l); !strings.Contains(nm, "𝗜𝗦𝗧𝗔𝗡𝗕𝗨𝗟") || !strings.Contains(nm, "🇹🇷") {
+                                t.Errorf("sub edge names must be bold city + flag, got %q", nm)
                         }
                 }
         }

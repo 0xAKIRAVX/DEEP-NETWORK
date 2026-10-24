@@ -89,8 +89,8 @@ func TestALPNForcedPerTransport(t *testing.T) {
         }
 }
 
-// v3.20 short naming: "main-VLESS-WS 🥇" → "WS 🥇" — the client name and the
-// protocol prefix are gone; transport + medal (and city) carry the row.
+// v3.21 naming: every default name is ⟦ 𝗨𝗦𝗘𝗥 • 𝗣𝗥𝗢𝗧𝗢 • 𝗡𝗘𝗧 • … ⟧ — the
+// bold math font the user requested, with the class token in the geo slot.
 func TestShortDefaultNames(t *testing.T) {
         v320Setup(t)
         links := buildLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
@@ -108,19 +108,28 @@ func TestShortDefaultNames(t *testing.T) {
                         frontNameSeen = nm
                 }
         }
-        if !strings.HasPrefix(wsName, "WS ") || strings.Contains(wsName, "main-") || strings.Contains(wsName, "VLESS-WS") {
-                t.Errorf("ws name should be short \"WS …\", got %q", wsName)
+        for _, nm := range []string{wsName, xhttpName, directName} {
+                if nm == "" {
+                        continue
+                }
+                if !strings.HasPrefix(nm, "⟦ ") || !strings.HasSuffix(nm, " ⟧") {
+                        t.Errorf("name must be bracketed ⟦ … ⟧, got %q", nm)
+                }
+                if !strings.Contains(nm, "𝗠𝗔𝗜𝗡 • ") {
+                        t.Errorf("name must start with the bold user, got %q", nm)
+                }
         }
-        if !strings.HasPrefix(xhttpName, "XHTTP ") {
-                t.Errorf("xhttp name should be short \"XHTTP …\", got %q", xhttpName)
+        if !strings.Contains(wsName, " • 𝗪𝗦 • ") {
+                t.Errorf("ws name must carry • WS • in bold, got %q", wsName)
+        }
+        if !strings.Contains(xhttpName, " • 𝗫𝗛𝗧𝗧𝗣 • ") {
+                t.Errorf("xhttp name must carry • XHTTP • in bold, got %q", xhttpName)
         }
         if frontNameSeen != "" && strings.Contains(frontNameSeen, ".com") {
                 t.Errorf("🎭 variant name should drop the registrar suffix, got %q", frontNameSeen)
         }
-        if directName != "" && (strings.Contains(directName, "main-") || strings.Contains(directName, "VLESS-WS")) {
-                t.Errorf("🛡️ name should be short, got %q", directName)
-        }
-        // a fully custom template still wins over the default
+        // a fully custom template still wins over the default (and is NOT
+        // bold-wrapped — the admin controls every character)
         stateMu.Lock()
         state.CfgFmt = "{name}/{net}"
         stateMu.Unlock()
@@ -129,6 +138,9 @@ func TestShortDefaultNames(t *testing.T) {
                 nm := linkDisplayName(links[0])
                 if !strings.Contains(nm, "/") {
                         t.Errorf("custom template not honored, got %q", nm)
+                }
+                if strings.Contains(nm, "𝗠") {
+                        t.Errorf("custom template must not be auto-bolded, got %q", nm)
                 }
         }
 }
@@ -147,8 +159,8 @@ func TestCfgFmtMigrationOnLoad(t *testing.T) {
         stateMu.RLock()
         fmtv := state.CfgFmt
         stateMu.RUnlock()
-        if fmtv != "{label}" {
-                t.Errorf("old default must migrate to {label}, got %q", fmtv)
+        if fmtv != defaultCfgFmt {
+                t.Errorf("old default must migrate to the ⟦ … ⟧ template, got %q", fmtv)
         }
 }
 

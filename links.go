@@ -239,19 +239,22 @@ func tcpPublicPort() string {
 }
 
 // fmtName renders the admin's config-name template with a safe fallback.
-func fmtName(fmtStr string, c *Client, label, proto, net_, sec, server string) string {
+func fmtName(fmtStr string, c *Client, label, proto, net_, sec, server, geo string) string {
         name := c.Name
         fallback := name + "-" + label
         if fmtStr == "" {
-                fmtStr = "{label}"
+                fmtStr = defaultCfgFmt
         }
-        if strings.ContainsAny(fmtStr, "{}") == false {
+        if !strings.ContainsAny(fmtStr, "{}") {
                 return fmtStr
         }
         known := map[string]string{
                 "name": name, "label": label, "proto": proto, "net": net_, "sec": sec,
                 "server": server, "uuid8": firstN(c.ID, 8),
                 "date": time.Now().UTC().Format("20060102"),
+                // v3.21 keys: bold user name + the geo token (city/flag/rank or icon)
+                "user": strings.ToUpper(name),
+                "geo":  geo,
         }
         var b strings.Builder
         rest := fmtStr
@@ -280,6 +283,12 @@ func fmtName(fmtStr string, c *Client, label, proto, net_, sec, server string) s
         out = strings.Trim(out, "-_ ")
         if out == "" {
                 return fallback
+        }
+        // v3.21: the default ⟦ … ⟧ template renders every Latin letter and
+        // digit in the bold math font the user asked for; custom templates
+        // keep whatever the admin typed (bold chars can be pasted literally).
+        if fmtStr == defaultCfgFmt {
+                out = mathBold(out)
         }
         return out
 }
@@ -343,6 +352,113 @@ func shortLabel(l string) string {
         return l
 }
 
+// ─────────── v3.21: the ⟦ 𝐔𝐒𝐄𝐑 • 𝐕𝐋𝐄𝐒𝐒 • 𝐖𝐒 • 𝐅𝐑𝐀𝐍𝐊𝐅𝐔𝐑𝐓 🇩🇪⁰¹ ⟧ naming ───────────
+// The user's requested format: bracketed, every Latin letter/digit in
+// Mathematical Bold Sans (the "𝐟𝐨𝐧𝐭"), bullet separators, and a geo token
+// that ends with the country flag + superscript rank (city variants) or a
+// class icon (🎭 fronts / 🛡️ direct / 🌐 auto-DNS / 🇮🇷 Iranian paths).
+// The default template assembles it; mathBold() applies the font to the
+// final string so any template value renders the same way. Custom templates
+// keep full control (they can embed the bold characters literally).
+
+const defaultCfgFmt = "⟦ {user} • {proto} • {net} • {geo} ⟧"
+
+// mathBold renders ASCII letters and digits in Mathematical Bold Sans
+// (U+1D5D4 series) and passes every other rune (• ⟦ ⟧ flags, superscripts,
+// Persian, …) through untouched. Idempotent by construction.
+func mathBold(s string) string {
+        var b strings.Builder
+        b.Grow(len(s) + 16)
+        for _, r := range s {
+                switch {
+                case r >= 'A' && r <= 'Z':
+                        b.WriteRune(0x1D5D4 + (r - 'A'))
+                case r >= 'a' && r <= 'z':
+                        b.WriteRune(0x1D5D4 + (r - 'a'))
+                case r >= '0' && r <= '9':
+                        b.WriteRune(0x1D7EC + (r - '0'))
+                default:
+                        b.WriteRune(r)
+                }
+        }
+        return b.String()
+}
+
+// ccFlag turns a 2-letter country code into its flag emoji (regional
+// indicators). Empty/invalid input → no flag.
+func ccFlag(cc string) string {
+        cc = strings.ToUpper(strings.TrimSpace(cc))
+        if len(cc) != 2 || cc[0] < 'A' || cc[0] > 'Z' || cc[1] < 'A' || cc[1] > 'Z' {
+                return ""
+        }
+        return string(rune(0x1F1E6+rune(cc[0])-'A')) + string(rune(0x1F1E6+rune(cc[1])-'A'))
+}
+
+var supDigits = [...]string{"⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"}
+
+// supNum renders n (≥1) as superscript digits: 1 → "⁰¹", 2 → "⁰²" …
+func supNum(n int) string {
+        if n < 1 {
+                n = 1
+        }
+        if n > 99 {
+                n = 99
+        }
+        return supDigits[n/10] + supDigits[n%10]
+}
+
+// geoCityFor resolves an address into (city, cc) using the live scan data
+// (TopEdges) then the bunny geo cache. Empty when unknown.
+func geoCityFor(ip string) (city, cc string) {
+        ip = strings.Trim(strings.TrimSpace(ip), "[]")
+        if !isIPLiteral(ip) {
+                return "", ""
+        }
+        stateMu.RLock()
+        for _, e := range state.TopEdges {
+                if e.IP == ip {
+                        city, cc := e.City, e.CC
+                        stateMu.RUnlock()
+                        return city, cc
+                }
+        }
+        stateMu.RUnlock()
+        bunny.mu.Lock()
+        g := bunny.geo[ip]
+        bunny.mu.Unlock()
+        if g != nil {
+                return g["city"], g["cc"]
+        }
+        return "", ""
+}
+
+// geoToken builds the location segment of the new name format:
+//
+//      rank > 0            → "FRANKFURT 🇩🇪⁰¹"   (city + flag + superscript rank)
+//      icon != ""          → "BUNNYCDN 🎭"        (short label + class icon)
+//      rank>0 && icon != ""→ "KYIV 🇺🇦⁰²" style wins for ranked city variants
+//
+// fallbackCity is used when the city cannot be resolved (the manual primary
+// may not be in the scan set) so the format never degrades.
+func geoToken(city, cc string, rank int, icon string, fallbackCity string) string {
+        if strings.TrimSpace(city) == "" {
+                city = strings.TrimSpace(fallbackCity)
+        }
+        if city == "" {
+                city = "CDN"
+        }
+        out := city
+        if f := ccFlag(cc); f != "" {
+                out += " " + f
+        }
+        if rank > 0 {
+                out += supNum(rank)
+        } else if icon != "" {
+                out += " " + icon
+        }
+        return out
+}
+
 // frontShort trims the boilerplate registrar suffixes off a front domain for
 // the 🎭 variant names: "docs.bunny.net" → "🎭 docs".
 func frontShort(base string) string {
@@ -357,7 +473,9 @@ func frontShort(base string) string {
 
 func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
         cid, proto, net_, sec := c.ID, ib.Protocol, ib.Network, ib.Security
-        nm := fmtName(fmtStr, c, ib.Name, strings.ToUpper(proto), strings.ToUpper(net_), strings.ToUpper(sec), addr)
+        city, cc := geoCityFor(addr)
+        nm := fmtName(fmtStr, c, ib.Name, strings.ToUpper(proto), strings.ToUpper(net_), strings.ToUpper(sec), addr,
+                geoToken(city, cc, 0, "", ""))
         frag := pyQuote(nm)
         path := ib.Path
         t := tuningGet()
@@ -465,9 +583,12 @@ func faCity(city, cc string) string {
 // entry — every client app then picks its best route per operator.
 // v3.11: the national-internet kit (relay/direct/white-SNI survival variants)
 // is appended last so daily traffic keeps the fast CDN paths.
-// v3.18: (a) edges MEASURED TLS-dead from Iran (IRTLS==0 with a probe
-// timestamp) are SKIPPED — a dead variant in the list is a guaranteed -1; (b) names are
-// short and Persian (🥇 اصلی / 🥈 بخارست / 🌐 دامنه / 🛡️ مستقیم).
+// v3.18: edges MEASURED TLS-dead from Iran (IRTLS==0 with a probe timestamp)
+// are SKIPPED — a dead variant in the list is a guaranteed -1.
+// v3.21: names are ⟦ USER • PROTO • NET • CITY 🇩🇪⁰¹ ⟧ (bold math font,
+// flag, superscript rank — medals retired); the edge set is FAMILY-DIVERSE
+// (max 2 per /16) so one dead partner can never take the whole variant
+// section down, and the blocklist matches whole families.
 func buildLinks(c *Client, host string) []Link {
         stateMu.RLock()
         addr := state.Address
@@ -478,22 +599,27 @@ func buildLinks(c *Client, host string) []Link {
         if addr == "" {
                 addr = host
         }
+        // v3.21 geo token for the primary: its scan city when known.
+        pCity, pCC := geoCityFor(addr)
+        primaryGeo := geoToken(pCity, pCC, 1, "", "")
         if !multi || host == "" {
-                out := buildLinksAddr(c, addr, host, " \U0001F947", true)
+                out := buildLinksAddr(c, addr, host, primaryGeo, true)
                 out = appendFrontAlts(c, addr, host, out)
                 return appendLocalLinks(c, host, out)
         }
-        out := buildLinksAddr(c, addr, host, " \U0001F947", true)
+        out := buildLinksAddr(c, addr, host, primaryGeo, true)
         seen := map[string]bool{}
         for _, l := range out {
                 seen[l.URL] = true
         }
-        // 🥇 rides the primary set; variants get 🥈🥉🏅🎖 — short Persian names,
-        // no latency noise (the scanner UI shows the live numbers instead).
-        medals := []string{"\U0001F948", "\U0001F949", "\U0001F3C5", "\U0001F396"} // 🥈🥉🏅🎖
-        rank := 0
+        // City variants ride superscript ranks ⁰² ⁰³ ⁰⁴ …, max TWO per
+        // network family (v3.21): the -1 reports came one partner at a time
+        // (Stockholm → Athens → Prague) because the medal section leaned on
+        // whatever the scanner ranked best regardless of diversity.
+        famCount := map[string]int{}
+        rank := 1
         for _, e := range edges {
-                if rank >= len(medals) {
+                if rank >= 5 {
                         break
                 }
                 if e.IP == addr {
@@ -503,22 +629,27 @@ func buildLinks(c *Client, host string) []Link {
                         continue // v3.18.1: MEASURED TLS-dead from Iran (0 or legacy 2) — never ship a -1
                 }
                 if edgeBlockedState(e.IP) {
-                        continue // v3.19: the admin measured this edge dead on their own ISP
+                        continue // v3.19+3.21: this edge's FAMILY measured dead on the admin's ISP
                 }
-                suf := " " + medals[rank] + " " + faCity(e.City, e.CC)
-                for _, l := range buildLinksAddr(c, e.IP, host, suf, false) {
+                fam := ipFamilyOf(e.IP)
+                if famCount[fam] >= 2 {
+                        continue // diversity: two edges per family is enough exposure
+                }
+                geo := geoToken(e.City, e.CC, rank+1, "", "")
+                for _, l := range buildLinksAddr(c, e.IP, host, geo, false) {
                         if !seen[l.URL] {
                                 seen[l.URL] = true
                                 out = append(out, l)
                         }
                 }
+                famCount[fam]++
                 rank++
         }
         // DNS-auto: let bunny geo-DNS pick the per-operator PoP itself. Skipped
         // while the domain is measured dead-from-Iran (DomainIR==2) — shipping it
         // then is just another guaranteed -1 row in the client's test list.
         if !isIPLiteral(host) && host != addr && domainIR != 2 {
-                for _, l := range buildLinksAddr(c, host, host, " \U0001F310 دامنه", false) {
+                for _, l := range buildLinksAddr(c, host, host, "AUTO \U0001F310", false) {
                         if !seen[l.URL] {
                                 seen[l.URL] = true
                                 out = append(out, l)
@@ -558,8 +689,10 @@ func appendFrontAlts(c *Client, addr, host string, out []Link) []Link {
                         continue
                 }
                 n++
-                suf := " \U0001F3AD " + frontShort(p.Base)
-                for _, l := range buildLinksAddrSNI(c, addr, host, suf, false, frontName(p.Base, p.Rand)) {
+                // v3.21: the 🎭 class icon rides the geo slot:
+                // ⟦ MAIN • VLESS • WS • BUNNYCDN 🎭 ⟧
+                geo := frontShort(p.Base) + " \U0001F3AD"
+                for _, l := range buildLinksAddrSNI(c, addr, host, geo, false, frontName(p.Base, p.Rand)) {
                         if !seen[l.URL] {
                                 seen[l.URL] = true
                                 out = append(out, l)
@@ -588,23 +721,26 @@ func appendLocalLinks(c *Client, host string, out []Link) []Link {
 // buildLinksAddr builds the full link set for one explicit address. Variants
 // (primary=false) skip the Reality entry and custom inbounds — those do not
 // vary with the CDN edge address, so repeating them would only add noise.
-func buildLinksAddr(c *Client, addr, host, suffix string, primary bool) []Link {
-        return buildLinksAddrSNI(c, addr, host, suffix, primary, "")
+func buildLinksAddr(c *Client, addr, host, geo string, primary bool) []Link {
+        return buildLinksAddrSNI(c, addr, host, geo, primary, "")
 }
 
 // buildLinksAddrSNI = buildLinksAddr with an explicit TLS SNI override —
 // used for the 🎭 alternate-front variants (v3.17). Empty override → the
 // normal linkSNI() chain (active front / random lucity / plain).
-func buildLinksAddrSNI(c *Client, addr, host, suffix string, primary bool, sniOverride string) []Link {
+// v3.21: the third parameter is now the GEO TOKEN ("FRANKFURT 🇩🇪⁰¹",
+// "BUNNYCDN 🎭", "DIRECT 🛡️", …) that rides inside the ⟦ … ⟧ template —
+// the medal suffixes are gone.
+func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverride string) []Link {
         stateMu.RLock()
         sni := state.RealitySNI
         fmtStr := state.CfgFmt
         if fmtStr == "" {
-                fmtStr = "{label}"
+                fmtStr = defaultCfgFmt
         }
         stateMu.RUnlock()
         nm := func(label, proto, net_, sec, server string) string {
-                return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server) + suffix
+                return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server, geo)
         }
         t := tuningGet()
         sniHost := sniFor(addr, host)
@@ -705,8 +841,8 @@ func orStr(a, b string) string {
 }
 
 // linkDisplayName returns the client-facing config name: the URI fragment
-// (vless/trojan) or the vmess "ps" field — both carry the full variant suffix
-// (e.g. "main-VLESS-WS 🥈 Amsterdam 62ms"). Falls back to the label.
+// (vless/trojan) or the vmess "ps" field — both carry the full geo token
+// (v3.21: "⟦ MAIN • VLESS • WS • FRANKFURT 🇩🇪⁰² ⟧"). Falls back to the label.
 func linkDisplayName(l Link) string {
         if i := strings.LastIndex(l.URL, "#"); i >= 0 && i+1 < len(l.URL) {
                 if frag, err := url.PathUnescape(l.URL[i+1:]); err == nil && strings.TrimSpace(frag) != "" {

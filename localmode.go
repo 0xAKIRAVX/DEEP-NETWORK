@@ -177,10 +177,10 @@ func buildLocalLinks(c *Client, host string) []Link {
         fmtStr := state.CfgFmt
         stateMu.RUnlock()
         if fmtStr == "" {
-                fmtStr = "{label}"
+                fmtStr = defaultCfgFmt
         }
-        nmF := func(label, proto, net_, sec, server string) string {
-                return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server)
+        nmF := func(label, proto, net_, sec, server, geo string) string {
+                return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server, geo)
         }
         panelHost := localPanelHost(host)
         var out []Link
@@ -192,7 +192,9 @@ func buildLocalLinks(c *Client, host string) []Link {
 
         // ── 1) 🛡️ direct-IP variant: real SNI, literal address → no client DNS.
         if directAddr != "" && directAddr != lm.RelayHost && allowed["vless-ws"] {
-                nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", directAddr) + " \U0001F6E1\uFE0F مستقیم"
+                dCity, dCC := geoCityFor(directAddr)
+                nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", directAddr,
+                        geoToken(dCity, dCC, 0, "\U0001F6E1\uFE0F", "DIRECT"))
                 sni := linkSNI(panelHost)
                 add("vless-ws-direct", "VLESS · WS · مستقیم",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
@@ -210,21 +212,21 @@ func buildLocalLinks(c *Client, host string) []Link {
                 uriAddr := bracketV6(lm.RelayHost)
                 sni := linkSNI(panelHost)
                 if allowed["vless-ws"] {
-                        nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", lm.RelayHost) + " \U0001F1EE\U0001F1F7 رله داخلی"
+                        nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", lm.RelayHost, "RELAY \U0001F1EE\U0001F1F7")
                         add("vless-ws-relay", "VLESS · WS · رله داخلی",
                                 fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
                                         pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
                 }
                 if allowed["vless-hu"] {
-                        nm := nmF("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", lm.RelayHost) + " \U0001F1EE\U0001F1F7 رله داخلی"
+                        nm := nmF("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", lm.RelayHost, "RELAY \U0001F1EE\U0001F1F7")
                         add("vless-hu-relay", "VLESS · HTTPUpgrade · رله داخلی",
                                 fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
                                         cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
                                         pyQuote(huPath()), pyQuote(nm)))
                 }
                 if allowed["trojan-ws"] {
-                        nm := nmF("Trojan-WS", "Trojan", "WS", "TLS", lm.RelayHost) + " \U0001F1EE\U0001F1F7 رله داخلی"
+                        nm := nmF("Trojan-WS", "Trojan", "WS", "TLS", lm.RelayHost, "RELAY \U0001F1EE\U0001F1F7")
                         add("trojan-ws-relay", "Trojan · WS · رله داخلی",
                                 fmt.Sprintf("trojan://%s@%s:%d?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
@@ -241,21 +243,21 @@ func buildLocalLinks(c *Client, host string) []Link {
         if lm.RelayHost != "" && !isIPLiteral(lm.RelayHost) {
                 dom := strings.Trim(lm.RelayHost, "[]")
                 if allowed["vless-ws"] {
-                        nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", dom) + " \U0001F1EE\U0001F1F7 CDN ایرانی"
+                        nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", dom, "CDN \U0001F1EE\U0001F1F7")
                         add("vless-ws-cdn", "VLESS · WS · CDN ایرانی",
                                 fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
                                         pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
                 }
                 if allowed["vless-hu"] {
-                        nm := nmF("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", dom) + " \U0001F1EE\U0001F1F7 CDN ایرانی"
+                        nm := nmF("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", dom, "CDN \U0001F1EE\U0001F1F7")
                         add("vless-hu-cdn", "VLESS · HTTPUpgrade · CDN ایرانی",
                                 fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
                                         cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
                                         pyQuote(huPath()), pyQuote(nm)))
                 }
                 if allowed["trojan-ws"] {
-                        nm := nmF("Trojan-WS", "Trojan", "WS", "TLS", dom) + " \U0001F1EE\U0001F1F7 CDN ایرانی"
+                        nm := nmF("Trojan-WS", "Trojan", "WS", "TLS", dom, "CDN \U0001F1EE\U0001F1F7")
                         add("trojan-ws-cdn", "Trojan · WS · CDN ایرانی",
                                 fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
@@ -412,7 +414,7 @@ func localModeKitText(host string) string {
         b.WriteString("۱) فیلتر DNS / بلاک‌شدن لبه‌ها (بین‌الملل وصل است):\n")
         b.WriteString("   کانفیگ‌های «🛡️ مستقیم» (بدون نیاز به DNS، روی همان آیپی\n")
         b.WriteString("   اثبات‌شده‌ی مسیر اصلی) و لبه‌های تأییدشده از ایران\n")
-        b.WriteString("   (🥈🥉 — فقط لبه‌هایی که از نودهای ایرانی TLS واقعی\n")
+        b.WriteString("   (رتبه‌های ⁰²⁰³ — فقط لبه‌هایی که از نودهای ایرانی TLS واقعی\n")
         b.WriteString("   پاسخ گرفته‌اند در اشتراک می‌آیند) همین حالا کار می‌کنند.\n")
         b.WriteString("   مهم: دامنه پنل از داخل ایران DNS-پویزن است (تست‌شده از\n")
         b.WriteString("   ۶ نود ایرانی) — تا وقتی دامنه از ایران جواب ندهد،\n")
@@ -446,7 +448,7 @@ func localModeKitText(host string) string {
         b.WriteString("    پنل در handshake — ضد فیلتر SNI، بدون allowInsecure؛\n")
         b.WriteString("    چند کاندیدا (fonts.bunny.net / bunny.net / *.b-cdn.net)\n")
         b.WriteString("    از ایران تست و بهترین فعال می‌شود + واریانت‌های 🎭.\n")
-        b.WriteString("  * مسیرهای لبه (🥈🥉…): اسکن خودکار پنل هر ۱ ساعت بهترین\n")
+        b.WriteString("  * مسیرهای لبه (رتبه ⁰² به بعد): اسکن خودکار پنل هر ۱ ساعت بهترین\n")
         b.WriteString("    لبه‌های پکت‌لاست ۰ و پرسرعت را می‌سنجد، جایگزاری می‌کند،\n")
         b.WriteString("    هر پروتکل را واقعا تست می‌کند (دکتر) و دسترسی آیپی‌ها\n")
         b.WriteString("    را از نودهای داخل ایران چک می‌کند — بدون هیچ ثبت‌نامی.\n")

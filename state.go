@@ -396,13 +396,13 @@ func loadState() {
                 st.RealitySNI = "www.microsoft.com"
         }
         if st.CfgFmt == "" {
-                st.CfgFmt = "{label}"
+                st.CfgFmt = defaultCfgFmt
         }
-        // v3.20: the stored pre-3.20 default ("{name}-{label}", saved into
-        // state by older settings round-trips) migrates to the new short
-        // default — "main-VLESS-WS 🥇" → "WS 🥇".
-        if st.CfgFmt == "{name}-{label}" {
-                st.CfgFmt = "{label}"
+        // v3.20→v3.21: the stored defaults migrate to the ⟦ … ⟧ template
+        // ("{name}-{label}" and "{label}" were the v3.19/v3.20 defaults;
+        // admin-custom templates that differ are untouched).
+        if st.CfgFmt == "{name}-{label}" || st.CfgFmt == "{label}" {
+                st.CfgFmt = defaultCfgFmt
         }
         if st.Protocols == nil {
                 st.Protocols = map[string]bool{}
