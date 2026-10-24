@@ -401,6 +401,7 @@ func buildLinks(c *Client, host string) []Link {
         }
         if !multi || host == "" {
                 out := buildLinksAddr(c, addr, host, "", true)
+                out = appendFrontAlts(c, addr, host, out)
                 return appendLocalLinks(c, host, out)
         }
         out := buildLinksAddr(c, addr, host, "", true)
@@ -440,7 +441,48 @@ func buildLinks(c *Client, host string) []Link {
                         }
                 }
         }
+        // v3.17: alternate SNI fronts on the primary address — Iran blocks
+        // individual front domains over time (b-cdn.net died 2026-10 and every
+        // config went -1); with one variant per alternate front, an ISP-level
+        // SNI block can no longer kill every link at once.
+        out = appendFrontAlts(c, addr, host, out)
         return appendLocalLinks(c, host, out)
+}
+
+// appendFrontAlts appends one link-set per proven-but-inactive SNI front
+// (state.FrontPicks) on the primary address. Candidates measured as blocked
+// from EVERY Iranian node (ir == 2) are skipped — they would only add -1
+// noise; unknown verdicts still ride along. No front active → no variants.
+func appendFrontAlts(c *Client, addr, host string, out []Link) []Link {
+        stateMu.RLock()
+        active := strings.TrimSpace(state.FrontSNI)
+        picks := append([]FrontPick(nil), state.FrontPicks...)
+        stateMu.RUnlock()
+        if active == "" || len(picks) == 0 {
+                return out
+        }
+        seen := map[string]bool{}
+        for _, l := range out {
+                seen[l.URL] = true
+        }
+        n := 0
+        for _, p := range picks {
+                if n >= 2 {
+                        break
+                }
+                if p.Base == "" || p.Base == active || p.IR == 2 {
+                        continue
+                }
+                n++
+                suf := " \U0001F3AD " + p.Base
+                for _, l := range buildLinksAddrSNI(c, addr, host, suf, false, frontName(p.Base, p.Rand)) {
+                        if !seen[l.URL] {
+                                seen[l.URL] = true
+                                out = append(out, l)
+                        }
+                }
+        }
+        return out
 }
 
 // appendLocalLinks adds the v3.11 local-mode survival variants (dedup'd) to a
@@ -463,6 +505,13 @@ func appendLocalLinks(c *Client, host string, out []Link) []Link {
 // (primary=false) skip the Reality entry and custom inbounds — those do not
 // vary with the CDN edge address, so repeating them would only add noise.
 func buildLinksAddr(c *Client, addr, host, suffix string, primary bool) []Link {
+        return buildLinksAddrSNI(c, addr, host, suffix, primary, "")
+}
+
+// buildLinksAddrSNI = buildLinksAddr with an explicit TLS SNI override —
+// used for the 🎭 alternate-front variants (v3.17). Empty override → the
+// normal linkSNI() chain (active front / random lucity / plain).
+func buildLinksAddrSNI(c *Client, addr, host, suffix string, primary bool, sniOverride string) []Link {
         stateMu.RLock()
         sni := state.RealitySNI
         fmtStr := state.CfgFmt
@@ -476,6 +525,9 @@ func buildLinksAddr(c *Client, addr, host, suffix string, primary bool) []Link {
         t := tuningGet()
         sniHost := sniFor(addr, host)
         tlsName := linkSNI(sniHost)
+        if sniOverride != "" {
+                tlsName = sniOverride
+        }
         fp := t.FP
         if fp == "" {
                 fp = "chrome"

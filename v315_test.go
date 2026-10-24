@@ -52,12 +52,12 @@ func TestApplyFrontModes(t *testing.T) {
         probeOK := func(base string, rand bool) error { return nil }
         probeFail := func(base string, rand bool) error { return errFake }
 
-        // auto: first candidate wins
+        // auto: first candidate wins (v3.17: fonts.bunny.net — IR-proven order)
         st := &State{}
-        if got := applyFront(st, "", probeOK); got != "b-cdn.net" {
-                t.Fatalf("auto front = %q, want b-cdn.net", got)
+        if got := applyFront(st, "", probeOK); got != "fonts.bunny.net" {
+                t.Fatalf("auto front = %q, want fonts.bunny.net", got)
         }
-        if !st.FrontRand || st.FrontSNI != "b-cdn.net" || st.FrontAt == 0 {
+        if st.FrontRand || st.FrontSNI != "fonts.bunny.net" || st.FrontAt == 0 {
                 t.Fatalf("auto state wrong: %+v", st)
         }
 

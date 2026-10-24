@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.16.0"
+const Version = "3.17.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -235,6 +235,7 @@ func main() {
         go usageLoop()
         go serverGeo()
         go autoScanLoop()  // v3.14: scan & apply best edges automatically
+        go frontWatchLoop() // v3.17: re-check the active SNI front from Iran every 15 min, self-heal
         go lockWatchdog()  // v3.16: a frozen state lock dumps stacks + self-restarts
 
         // v3.5: Telegram install bot (optional — activated by INSTALL_BOT_TOKEN).

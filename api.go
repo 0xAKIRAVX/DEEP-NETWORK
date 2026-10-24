@@ -215,13 +215,12 @@ func handleAutoScan(w http.ResponseWriter, r *http.Request) {
                                                 if edge != "" {
                                                         // v3.16 FIX: probe OUTSIDE the lock (network under
                                                         // stateMu froze the whole panel), store inside.
-                                                        base, rand := chooseFront(mode, func(b string, r bool) error {
+                                                        // v3.17: applyFrontsFrom also records the proven
+                                                        // candidates (state.FrontPicks) so the 🎭 link
+                                                        // variants and the UI follow the admin's choice.
+                                                        applyFrontsFrom(mode, func(b string, r bool) error {
                                                                 return frontProbe(edge, domain, b, r)
-                                                        })
-                                                        stateMu.Lock()
-                                                        applyFrontChoice(state, base, rand)
-                                                        stateMu.Unlock()
-                                                        saveState()
+                                                        }, nil)
                                                         go doctorRun()
                                                 }
                                         }

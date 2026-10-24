@@ -201,8 +201,14 @@ func irCheckURL(rawurl string) int {
         return 2
 }
 
+// frontIRVerdict measures one front candidate from Iranian vantage points
+// (any HTTP answer = the SNI completed a TLS handshake inside Iran).
+func frontIRVerdict(base string, rand bool) int {
+        return irCheckURL("https://" + frontName(base, rand) + "/")
+}
+
 // irProbeAll updates IROk on the current top edges + the domain verdict +
-// the front verdict. Runs after each scan; every failure degrades silently
+// the front candidates. Runs after each scan; every failure degrades silently
 // (status stays "؟").
 func irProbeAll() {
         // v3.16 CRITICAL FIX: autoScanDomain() takes stateMu itself, so it
@@ -234,15 +240,45 @@ func irProbeAll() {
                 state.DomainIRAt = time.Now().Unix()
                 stateMu.Unlock()
         }
-        // v3.16: does the SNI FRONT itself survive Iranian DPI? (any HTTP
-        // answer from an IR node on https://<front>/ = the TLS handshake with
-        // that SNI completed inside Iran — a reset/timeout = SNI blocked)
-        if front := frontFromState(); front != "" {
-                if verdict := irCheckURL("https://" + front + "/"); verdict != 0 {
-                        stateMu.Lock()
-                        state.FrontIR = verdict
-                        state.FrontIRAt = time.Now().Unix()
-                        stateMu.Unlock()
+        // v3.17: refresh every proven front candidate from Iranian vantage
+        // (skipped when the scan evaluated them seconds ago) and SELF-HEAL
+        // the active front when it is blocked from every IR node while a
+        // proven alternative survives — users should not wait an hour for
+        // the next scan when the fix is already sitting in the picks.
+        stateMu.RLock()
+        picks := append([]FrontPick(nil), state.FrontPicks...)
+        picksAt := state.FrontPicksAt
+        activeBase := state.FrontSNI
+        stateMu.RUnlock()
+        if len(picks) > 0 && time.Now().Unix()-picksAt > 600 {
+                for i := range picks {
+                        if v := irCheckURL("https://" + frontName(picks[i].Base, picks[i].Rand) + "/"); v != 0 {
+                                picks[i].IR, picks[i].At = v, time.Now().Unix()
+                        }
+                }
+                var alive *FrontPick
+                activeDead := false
+                for i := range picks {
+                        if picks[i].Base == activeBase && picks[i].IR == 2 {
+                                activeDead = true
+                        }
+                        if picks[i].Base != activeBase && picks[i].IR == 1 && alive == nil {
+                                alive = &picks[i]
+                        }
+                }
+                stateMu.Lock()
+                state.FrontPicks, state.FrontPicksAt = picks, time.Now().Unix()
+                for i := range picks {
+                        if picks[i].Base == activeBase && picks[i].IR >= 0 {
+                                state.FrontIR, state.FrontIRAt = picks[i].IR, picks[i].At
+                        }
+                }
+                saveStateLocked()
+                stateMu.Unlock()
+                if activeDead && alive != nil {
+                        logf("front self-heal: %q blocked from Iran — switching to %q", activeBase, alive.Base)
+                        switchToFront(*alive)
+                        go doctorRun()
                 }
         }
         // per-edge TCP reachability (sequential: polite with the free API)

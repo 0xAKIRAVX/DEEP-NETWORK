@@ -185,18 +185,20 @@ func autoScanOnce() (bool, string) {
         mode := state.FrontMode
         stateMu.Unlock()
 
-        // v3.15→3.16 FIX: the front probe is a NETWORK call (TLS dial + HTTP
-        // request, up to ~14s per candidate). It used to run while holding
+        // v3.16→3.17 FIX: the front probe is a NETWORK call (TLS dial + HTTP
+        // request, up to ~14s per candidate; the IR verdict adds up to ~55s
+        // per candidate via check-host). It used to run while holding
         // stateMu.Lock() — every API/sub request in the whole panel froze for
         // its duration. Probe OUTSIDE the lock, then store the result inside.
-        base, rand := chooseFront(mode, func(b string, r bool) error {
-                return frontProbe(healthy[0].IP, domain, b, r)
-        })
-        front := base
-        stateMu.Lock()
-        applyFrontChoice(state, base, rand)
-        stateMu.Unlock()
-        saveState()
+        // v3.17: every candidate is evaluated from BOTH vantages (panel +
+        // Iran) and the first IR-alive one is activated; the other proven
+        // candidates stay in state.FrontPicks and ride along in every
+        // subscription as 🎭 variants (links.go) so a single SNI blocklist
+        // entry can no longer kill every link at once.
+        edge := healthy[0].IP
+        front := applyFrontsFrom(mode, func(b string, r bool) error {
+                return frontProbe(edge, domain, b, r)
+        }, frontIRVerdict)
 
         // v3.15: self-test every transport end-to-end with the fresh SNI +
         // probe the edges/domain from Iranian vantage points (background).
@@ -268,6 +270,7 @@ func autoScanSummary() map[string]any {
         frontMode := state.FrontMode
         frontIR := state.FrontIR
         frontIRAt := state.FrontIRAt
+        frontPicks := append([]FrontPick(nil), state.FrontPicks...)
         domainIR := state.DomainIR
         domainIRAt := state.DomainIRAt
         stateMu.RUnlock()
@@ -289,6 +292,9 @@ func autoScanSummary() map[string]any {
                         // node completed the TLS handshake), 2 = blocked
                         "ir":     frontIR,
                         "ir_at":  frontIRAt,
+                        // v3.17: every proven candidate + its IR verdict — the
+                        // non-active ones ride along in the sub as 🎭 variants
+                        "picks":  frontPicks,
                 },
                 "doctor": map[string]any{
                         "results": doc,

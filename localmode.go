@@ -388,6 +388,9 @@ func localModeKitText(host string) string {
         if front := frontFromState(); front != "" {
                 b.WriteString("   جلوی SNI فعال است (" + front + ") — اسم دامنه پنل\n")
                 b.WriteString("   دیگر روی سیم نیست؛ certificate معتبر bunny.\n")
+                b.WriteString("   کاندیداها از ۶ نود ایرانی تست می‌شوند و اولین سالم\n")
+                b.WriteString("   فعال می‌شود؛ بقیه به‌صورت واریانت 🎭 داخل اشتراک‌اند\n")
+                b.WriteString("   و اگر جلو فیلتر شود، پنل هر ۱۵ دقیقه خودش عوضش می‌کند.\n")
         }
         b.WriteString("\n")
         b.WriteString("۲) قطع بین‌الملل / اینترنت ملی (local mode):\n")
@@ -406,8 +409,10 @@ func localModeKitText(host string) string {
         b.WriteString("کانفیگ‌های «🛡️ IP مستقیم» هیچ ثبت هویت، دامنه یا\n")
         b.WriteString("سروری نمی‌خواهند و همین حالا (بدون هیچ تنظیمی) کار می‌کنند:\n")
         b.WriteString("  * 🛡️ IP مستقیم: آیپی واقعی پنل به‌جای دامنه — ضد فیلتر DNS.\n")
-        b.WriteString("  * جلوی SNI: certificate معتبر مشترک bunny به‌جای دامنه\n")
-        b.WriteString("    پنل در handshake — ضد فیلتر SNI، بدون allowInsecure.\n")
+        b.WriteString("  * جلوی SNI: certificate معتبر bunny به‌جای دامنه\n")
+        b.WriteString("    پنل در handshake — ضد فیلتر SNI، بدون allowInsecure؛\n")
+        b.WriteString("    چند کاندیدا (fonts.bunny.net / bunny.net / *.b-cdn.net)\n")
+        b.WriteString("    از ایران تست و بهترین فعال می‌شود + واریانت‌های 🎭.\n")
         b.WriteString("  * مسیرهای لبه (🥈🥉…): اسکن خودکار پنل هر ۱ ساعت بهترین\n")
         b.WriteString("    لبه‌های پکت‌لاست ۰ و پرسرعت را می‌سنجد، جایگزاری می‌کند،\n")
         b.WriteString("    هر پروتکل را واقعا تست می‌کند (دکتر) و دسترسی آیپی‌ها\n")
