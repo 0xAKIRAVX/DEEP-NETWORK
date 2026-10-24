@@ -243,7 +243,7 @@ func fmtName(fmtStr string, c *Client, label, proto, net_, sec, server string) s
         name := c.Name
         fallback := name + "-" + label
         if fmtStr == "" {
-                fmtStr = "{name}-{label}"
+                fmtStr = "{label}"
         }
         if strings.ContainsAny(fmtStr, "{}") == false {
                 return fmtStr
@@ -308,6 +308,53 @@ func defaultALPN(net string) string {
         }
 }
 
+// alpnForNet returns the ONLY ALPN a transport may ever carry. bunny's edge
+// negotiates h2 whenever the client offers it, and a WS/HTTPUpgrade dial
+// over h2 dies instantly ("websocket: protocol h2 ... not supported" — the
+// v3.20 field diagnosis: one override setting killed every WS link at
+// once). The tuning override now only ever chooses among safe values.
+func alpnForNet(net, ov string) string {
+        ov = strings.TrimSpace(ov)
+        switch net {
+        case "xhttp":
+                if strings.Contains(ov, "h2") {
+                        return ov
+                }
+                return "h2,http/1.1"
+        case "grpc":
+                return "h2"
+        default: // ws, httpupgrade, raw
+                return "http/1.1"
+        }
+}
+
+// shortLabel compacts the standard transport labels for the v3.20 short
+// naming pass: "main-VLESS-XHTTP 🥇" → "XHTTP 🥇". Custom inbound names
+// pass through untouched.
+var shortLabels = map[string]string{
+        "VLESS-XHTTP": "XHTTP", "VLESS-WS": "WS", "VLESS-HTTPUpgrade": "HU",
+        "VMess-WS": "VMess", "Trojan-WS": "Trojan", "VLESS-Reality-TCP": "Reality",
+}
+
+func shortLabel(l string) string {
+        if s, ok := shortLabels[l]; ok {
+                return s
+        }
+        return l
+}
+
+// frontShort trims the boilerplate registrar suffixes off a front domain for
+// the 🎭 variant names: "docs.bunny.net" → "🎭 docs".
+func frontShort(base string) string {
+        b := strings.Trim(strings.TrimSpace(base), ".")
+        for _, suf := range []string{".bunny.net", ".bunnycdn.com", ".b-cdn.net", ".com", ".net", ".org", ".io"} {
+                if strings.HasSuffix(b, suf) {
+                        return strings.TrimSuffix(b, suf)
+                }
+        }
+        return b
+}
+
 func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
         cid, proto, net_, sec := c.ID, ib.Protocol, ib.Network, ib.Security
         nm := fmtName(fmtStr, c, ib.Name, strings.ToUpper(proto), strings.ToUpper(net_), strings.ToUpper(sec), addr)
@@ -336,10 +383,7 @@ func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
                 }
                 return "vless://" + cid + "@" + uriAddr + ":" + itoa(ib.Port) + "?" + encParams(p) + "#" + frag
         }
-        alpn := alpnOv
-        if alpn == "" {
-                alpn = defaultALPN(net_)
-        }
+        alpn := alpnForNet(net_, alpnOv)
         tlsName := linkSNI(sniHost)
         if proto == "vmess" {
                 v := map[string]any{"v": "2", "ps": nm, "add": addr, "port": "443", "id": cid, "aid": "0",
@@ -514,7 +558,7 @@ func appendFrontAlts(c *Client, addr, host string, out []Link) []Link {
                         continue
                 }
                 n++
-                suf := " \U0001F3AD " + p.Base
+                suf := " \U0001F3AD " + frontShort(p.Base)
                 for _, l := range buildLinksAddrSNI(c, addr, host, suf, false, frontName(p.Base, p.Rand)) {
                         if !seen[l.URL] {
                                 seen[l.URL] = true
@@ -556,11 +600,11 @@ func buildLinksAddrSNI(c *Client, addr, host, suffix string, primary bool, sniOv
         sni := state.RealitySNI
         fmtStr := state.CfgFmt
         if fmtStr == "" {
-                fmtStr = "{name}-{label}"
+                fmtStr = "{label}"
         }
         stateMu.RUnlock()
         nm := func(label, proto, net_, sec, server string) string {
-                return fmtName(fmtStr, c, label, proto, net_, sec, server) + suffix
+                return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server) + suffix
         }
         t := tuningGet()
         sniHost := sniFor(addr, host)
@@ -594,28 +638,28 @@ func buildLinksAddrSNI(c *Client, addr, host, suffix string, primary bool, sniOv
                 n2 := nm("VLESS-XHTTP", "VLESS", "XHTTP", "TLS", addr)
                 addLink("vless-xhttp", "VLESS · XHTTP",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
-                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "h2,http/1.1")), pyQuote(sniHost),
+                                cid, uriAddr, tlsParam, pyQuote(alpnForNet("xhttp", alpnOv)), pyQuote(sniHost),
                                 pyQuote(xhttpPath()), pyQuote(n2)))
         }
         if allowed["vless-ws"] {
                 n1 := nm("VLESS-WS", "VLESS", "WS", "TLS", addr)
                 addLink("vless-ws", "VLESS · WebSocket",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=ws&host=%s&path=%s#%s",
-                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
+                                cid, uriAddr, tlsParam, pyQuote(alpnForNet("ws", alpnOv)), pyQuote(sniHost),
                                 pyQuote(wsPath()+"?ed=2048"), pyQuote(n1)))
         }
         if allowed["vless-hu"] {
                 n3 := nm("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", addr)
                 addLink("vless-hu", "VLESS · HTTPUpgrade",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
-                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
+                                cid, uriAddr, tlsParam, pyQuote(alpnForNet("httpupgrade", alpnOv)), pyQuote(sniHost),
                                 pyQuote(huPath()), pyQuote(n3)))
         }
         if allowed["vmess-ws"] {
                 n4 := nm("VMess-WS", "VMess", "WS", "TLS", addr)
                 vm := map[string]any{"v": "2", "ps": n4, "add": addr, "port": "443", "id": cid, "aid": "0",
                         "scy": "auto", "net": "ws", "type": "none", "host": sniHost, "path": vmessPath() + "?ed=2048",
-                        "tls": "tls", "sni": tlsName, "alpn": orStr(alpnOv, "http/1.1"), "fp": fp}
+                        "tls": "tls", "sni": tlsName, "alpn": alpnForNet("ws", alpnOv), "fp": fp}
                 b, _ := json.Marshal(vm)
                 addLink("vmess-ws", "VMess · WebSocket", "vmess://"+base64.StdEncoding.EncodeToString(b))
         }
@@ -623,7 +667,7 @@ func buildLinksAddrSNI(c *Client, addr, host, suffix string, primary bool, sniOv
                 n5 := nm("Trojan-WS", "Trojan", "WS", "TLS", addr)
                 addLink("trojan-ws", "Trojan · WebSocket",
                         fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
-                                cid, uriAddr, pyQuote(tlsName), pyQuote(fp), pyQuote(orStr(alpnOv, "http/1.1")),
+                                cid, uriAddr, pyQuote(tlsName), pyQuote(fp), pyQuote(alpnForNet("ws", alpnOv)),
                                 pyQuote(sniHost), pyQuote(trojanPath()+"?ed=2048"), pyQuote(n5)))
         }
         if primary && tcpReady() && allowed["vless-reality"] {
@@ -717,9 +761,7 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
         cid := c.ID
 
         tlsStream := func(net_, path string, alpn []string) map[string]any {
-                if alpnOv != "" {
-                        alpn = strings.Split(alpnOv, ",")
-                }
+                alpn = strings.Split(alpnForNet(net_, alpnOv), ",")
                 tls := map[string]any{"serverName": tlsName, "fingerprint": fp, "alpn": alpn, "allowInsecure": false}
                 if cs != "" {
                         tls["cipherSuites"] = cs

@@ -124,13 +124,13 @@ func TestSubCarriesAlternateFronts(t *testing.T) {
         for _, l := range links {
                 name := linkDisplayName(l) // decodes the URI fragment / vmess ps
                 u := l.URL
-                if strings.Contains(name, "🎭 bunny.net") {
+                if strings.HasSuffix(name, "🎭 bunny") {
                         sawAlt++
                         if strings.HasPrefix(u, "vless://") && !strings.Contains(u, "sni=bunny.net") {
                                 t.Fatalf("🎭 variant must carry its own SNI: %s", u)
                         }
                 }
-                if strings.Contains(name, "🎭 b-cdn.net") {
+                if strings.HasSuffix(name, "🎭 b-cdn") {
                         sawBlocked++
                 }
                 if strings.HasPrefix(u, "vless://") && strings.Contains(u, "sni=fonts.bunny.net") && !strings.Contains(name, "🎭") {
@@ -170,7 +170,7 @@ func TestAppendFrontAltsGuards(t *testing.T) {
         out = buildLinks(c, "deep-network-development-w4a86.lucity.app")
         saw := 0
         for _, l := range out {
-                if strings.Contains(linkDisplayName(l), "🎭 fonts.bunny.net") {
+                if strings.HasSuffix(linkDisplayName(l), "🎭 fonts") {
                         saw++
                 }
         }

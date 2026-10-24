@@ -1097,7 +1097,7 @@ func handleRestore(w http.ResponseWriter, r *http.Request) {
         }
         fmtv := trunc(strings.Join(strings.Fields(jstr(snap, "cfg_fmt")), " "), 100)
         if fmtv == "" {
-                fmtv = "{name}-{label}"
+                fmtv = "{label}"
         }
         state.CfgFmt = fmtv
         protocols := map[string]bool{}
@@ -1490,7 +1490,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
                         return
                 }
                 if fmtv == "" {
-                        fmtv = "{name}-{label}"
+                        fmtv = "{label}"
                 }
                 state.CfgFmt = fmtv
         }

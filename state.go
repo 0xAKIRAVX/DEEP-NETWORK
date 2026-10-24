@@ -396,7 +396,13 @@ func loadState() {
                 st.RealitySNI = "www.microsoft.com"
         }
         if st.CfgFmt == "" {
-                st.CfgFmt = "{name}-{label}"
+                st.CfgFmt = "{label}"
+        }
+        // v3.20: the stored pre-3.20 default ("{name}-{label}", saved into
+        // state by older settings round-trips) migrates to the new short
+        // default — "main-VLESS-WS 🥇" → "WS 🥇".
+        if st.CfgFmt == "{name}-{label}" {
+                st.CfgFmt = "{label}"
         }
         if st.Protocols == nil {
                 st.Protocols = map[string]bool{}

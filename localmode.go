@@ -171,13 +171,16 @@ func buildLocalLinks(c *Client, host string) []Link {
         if fp == "" {
                 fp = "chrome"
         }
-        alpn := pyQuote(orStr(strings.TrimSpace(t.ALPN), "http/1.1"))
+        alpn := pyQuote(alpnForNet("ws", strings.TrimSpace(t.ALPN)))
         cid := c.ID
         stateMu.RLock()
         fmtStr := state.CfgFmt
         stateMu.RUnlock()
         if fmtStr == "" {
-                fmtStr = "{name}-{label}"
+                fmtStr = "{label}"
+        }
+        nmF := func(label, proto, net_, sec, server string) string {
+                return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server)
         }
         panelHost := localPanelHost(host)
         var out []Link
@@ -189,7 +192,7 @@ func buildLocalLinks(c *Client, host string) []Link {
 
         // ── 1) 🛡️ direct-IP variant: real SNI, literal address → no client DNS.
         if directAddr != "" && directAddr != lm.RelayHost && allowed["vless-ws"] {
-                nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", directAddr) + " 🛡️ مستقیم"
+                nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", directAddr) + " \U0001F6E1\uFE0F مستقیم"
                 sni := linkSNI(panelHost)
                 add("vless-ws-direct", "VLESS · WS · مستقیم",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
@@ -207,21 +210,21 @@ func buildLocalLinks(c *Client, host string) []Link {
                 uriAddr := bracketV6(lm.RelayHost)
                 sni := linkSNI(panelHost)
                 if allowed["vless-ws"] {
-                        nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", lm.RelayHost) + " 🇮🇷 رله داخلی"
+                        nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", lm.RelayHost) + " \U0001F1EE\U0001F1F7 رله داخلی"
                         add("vless-ws-relay", "VLESS · WS · رله داخلی",
                                 fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
                                         pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
                 }
                 if allowed["vless-hu"] {
-                        nm := fmtName(fmtStr, c, "VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", lm.RelayHost) + " 🇮🇷 رله داخلی"
+                        nm := nmF("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", lm.RelayHost) + " \U0001F1EE\U0001F1F7 رله داخلی"
                         add("vless-hu-relay", "VLESS · HTTPUpgrade · رله داخلی",
                                 fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
                                         cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
                                         pyQuote(huPath()), pyQuote(nm)))
                 }
                 if allowed["trojan-ws"] {
-                        nm := fmtName(fmtStr, c, "Trojan-WS", "Trojan", "WS", "TLS", lm.RelayHost) + " 🇮🇷 رله داخلی"
+                        nm := nmF("Trojan-WS", "Trojan", "WS", "TLS", lm.RelayHost) + " \U0001F1EE\U0001F1F7 رله داخلی"
                         add("trojan-ws-relay", "Trojan · WS · رله داخلی",
                                 fmt.Sprintf("trojan://%s@%s:%d?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
@@ -238,21 +241,21 @@ func buildLocalLinks(c *Client, host string) []Link {
         if lm.RelayHost != "" && !isIPLiteral(lm.RelayHost) {
                 dom := strings.Trim(lm.RelayHost, "[]")
                 if allowed["vless-ws"] {
-                        nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", dom) + " 🇮🇷 CDN ایرانی"
+                        nm := nmF("VLESS-WS", "VLESS", "WS", "TLS", dom) + " \U0001F1EE\U0001F1F7 CDN ایرانی"
                         add("vless-ws-cdn", "VLESS · WS · CDN ایرانی",
                                 fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
                                         pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
                 }
                 if allowed["vless-hu"] {
-                        nm := fmtName(fmtStr, c, "VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", dom) + " 🇮🇷 CDN ایرانی"
+                        nm := nmF("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", dom) + " \U0001F1EE\U0001F1F7 CDN ایرانی"
                         add("vless-hu-cdn", "VLESS · HTTPUpgrade · CDN ایرانی",
                                 fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
                                         cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
                                         pyQuote(huPath()), pyQuote(nm)))
                 }
                 if allowed["trojan-ws"] {
-                        nm := fmtName(fmtStr, c, "Trojan-WS", "Trojan", "WS", "TLS", dom) + " 🇮🇷 CDN ایرانی"
+                        nm := nmF("Trojan-WS", "Trojan", "WS", "TLS", dom) + " \U0001F1EE\U0001F1F7 CDN ایرانی"
                         add("trojan-ws-cdn", "Trojan · WS · CDN ایرانی",
                                 fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                         cid, bracketV6(dom), pyQuote(dom), pyQuote(fp), alpn, pyQuote(dom),
