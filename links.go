@@ -455,8 +455,8 @@ func buildLinks(c *Client, host string) []Link {
                 if e.IP == addr {
                         continue // already the primary entry
                 }
-                if e.IRTLS == 0 && e.IRTLSAt > 0 {
-                        continue // v3.18: MEASURED TLS-dead from Iran (IRTLSAt proves a real probe) — never ship a -1
+                if e.IRTLSAt > 0 && e.IRTLS != 1 {
+                        continue // v3.18.1: MEASURED TLS-dead from Iran (0 or legacy 2) — never ship a -1
                 }
                 suf := " " + medals[rank] + " " + faCity(e.City, e.CC)
                 for _, l := range buildLinksAddr(c, e.IP, host, suf, false) {

@@ -106,17 +106,17 @@ func probeEdge(ip, domain string, geo map[string]map[string]string) EdgeScore {
 // irProbeTLS is the per-edge TLS prober (var so tests can stub the network).
 var irProbeTLS = irCheckEdgeTLS
 
-// irGateEdges (v3.18): the subscription gate that ended the "-1 configs".
+// irGateEdges (v3.18.1): the subscription gate that ended the "-1 configs".
 // An edge can look perfect from the panel's EU vantage (loss 0, 400 KB/s,
 // TCP-reachable 6/6 from Iranian probe nodes) and still be TLS-dead from
 // Iran — every regional PoP the users reported (🥈 Bucharest / E5 Karbala /
 // EdgeUno-Istanbul / the panel's own 185.111.111.x geo answer) accepted the
 // TCP SYN from all 6 IR nodes and timed out on the TLS ClientHello. This
-// gate asks the IR nodes to do a REAL https://<ip>/ fetch: an edge is only
-// allowed into subscriptions when at least one Iranian node completed the
-// handshake. Probing unavailable (-1) keeps the edge (panel-side health
-// remains the fallback); a probed-and-all-failed edge (0) is dropped.
-// Survivors are re-ordered: IR-verified first (most nodes, then rank).
+// gate asks the IR nodes to do a REAL https://<ip>/ fetch. IRTLS verdicts
+// (v3.18.1, normalized): 1 = at least one IR node completed TLS (ships),
+// 0 = every node failed (dead — dropped), -1 = probe unavailable (kept,
+// panel-side health stands). A legacy "2" (raw irCheckURL blocked verdict
+// written by the first v3.18 build) is treated as dead via IRTLS != 1.
 func irGateEdges(healthy []*EdgeScore, maxProbe int) []*EdgeScore {
         if len(healthy) == 0 {
                 return healthy
@@ -139,29 +139,15 @@ func irGateEdges(healthy []*EdgeScore, maxProbe int) []*EdgeScore {
                 }(e)
         }
         wg.Wait()
-        // probed-this-round = IRTLSAt landed now (the candidates arrive fresh from
-        // probeEdge with IRTLSAt == 0, so any timestamp is from this gate pass).
-        probed := map[string]bool{}
-        for _, e := range cands {
-                if e.IRTLSAt > 0 {
-                        probed[e.IP] = true
-                }
-        }
         var verified, rest []*EdgeScore
         for _, e := range healthy {
                 switch {
-                case e.IRTLS > 0:
+                case e.IRTLS == 1:
                         verified = append(verified, e)
-                case e.IRTLS == 0 && (probed[e.IP] || e.IRTLSAt > 0):
-                        // measured TLS-dead from Iran — never ships (buildLinks drops it too)
+                case e.IRTLSAt > 0 && e.IRTLS != 1:
+                        // measured TLS-dead from Iran (0 or legacy 2) — never ships
                 default:
                         rest = append(rest, e) // -1 = probe unavailable, or not yet probed this round
-                }
-        }
-        // stable sort: verified by node count (desc), keep original rank within ties
-        for i := 1; i < len(verified); i++ {
-                for j := i; j > 0 && verified[j-1].IRTLS < verified[j].IRTLS; j-- {
-                        verified[j-1], verified[j] = verified[j], verified[j-1]
                 }
         }
         return append(verified, rest...)

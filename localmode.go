@@ -138,7 +138,7 @@ func localDirectAddr(lm LocalModeState, host string) string {
         stateMu.RLock()
         var top string
         for _, e := range state.TopEdges {
-                if e.IRTLS > 0 {
+                if e.IRTLS == 1 {
                         top = e.IP
                         break
                 }

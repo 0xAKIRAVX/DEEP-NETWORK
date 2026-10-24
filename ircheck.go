@@ -172,11 +172,21 @@ func irCheckEdge(ip string) int {
 // users reported as -1 (Bucharest RO / Karbala IQ / EdgeUno-Istanbul / the
 // panel's own 185.111.111.x geo answer) accepted TCP from all 6 IR nodes but
 // timed out the moment a TLS ClientHello arrived — while the Frankfurt
-// primary kept working for real users. Any HTTP answer (even 403/404/421 —
-// bunny's error pages) proves the TLS handshake completed; all-nodes-fail =
-// the edge is TLS-dead from Iran and must never ride a subscription.
+// primary kept working for real users. NORMALIZED verdict (v3.18.1):
+//   1 = at least one IR node completed TLS (edge may ride the subscription)
+//   0 = every node failed — TLS-dead from Iran, never ship it
+//  -1 = probe unavailable (check-host down) — keep, panel-side health stands
+// (irCheckURL itself returns 1/2/0 classifications — 2 = blocked — which is
+// normalized here so IRTLS never carries the ambiguous "2".)
 func irCheckEdgeTLS(ip string) int {
-        return irCheckURL("https://" + ip + "/")
+        switch irCheckURL("https://" + ip + "/") {
+        case 1:
+                return 1
+        case 2:
+                return 0
+        default:
+                return -1
+        }
 }
 
 // irCheckDomain HTTP-fetches the panel domain from all Iranian nodes and
@@ -297,7 +307,7 @@ func irProbeAll() {
         }
         // per-edge REAL-TLS reachability (v3.18: upgraded from bare TCP —
         // every edge the users reported as -1 was TCP-reachable 6/6 but
-        // TLS-dead from Iran). IROk carries the same verdict for the UI chips.
+        // TLS-dead from Iran). IROk mirrors the verdict for legacy chips.
         for _, ip := range edges {
                 ok := irCheckEdgeTLS(ip)
                 if ok < 0 {

@@ -32,12 +32,12 @@ func TestIRGateEdgesDropsIRDead(t *testing.T) {
                 switch ip {
                 case "185.102.217.65": // Bucharest — TCP ok but TLS-dead from Iran (the real 2026-10 measurement)
                         return 0
-                case "169.150.215.115": // Istanbul/Datacamp — TLS ok from all 6 nodes
-                        return 6
-                case "204.157.181.38": // Baghdad — TLS ok from 3 nodes
-                        return 3
+                case "169.150.215.115": // Istanbul/Datacamp — TLS ok from IR nodes
+                        return 1
+                case "204.157.181.38": // Baghdad — probe unavailable
+                        return -1
                 default:
-                        return -1 // probe unavailable
+                        return -1
                 }
         }
         edges := []*EdgeScore{
@@ -51,20 +51,42 @@ func TestIRGateEdgesDropsIRDead(t *testing.T) {
                 t.Fatalf("gate must keep 3 of 4 edges (dead Bucharest dropped, unprobed Karbala kept), got %d: %+v", len(out), out)
         }
         if out[0].IP != "169.150.215.115" {
-                t.Errorf("IR-verified 6/6 edge must rank first, got %s", out[0].IP)
+                t.Errorf("IR-verified edge must rank first, got %s", out[0].IP)
         }
-        if out[1].IP != "204.157.181.38" {
-                t.Errorf("IR-verified 3/6 edge must rank second, got %s", out[1].IP)
+        if out[1].IP != "204.157.181.38" && out[2].IP != "204.157.181.38" {
+                t.Errorf("probe-unavailable edge must be kept, got %s / %s", out[1].IP, out[2].IP)
         }
-        if out[2].IP != "37.236.234.2" {
-                t.Errorf("probe-unavailable edge must be kept last, got %s", out[2].IP)
+        if out[1].IP != "37.236.234.2" && out[2].IP != "37.236.234.2" {
+                t.Errorf("unprobed edge must be kept (unknown), got %s / %s", out[1].IP, out[2].IP)
         }
         for _, e := range out {
                 if e.IP == "185.102.217.65" {
                         t.Error("TLS-dead-from-Iran edge must never survive the gate")
                 }
-                if e.IP == "169.150.215.115" && e.IRTLS != 6 {
-                        t.Errorf("gate must store the IR TLS verdict, got %d", e.IRTLS)
+                if e.IP == "169.150.215.115" && e.IRTLS != 1 {
+                        t.Errorf("gate must store the IR TLS verdict (1), got %d", e.IRTLS)
+                }
+        }
+}
+
+// v3.18.1 regression: the raw irCheckURL verdict is 2 = blocked — the first
+// v3.18 build stored it raw, so "2" (dead) sorted ABOVE "1" (alive) and dead
+// edges shipped as verified. The gate must treat anything ≠ 1 as dead.
+func TestIRGateTreatsLegacyTwoAsDead(t *testing.T) {
+        v318Setup(t)
+        edges := []*EdgeScore{
+                {IP: "185.102.217.65", IRTLS: 2, IRTLSAt: 1792863797, City: "Bucharest", CC: "RO"}, // legacy blocked verdict
+                {IP: "143.244.45.177", IRTLS: 1, IRTLSAt: 1792863777, City: "Kyiv", CC: "UA"},    // alive
+        }
+        // no live probing — verdicts pre-seeded; only classify
+        out := irGateEdges(edges, 0)
+        if len(out) != 1 || out[0].IP != "143.244.45.177" {
+                t.Fatalf("legacy ir_tls=2 (blocked) must be dropped, kyiv kept; got %+v", out)
+        }
+        links := buildLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
+        for _, l := range links {
+                if strings.Contains(l.URL, "@185.102.217.65") {
+                        t.Errorf("legacy-2 dead edge must not ride the subscription: %s", first80(l.URL))
                 }
         }
 }
@@ -76,7 +98,7 @@ func TestBuildLinksSkipsIRDeadEdges(t *testing.T) {
         state.MultiEdge = true
         state.TopEdges = []*EdgeScore{
                 {IP: "185.102.217.65", Med: 76, Loss: 0, City: "Bucharest", CC: "RO", IRTLS: 0, IRTLSAt: 1792861074}, // measured dead
-                {IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 6, IRTLSAt: 1792861085},
+                {IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 1, IRTLSAt: 1792861085},
         }
         stateMu.Unlock()
         links := buildLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
@@ -102,7 +124,7 @@ func TestBuildLinksSkipsDNSWhenDomainPoisoned(t *testing.T) {
         v318Setup(t)
         stateMu.Lock()
         state.MultiEdge = true
-        state.TopEdges = []*EdgeScore{{IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 6}}
+        state.TopEdges = []*EdgeScore{{IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 1, IRTLSAt: 1792861085}}
         state.DomainIR = 2
         stateMu.Unlock()
         host := "deep-network-development-w4a86.lucity.app"
@@ -163,8 +185,8 @@ func TestNamingPersianShortMedals(t *testing.T) {
         stateMu.Lock()
         state.MultiEdge = true
         state.TopEdges = []*EdgeScore{
-                {IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 6},
-                {IP: "185.102.217.65", Med: 76, Loss: 0, City: "Bucharest", CC: "RO", IRTLS: 6},
+                {IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 1, IRTLSAt: 1792861085},
+                {IP: "185.102.217.65", Med: 76, Loss: 0, City: "Bucharest", CC: "RO", IRTLS: 1, IRTLSAt: 1792861090},
         }
         stateMu.Unlock()
         links := buildLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
@@ -242,7 +264,7 @@ func TestSubRendersShortPersianNames(t *testing.T) {
         stateMu.Lock()
         state.MultiEdge = true
         state.TopEdges = []*EdgeScore{
-                {IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 6},
+                {IP: "169.150.215.115", Med: 122, Loss: 0, City: "Istanbul", CC: "TR", IRTLS: 1, IRTLSAt: 1792861085},
         }
         state.Address = "138.199.37.231"
         stateMu.Unlock()

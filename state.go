@@ -61,7 +61,7 @@ type EdgeScore struct {
         TS        int64   `json:"ts,omitempty"`
         IROk      int     `json:"ir_ok,omitempty"`   // v3.15: reachable from Iranian probe nodes (count)
         IRAt      int64   `json:"ir_at,omitempty"`   // v3.18: IROk now carries the TLS-level verdict
-        IRTLS     int     `json:"ir_tls,omitempty"` // v3.18: nodes that completed a REAL TLS handshake to this IP (0 = dead from Iran, -1 = probe unavailable)
+        IRTLS     int     `json:"ir_tls,omitempty"` // v3.18.1 verdict: 1 = TLS ok from ≥1 IR node, 0 = dead from all, -1 = probe unavailable (legacy 2 = dead)
         IRTLSAt   int64   `json:"ir_tls_at,omitempty"`
 }
 
