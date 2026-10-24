@@ -96,6 +96,8 @@ type State struct {
         // All-operator optimization (v3.9): graded edge set + subscription expansion.
         TopEdges  []*EdgeScore `json:"top_edges,omitempty"`
         MultiEdge bool         `json:"multi_edge,omitempty"`
+        // National-internet kit (v3.11): survival variants (relay/direct/white-SNI).
+        LocalMode *LocalModeState `json:"local_mode,omitempty"`
         // Telegram bot / Mini App (v3.4)
         TGToken      string     `json:"tg_token,omitempty"`
         TGAdminID    string     `json:"tg_admin_id,omitempty"`
@@ -377,6 +379,13 @@ func loadState() {
                 st.Tuning = defaultTuning()
         } else {
                 st.Tuning = tuningSanitize(st.Tuning)
+        }
+        // v3.11: national-internet kit defaults (off until the admin opts in).
+        if st.LocalMode == nil {
+                st.LocalMode = &LocalModeState{}
+        } else {
+                lm := localModeSanitize(st.LocalMode)
+                st.LocalMode = &lm
         }
         if st.TuningV < 2 {
                 st.TuningV = 2

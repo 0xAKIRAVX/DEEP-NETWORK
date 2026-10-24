@@ -172,15 +172,6 @@ func buildLinksAddr2(c *Client, host string) []Link {
 	return buildLinksAddr(c, stateAddress(host), host, "", true)
 }
 
-func stateAddress(host string) string {
-	stateMu.RLock()
-	defer stateMu.RUnlock()
-	if state.Address != "" {
-		return state.Address
-	}
-	return host
-}
-
 func TestSpeedBlobServesRequestedKB(t *testing.T) {
 	srv := allOpServer(t)
 	defer srv.Close()

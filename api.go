@@ -185,6 +185,14 @@ func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
                         // v3.10: live user sessions — who is using the panel
                         // right now, for how long, and when they went offline.
                         sendJSONGz(r, w, 200, onlinePayload())
+                case path == "/panel/api/localmode":
+                        // v3.11: national-internet kit — settings + relay guide.
+                        sendJSONGz(r, w, 200, localModePayload(requestHost(r)))
+                case path == "/panel/api/localmode/kit":
+                        // v3.11: offline survival kit (download & save BEFORE a cutoff).
+                        sendBytes(w, 200, []byte(localModeKitText(requestHost(r))),
+                                "text/plain; charset=utf-8", map[string]string{
+                                        "Content-Disposition": "attachment; filename=deep-network-local-mode-kit.txt"})
                 case path == "/panel/api/whoami":
                         handleWhoami(w, r)
                 case path == "/panel/api/server-config":
@@ -359,6 +367,7 @@ func statePayload(r *http.Request) map[string]any {
                 "tuning":    tuningSanitize(state.Tuning),
                 "tcp_ready": tcpReady(),
                 "top_edges": state.TopEdges, "multi_edge": state.MultiEdge,
+                "local_mode": localModeGet(),
                 "telegram": map[string]any{"connected": state.TGToken != "",
                         "bot_username": state.TGBotUser, "admin_id": state.TGAdminID},
         }
@@ -1281,6 +1290,40 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
                         if len(edges) > 0 && !state.MultiEdge {
                                 state.MultiEdge = true
                         }
+                }
+        }
+        // v3.11: national-internet kit (relay / direct-IP / white-SNI).
+        if v, ok := d["local_mode"]; ok {
+                if m, ok := v.(map[string]any); ok {
+                        lm := &LocalModeState{}
+                        if b, ok := m["enabled"].(bool); ok {
+                                lm.Enabled = b
+                        }
+                        if rh, ok := m["relay_host"]; ok {
+                                lm.RelayHost = strings.TrimSpace(fmt.Sprintf("%v", rh))
+                        }
+                        if rp, ok := m["relay_port"]; ok {
+                                switch x := rp.(type) {
+                                case float64:
+                                        lm.RelayPort = int(x)
+                                case int:
+                                        lm.RelayPort = x
+                                }
+                        }
+                        if fs, ok := m["fake_sni"]; ok {
+                                lm.FakeSNI = strings.TrimSpace(fmt.Sprintf("%v", fs))
+                        }
+                        if dip, ok := m["direct_ip"]; ok {
+                                lm.DirectIP = strings.TrimSpace(fmt.Sprintf("%v", dip))
+                        }
+                        clean := localModeSanitize(lm)
+                        // Enabling with nothing configured is allowed: the 🛡️
+                        // direct-IP variant is auto-built from the panel host;
+                        // relay / white-SNI simply stay off until filled in.
+                        if clean.RelayHost != "" && clean.RelayPort == 0 {
+                                clean.RelayPort = 443
+                        }
+                        state.LocalMode = &clean
                 }
         }
         if v, ok := d["tuning"]; ok {

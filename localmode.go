@@ -1,0 +1,369 @@
+package main
+
+// ─────────── v3.11: کیت شبکه ملی / Local-Mode Kit ───────────
+// What happens when Iran switches to the "national internet" (international
+// transit cut for consumer ISPs — the local-mode tests of 2022+):
+//   * CDN edges & the foreign-hosted panel stop resolving/answering
+//   * plain configs (CDN-routed) all die at once
+// What survives:
+//   * a domestic relay INSIDE Iran (Iranian VPS / cloud) is still reachable
+//     on the national network; datacenters have kept their international
+//     transit in every local-mode event so far, so a dumb TCP relay
+//     user→relay→origin keeps the tunnel alive end-to-end (TLS terminates
+//     at the origin — the relay only moves bytes, zero crypto changes).
+// This kit generates, per user:
+//   1) 🛡️ direct-IP variant      — skips client-side DNS (survives DNS
+//                                   poisoning / partial CDN blocks)
+//   2) 🎭 whitelisted-SNI variant — sni=<allowed domain> + allowInsecure=1
+//                                   (survives SNI block/white-lists)
+//   3) 🇮🇷 domestic-relay variants— the local-mode survivor (needs a relay
+//                                   inside Iran; the panel generates the
+//                                   one-line relay setup too)
+// Honest limits: in a TOTAL blackout (Nov-2019 style, even DC transit cut)
+// no software config can work — only physical alternates (satellite …).
+
+import (
+        "fmt"
+        "net"
+        "strings"
+        "sync"
+        "time"
+)
+
+// LocalModeState is persisted in state.json (schema-additive, safe to skip).
+type LocalModeState struct {
+        Enabled   bool   `json:"enabled"`
+        RelayHost string `json:"relay_host,omitempty"`
+        RelayPort int    `json:"relay_port,omitempty"`
+        FakeSNI   string `json:"fake_sni,omitempty"`
+        DirectIP  string `json:"direct_ip,omitempty"`
+}
+
+// localModeGet returns a sanitized copy of the local-mode settings.
+func localModeGet() LocalModeState {
+        stateMu.RLock()
+        defer stateMu.RUnlock()
+        return localModeSanitize(state.LocalMode)
+}
+
+// localModeSanitize clamps every field into a safe, usable shape.
+func localModeSanitize(l *LocalModeState) LocalModeState {
+        out := LocalModeState{}
+        if l == nil {
+                return out
+        }
+        out.Enabled = l.Enabled
+        if validAddress(l.RelayHost) {
+                out.RelayHost = strings.Trim(strings.TrimSpace(l.RelayHost), "[]")
+        }
+        if l.RelayPort >= 1 && l.RelayPort <= 65535 {
+                out.RelayPort = l.RelayPort
+        } else {
+                out.RelayPort = 443
+        }
+        fs := strings.ToLower(strings.TrimSpace(l.FakeSNI))
+        fs = strings.TrimSuffix(fs, ".")
+        if fs != "" && hostRe.MatchString(fs) && !strings.Contains(fs, " ") {
+                out.FakeSNI = fs
+        }
+        if dip := strings.TrimSpace(l.DirectIP); isIPLiteral(dip) && validAddress(dip) {
+                out.DirectIP = strings.Trim(dip, "[]")
+        }
+        return out
+}
+
+// localPanelHost resolves the TLS/routing host the local variants present:
+// an explicit SNI override (admin moved the panel behind a custom domain)
+// or the request host.
+func localPanelHost(host string) string {
+        stateMu.RLock()
+        defer stateMu.RUnlock()
+        if ov := strings.TrimSpace(state.SNIOverride); ov != "" {
+                return ov
+        }
+        return host
+}
+
+var (
+        originIPMu    sync.Mutex
+        originIPCache string
+        originIPAt    time.Time
+)
+
+// resolveOriginIP resolves the panel domain to a literal IPv4 (the CDN/Lucity
+// ingress) so clients can connect with no DNS at all. 10-minute cache.
+func resolveOriginIP(host string) string {
+        dom := strings.TrimSpace(host)
+        if dom == "" || isIPLiteral(dom) {
+                return dom
+        }
+        originIPMu.Lock()
+        if originIPCache != "" && time.Since(originIPAt) < 10*time.Minute {
+                c := originIPCache
+                originIPMu.Unlock()
+                return c
+        }
+        originIPMu.Unlock()
+        ips, err := net.LookupIP(dom)
+        if err != nil {
+                return ""
+        }
+        for _, ip := range ips {
+                if v4 := ip.To4(); v4 != nil && !v4.IsLoopback() && !v4.IsPrivate() {
+                        originIPMu.Lock()
+                        originIPCache = v4.String()
+                        originIPAt = time.Now()
+                        originIPMu.Unlock()
+                        return originIPCache
+                }
+        }
+        return ""
+}
+
+// buildLocalLinks emits the national-internet survival variants for one
+// client. They are appended AFTER the normal CDN/edge routes so daily use
+// keeps its fast paths; client apps that test all configs simply pick the
+// first working one (relay included) once international access is cut.
+func buildLocalLinks(c *Client, host string) []Link {
+        if host == "" {
+                return nil
+        }
+        lm := localModeGet()
+        if !lm.Enabled {
+                return nil
+        }
+        if lm.RelayHost == "" && lm.DirectIP == "" && resolveOriginIP(host) == "" && lm.FakeSNI == "" {
+                return nil
+        }
+        allowed := userProtocols(c)
+        t := tuningGet()
+        fp := t.FP
+        if fp == "" {
+                fp = "chrome"
+        }
+        alpn := pyQuote(orStr(strings.TrimSpace(t.ALPN), "http/1.1"))
+        cid := c.ID
+        stateMu.RLock()
+        fmtStr := state.CfgFmt
+        stateMu.RUnlock()
+        if fmtStr == "" {
+                fmtStr = "{name}-{label}"
+        }
+        panelHost := localPanelHost(host)
+        var out []Link
+        add := func(key, label, url string) {
+                out = append(out, Link{key, label, url})
+        }
+
+        directAddr := lm.DirectIP
+        if directAddr == "" {
+                directAddr = resolveOriginIP(host)
+        }
+
+        // ── 1) 🛡️ direct-IP variant: real SNI, literal address → no client DNS.
+        if directAddr != "" && directAddr != lm.RelayHost && allowed["vless-ws"] {
+                nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", directAddr) + " 🛡️ IP مستقیم"
+                sni := linkSNI(panelHost)
+                add("vless-ws-direct", "VLESS · WS · مستقیم",
+                        fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                cid, bracketV6(directAddr), pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
+                                pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
+        }
+
+        // ── 2) 🎭 whitelisted-SNI variant: DPI sees an allowed domain;
+        //    the real routing rides the (encrypted) WS Host header.
+        if lm.FakeSNI != "" && allowed["vless-ws"] {
+                target := directAddr
+                if target == "" {
+                        if a := stateAddress(host); isIPLiteral(a) {
+                                target = strings.Trim(a, "[]")
+                        } else if a != "" && lm.RelayHost == "" {
+                                target = resolveOriginIP(a)
+                        }
+                }
+                if target != "" {
+                        nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", lm.FakeSNI) + " 🎭 SNI سفید"
+                        add("vless-ws-whitesni", "VLESS · WS · SNI سفید",
+                                fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s&allowInsecure=1#%s",
+                                        cid, bracketV6(target), pyQuote(lm.FakeSNI), pyQuote(fp), alpn, pyQuote(panelHost),
+                                        pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
+                }
+        }
+
+        // ── 3) 🇮🇷 domestic relay: TCP pipe inside Iran → origin. TLS stays
+        //    end-to-end (relay only forwards bytes), so SNI/host are the panel's.
+        if lm.RelayHost != "" {
+                port := lm.RelayPort
+                if port == 0 {
+                        port = 443
+                }
+                uriAddr := bracketV6(lm.RelayHost)
+                sni := linkSNI(panelHost)
+                if allowed["vless-ws"] {
+                        nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", lm.RelayHost) + " 🇮🇷 رله داخلی"
+                        add("vless-ws-relay", "VLESS · WS · رله داخلی",
+                                fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                        cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
+                                        pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
+                }
+                if allowed["vless-hu"] {
+                        nm := fmtName(fmtStr, c, "VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", lm.RelayHost) + " 🇮🇷 رله داخلی"
+                        add("vless-hu-relay", "VLESS · HTTPUpgrade · رله داخلی",
+                                fmt.Sprintf("vless://%s@%s:%d?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
+                                        cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
+                                        pyQuote(huPath()), pyQuote(nm)))
+                }
+                if allowed["trojan-ws"] {
+                        nm := fmtName(fmtStr, c, "Trojan-WS", "Trojan", "WS", "TLS", lm.RelayHost) + " 🇮🇷 رله داخلی"
+                        add("trojan-ws-relay", "Trojan · WS · رله داخلی",
+                                fmt.Sprintf("trojan://%s@%s:%d?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                        cid, uriAddr, port, pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
+                                        pyQuote(trojanPath()+"?ed=2048"), pyQuote(nm)))
+                }
+        }
+        return out
+}
+
+// stateAddress returns the admin-configured connect address
+// (state.Address), falling back to host when unset — locked read.
+func stateAddress(host string) string {
+        stateMu.RLock()
+        defer stateMu.RUnlock()
+        if state.Address != "" {
+                return state.Address
+        }
+        return host
+}
+
+// localModePayload feeds the panel «شبکه ملی» view (settings + guide).
+func localModePayload(host string) map[string]any {
+        lm := localModeGet()
+        panelHost := localPanelHost(host)
+        if panelHost == "" {
+                panelHost = envStr("DOMAIN", "")
+        }
+        resolved := ""
+        if !isIPLiteral(panelHost) && panelHost != "" {
+                resolved = resolveOriginIP(panelHost)
+        }
+        variantKeys := []string{}
+        for _, l := range buildLocalLinks(&Client{Name: "main", ID: mainUUID()}, host) {
+                variantKeys = append(variantKeys, l.Key)
+        }
+        return map[string]any{
+                "enabled":     lm.Enabled,
+                "relay_host":  lm.RelayHost,
+                "relay_port":  lm.RelayPort,
+                "fake_sni":    lm.FakeSNI,
+                "direct_ip":   lm.DirectIP,
+                "panel_host":  panelHost,
+                "resolved_ip": resolved,
+                "variants":    variantKeys,
+                "guide":       relayGuide(panelHost, resolved),
+        }
+}
+
+// relayGuide builds the ready-to-paste domestic-relay setup commands.
+func relayGuide(panelHost, originIP string) map[string]string {
+        target := panelHost
+        if target == "" {
+                target = "<panel-domain>"
+        }
+        ipTarget := orStr(originIP, "<panel-ip>")
+        if ipTarget == "<panel-ip>" {
+                if ip := resolveOriginIP(target); ip != "" {
+                        ipTarget = ip
+                }
+        }
+        return map[string]string{
+                "socat": fmt.Sprintf("socat TCP-LISTEN:443,fork,reuseaddr,keepalive TCP:%s:443", target),
+                "gost":  fmt.Sprintf("gost -L \"tcp://:443/%s:443\"", target),
+                "docker": fmt.Sprintf("docker run -d --restart=always --name deeprelay -p 443:443 " +
+                        "alpine/socat TCP-LISTEN:443,fork,reuseaddr TCP:%s:443", target),
+                "systemd": fmt.Sprintf(`# /etc/systemd/system/deeprelay.service
+[Unit]
+Description=DEEP NETWORK domestic relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:443,fork,reuseaddr,keepalive TCP:%s:443
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
+# then: systemctl daemon-reload && systemctl enable --now deeprelay
+# (apt-get install -y socat  /  pacman -S socat)`, target),
+                "iptables": fmt.Sprintf(`sysctl -w net.ipv4.ip_forward=1
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j DNAT --to-destination %s:443
+iptables -t nat -A POSTROUTING -j MASQUERADE
+# (persists with iptables-persistent)`, ipTarget),
+        }
+}
+
+// localModeKitText renders the full OFFLINE survival kit — the admin saves
+// it BEFORE any cutoff: every user's local-mode links, the relay setup and
+// the honest scenario guide. When international access is cut the panel
+// itself is unreachable, so this file is the lifeline.
+func localModeKitText(host string) string {
+        panelHost := localPanelHost(host)
+        if panelHost == "" {
+                panelHost = envStr("DOMAIN", "<panel-domain>")
+        }
+        var b strings.Builder
+        b.WriteString("╔══════════════════════════════════════════════════════════╗\n")
+        b.WriteString("║   DEEP NETWORK — کیت بقا برای شبکه ملی (Local-Mode Kit)  ║\n")
+        b.WriteString("╚══════════════════════════════════════════════════════════╝\n")
+        b.WriteString("نسخه: v" + Version + "    تاریخ ساخت: " + time.Now().UTC().Format("2006-01-02 15:04 UTC") + "\n")
+        b.WriteString("دامنه پنل: " + panelHost + "\n\n")
+
+        b.WriteString("── سه سناریو، سه راه نجات ──────────────────────────────────\n\n")
+        b.WriteString("۱) فیلتر SNI / DNS (بین‌الملل وصل است):\n")
+        b.WriteString("   کانفیگ‌های «🛡️ IP مستقیم» (بدون نیاز به DNS) و «🎭 SNI سفید»\n")
+        b.WriteString("   همین حالا داخل همین فایل کار می‌کنند.\n\n")
+        b.WriteString("۲) قطع بین‌الملل / اینترنت ملی (local mode):\n")
+        b.WriteString("   فقط کانفیگ‌های «🇮🇷 رله داخلی» کار می‌کنند — مشروط به اینکه\n")
+        b.WriteString("   رله داخل ایران باشد و دیتاسنتر آن ترانزیت بین‌الملل خود را\n")
+        b.WriteString("   نگه داشته باشد (در همه‌ی رخدادهای قبلی حفظ شده است؛ در\n")
+        b.WriteString("   خاموشی مطلق مثل آبان ۹۸ هیچ کانفیگی نمی‌تواند کار کند —\n")
+        b.WriteString("   فقط مسیر فیزیکی جایگزین مثل اینترنت ماهواره‌ای). پیش از هر\n")
+        b.WriteString("   قطعی، این فایل و کانفیگ‌ها را در کلاینت‌ها ذخیره کنید.\n\n")
+        b.WriteString("۳) خاموشی کامل:\n")
+        b.WriteString("   هیچ مسیر نرم‌افزاری وجود ندارد. صادقانه.\n\n")
+        b.WriteString("در همه حالت‌ها کلاینت خود را روی «تست همه کانفیگ‌ها» بگذارید\n")
+        b.WriteString("تا اولین مسیر سالم را خودکار پیدا کند.\n\n")
+
+        b.WriteString("── راه‌اندازی رله داخلی (روی سرور ایرانی، فقط یک بار) ────────\n\n")
+        b.WriteString("هر سرور/VPS داخل ایران (پارس‌پک، آروان‌کلاد، هامروشن و …)\n")
+        b.WriteString("که پورت 443 برای عموم باز داشته باشد کافی است. یکی از دستورهای\n")
+        b.WriteString("زیر را روی آن اجرا کنید (هدف: " + panelHost + "):\n\n")
+        g := relayGuide(panelHost, "")
+        b.WriteString("[A] ساده‌ترین — socat:\n")
+        b.WriteString("    apt-get install -y socat\n    " + g["socat"] + "\n\n")
+        b.WriteString("[B] با gost:\n    " + g["gost"] + "\n\n")
+        b.WriteString("[C] با Docker:\n    " + g["docker"] + "\n\n")
+        b.WriteString("[D] systemd (پایدار بعد از ری‌استارت):\n" + g["systemd"] + "\n\n")
+        b.WriteString("[E] بدون برنامه، فقط iptables:\n" + g["iptables"] + "\n\n")
+        b.WriteString("سپس در پنل، «تنظیمات شبکه ملی» آدرس همین سرور را وارد کنید تا\n")
+        b.WriteString("کانفیگ‌های 🇮🇷 برای همه کاربران ساخته شوند.\n\n")
+
+        stateMu.RLock()
+        clients := append([]*Client(nil), state.Clients...)
+        stateMu.RUnlock()
+        b.WriteString("── کانفیگ‌های کاربران (نسخه‌های بقا) ─────────────────────────\n\n")
+        for _, c := range clients {
+                links := buildLocalLinks(c, host)
+                if len(links) == 0 {
+                        continue
+                }
+                b.WriteString("♦ " + c.Name + "\n")
+                for _, l := range links {
+                        b.WriteString("  [" + l.Label + "]\n  " + l.URL + "\n")
+                }
+                b.WriteString("\n")
+        }
+        b.WriteString("── پایان کیت ──\n")
+        return b.String()
+}

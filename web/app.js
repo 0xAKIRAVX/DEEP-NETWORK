@@ -276,7 +276,7 @@
       // (state arrives a beat later on slow links) and never refresh → "menu
       // items never load". Now we mark the view stale and re-render it the
       // moment stateLoop delivers data.
-      const needsState = v === 'users' || v === 'subs' || v === 'settings';
+      const needsState = v === 'users' || v === 'subs' || v === 'settings' || v === 'localmode';
       S.viewStale = needsState && !S.state;
       try {
         host.innerHTML = views[v] ? views[v]() : '<p>به‌زودی</p>';
@@ -414,6 +414,9 @@
       const tcpReady = st.settings.tcp_ready;
       cp.textContent = tcpReady && protos['vless-reality'] ? 'Reality' : protos['vless-xhttp'] ? 'XHTTP' : protos['vless-ws'] ? 'VLESS-WS' : 'VLESS';
     }
+    // v3.11: sidebar «شبکه ملی» badge — ON while the survival kit is enabled.
+    const lmBadge = $('#sb-lm-on');
+    if (lmBadge) lmBadge.hidden = !(st.settings.local_mode && st.settings.local_mode.enabled);
   }
 
   // ─────────── views ───────────
@@ -560,6 +563,61 @@
       <button class="btn" id="t-reset">صفر کردن ترافیک همه</button>
       </div>
       <pre id="t-out" style="display:none;margin-top:14px;background:#0d0d0d;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:10.5px;max-height:340px;overflow:auto;direction:ltr;text-align:left;white-space:pre-wrap"></pre>
+      </section>`;
+    },
+    // v3.11: national-internet survival kit — keeps configs alive when
+    // international transit is cut in Iran (relay inside the country).
+    localmode() {
+      const s = (S.state && S.state.settings.local_mode) || {};
+      const on = !!s.enabled;
+      return `<section class="info-sec" style="margin-top:20px">
+      <h3>🇮🇷 کیت شبکه ملی — بقا در قطع بین‌الملل</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">وقتی اینترنت بین‌الملل در ایران قطع شود (حالت شبکه ملی)، لبه‌های CDN و خود پنل از دسترس کاربران خارج می‌شوند و کانفیگ‌های معمولی همه با هم می‌میرند. این کیت سه <b>واریانت بقا</b> به اشتراک همه کاربران اضافه می‌کند تا کلاینت‌ها (با «تست همه کانفیگ‌ها») اولین مسیر سالم را خودکار پیدا کنند. <b>پیش از هر قطعی کیت آفلاین را ذخیره کنید</b> — در حالت قطعی، خود پنل هم در دسترس نیست.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
+        <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
+          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل به‌جای دامنه — بدون نیاز به DNS کاربر. برای فیلتر DNS و بلاک‌شدن لبه‌ها. <b>همیشه خودکار ساخته می‌شود.</b></p>
+        </div>
+        <div style="background:rgba(214,201,107,.06);border:1px solid rgba(214,201,107,.25);border-radius:12px;padding:12px 14px">
+          <b style="font-size:12.5px;color:#e2d67e">🎭 SNI سفید</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">SNI یک دامنه مجاز + AllowInsecure — برای وقتی SNI ها را لیست سفید/سیاه می‌کنند. یک دامنه در کادر تنظیمات وارد کنید.</p>
+        </div>
+        <div style="background:rgba(240,160,90,.07);border:1px solid rgba(240,160,90,.3);border-radius:12px;padding:12px 14px">
+          <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">یک سرور داخل ایران که ترافیک را لوله‌کشی می‌کند — <b>تنها راه‌حل واقعی قطع بین‌الملل.</b> راه‌اندازی‌اش یک خط است (پایین صفحه).</p>
+        </div>
+      </div>
+      <div style="margin-top:12px;background:rgba(248,180,180,.05);border:1px solid rgba(248,180,180,.18);border-radius:12px;padding:11px 14px">
+        <p style="font-size:11px;color:#d8a8a8;line-height:1.9"><b>صادقانه:</b> در «حالت شبکه ملی» دیتاسنترهای ایرانی تا امروز ترانزیت بین‌الملل خود را حفظ کرده‌اند، پس رله داخلی کار می‌کند؛ اما در خاموشی مطلق (مثل آبان ۹۸ که حتی دیتاسنترها قطع شدند) هیچ کانفیگ و نرم‌افزاری نمی‌تواند کار کند — فقط مسیر فیزیکی جایگزین. وعده‌ای بیشتر از این نمی‌دهیم که واقعیت باشد.</p>
+      </div>
+      </section>
+
+      <section class="info-sec" style="margin-top:20px;max-width:720px">
+      <h3>تنظیمات کیت ${on ? '<span class="badge badge-ok" style="font-size:10px">فعال</span>' : ''}</h3>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:10px 2px"><input type="checkbox" id="lm-on" ${on ? 'checked' : ''}><span class="cbx"></span><b>فعال‌سازی کانفیگ‌های بقا</b> — واریانت‌ها به اشتراک همه کاربران اضافه می‌شوند</label>
+      <div class="row2" style="margin-top:10px">
+        <label class="field"><input id="lm-relay" value="${esc(s.relay_host || '')}" placeholder="آدرس رله داخلی (IP یا دامنه سرور داخل ایران)"></label>
+        <label class="field"><input id="lm-port" type="number" min="1" max="65535" value="${s.relay_port || 443}" placeholder="پورت رله (پیش‌فرض 443)"></label>
+      </div>
+      <div class="row2" style="margin-top:10px">
+        <label class="field"><input id="lm-fakesni" dir="ltr" value="${esc(s.fake_sni || '')}" placeholder="SNI سفید (مثلاً www.arvancloud.ir)"></label>
+        <label class="field"><input id="lm-direct" dir="ltr" value="${esc(s.direct_ip || '')}" placeholder="IP مستقیم (خالی = خودکار از دامنه)"></label>
+      </div>
+      <div class="btns" style="margin-top:12px"><button class="btn primary" id="lm-save">ذخیره تنظیمات کیت</button></div>
+      <p id="lm-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
+      <div id="lm-variants"></div>
+      </section>
+
+      <section class="info-sec" style="margin-top:20px">
+      <h3>راه‌اندازی رله داخلی (روی سرور ایرانی — فقط یک بار)</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">هر VPS ابری داخل ایران (آروان‌کلاد، پارس‌پک، هامروشن و…) که پورت 443 از بیرون باز باشد کافی است؛ CPU و رم تقریباً هیچ نمی‌خواهد چون فقط بایت‌ها را لوله‌کشی می‌کند. یکی از دستورهای زیر را اجرا کنید — بعد آدرس همین سرور را در کادر «آدرس رله داخلی» بالا وارد کنید:</p>
+      <div id="lm-guide">در حال دریافت دستورها…</div>
+      </section>
+
+      <section class="info-sec" style="margin-top:20px">
+      <h3>کیت آفلاین — حتماً ذخیره کنید</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">یک فایل متنی شامل همه کانفیگ‌های بقا همه کاربران + راهنمای رله + راهنمای سناریوها. <b>قبل از اینکه بین‌الملل قطع شود</b> دانلودش کنید و جایی نگه دارید (خود پنل در حالت قطعی در دسترس نیست). کانفیگ‌ها را از قبل در v2rayNG / Hiddify اضافه و ذخیره کنید تا موقع نیاز فقط تست بزنید.</p>
+      <div class="btns"><button class="btn primary" id="lm-kit">⬇ دانلود کیت آفلاین</button></div>
       </section>`;
     },
     settings() {
@@ -1281,6 +1339,56 @@
     },
     // v3.10: starts the 2s live poller while the view is open
     online() { startOnlineLoop(); },
+    // v3.11: national-internet kit — live settings + relay guide + kit download
+    async localmode() {
+      const st = $('#lm-status');
+      // ── fill the form from state (already rendered) and keep it in sync
+      try {
+        const lm = await api('localmode');
+        if (lm.resolved_ip && $('#lm-direct') && !$('#lm-direct').value) {
+          $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + lm.resolved_ip + ')';
+        }
+        const guideBox = $('#lm-guide');
+        if (guideBox && lm.guide) {
+          const cmd = (title, body, note) => `<div style="margin:10px 0">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <b style="font-size:11.5px;color:#cfcfcf">${title}</b>
+              <button class="mini-btn lm-copy" data-cmd="${esc(body)}">کپی</button>
+            </div>
+            <pre style="background:#0d0d0d;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:10.5px;overflow:auto;direction:ltr;text-align:left;white-space:pre-wrap">${esc(body)}</pre>
+            ${note ? '<p style="font-size:10.5px;color:#8d8d8d;margin-top:3px">' + note + '</p>' : ''}</div>`;
+          guideBox.innerHTML =
+            cmd('① ساده‌ترین — socat (پیشنهادی)', lm.guide.socat, 'نصب: apt-get install -y socat — روی اکثر سرورها از قبل هست') +
+            cmd('② با Docker', lm.guide.docker) +
+            cmd('③ پایدار — systemd (بعد از ری‌استارت هم بالا می‌آید)', lm.guide.systemd) +
+            cmd('④ بدون نصب برنامه — iptables', lm.guide.iptables, 'اگر هیچ‌کدام از موارد بالا در دسترس نبود') +
+            `<p style="font-size:11px;color:#8d8d8d;margin-top:10px;line-height:1.9">بعد از اجرا، صحت رله را تست کنید: از داخل ایران به <b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(lm.panel_host || '')}</b> وصل شوید — اگر صفحه پنل از مسیر رله باز شد، همه‌چیز درست است. سپس آدرس رله را در تنظیمات بالا وارد و ذخیره کنید.</p>`;
+          $$('.lm-copy').forEach(b => b.addEventListener('click', () => copy(b.dataset.cmd)));
+        }
+        if (lm.variants && lm.variants.length) {
+          const vb = $('#lm-variants');
+          if (vb) vb.innerHTML = `<p style="font-size:11.5px;color:#7fb98a;margin-top:8px">✓ واریانت‌های فعال در اشتراک‌ها: <b>${lm.variants.length}</b> مورد (${lm.variants.map(esc).join(' · ')})${lm.relay_host ? ' — رله: <b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(lm.relay_host) + ':' + (lm.relay_port || 443) + '</b>' : ''}</p>`;
+        }
+      } catch (ex) { if (st) st.textContent = 'دریافت اطلاعات کیت ناموفق بود: ' + ex.message; }
+      // ── save
+      $('#lm-save').addEventListener('click', async () => {
+        const lmPayload = {
+          enabled: $('#lm-on').checked,
+          relay_host: $('#lm-relay').value.trim(),
+          relay_port: +$('#lm-port').value || 443,
+          fake_sni: $('#lm-fakesni').value.trim(),
+          direct_ip: $('#lm-direct').value.trim(),
+        };
+        try {
+          await api('settings', { local_mode: lmPayload });
+          if (S.state && S.state.settings) S.state.settings.local_mode = lmPayload; // instant UI truth
+          toast('تنظیمات کیت شبکه ملی ذخیره شد ✓', 'ok');
+          refreshAll(); renderView('localmode');
+        } catch (ex) { toast(ex.message, 'err'); }
+      });
+      // ── kit download
+      $('#lm-kit').addEventListener('click', () => { location.href = '/panel/api/localmode/kit'; });
+    },
   };
 
   // ─────────── v3.10: live online-users loop ───────────

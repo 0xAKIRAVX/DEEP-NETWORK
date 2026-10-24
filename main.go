@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.10.0"
+const Version = "3.11.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -136,6 +136,15 @@ func bootReport() {
         logf("  anti-SNI   : random-subdomain SNI is ON for *.lucity.app links")
         logf("               (Settings can disable it); sub-130ms ping: IP Scanner ->")
         logf("               scan CDN edges, apply the nearest (Turkey/Azerbaijan/Iraq).")
+        if lm := localModeGet(); lm.Enabled {
+                logf("  local-mode : kit ON — survival variants ride every subscription")
+                if lm.RelayHost != "" {
+                        logf("               relay %s:%d (domestic) + direct + white-SNI variants", lm.RelayHost, lm.RelayPort)
+                } else {
+                        logf("               direct-IP + white-SNI variants (no relay configured)")
+                }
+                logf("               panel view: شبکه ملی — save the offline kit BEFORE a cutoff.")
+        }
         if dataDir() == "/tmp" {
                 logf("  WARNING   : state is EPHEMERAL - /data is not writable.")
                 logf("               Attach a volume at /data so users & links survive redeploys.")
