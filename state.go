@@ -96,8 +96,13 @@ type State struct {
         // All-operator optimization (v3.9): graded edge set + subscription expansion.
         TopEdges  []*EdgeScore `json:"top_edges,omitempty"`
         MultiEdge bool         `json:"multi_edge,omitempty"`
-        // National-internet kit (v3.11): survival variants (relay/direct/white-SNI).
+        // National-internet kit (v3.11): survival variants (relay/direct).
         LocalMode *LocalModeState `json:"local_mode,omitempty"`
+        // Auto edge scanner (v3.14): the panel scans & applies best edges.
+        AutoScan   bool   `json:"auto_scan,omitempty"`
+        AutoScanAt int64  `json:"auto_scan_at,omitempty"`
+        AutoAddr   bool   `json:"auto_addr,omitempty"` // Address was set by auto-scan
+        LastHost   string `json:"last_host,omitempty"` // last seen public Host header
         // Telegram bot / Mini App (v3.4)
         TGToken      string     `json:"tg_token,omitempty"`
         TGAdminID    string     `json:"tg_admin_id,omitempty"`
@@ -150,6 +155,14 @@ func statePath() string {
 }
 
 func dataDir() string { return filepath.Dir(statePath()) }
+
+// saveState persists state under the lock (used by API handlers that already
+// changed state with stateMu held or unlocked).
+func saveState() {
+        stateMu.Lock()
+        defer stateMu.Unlock()
+        saveStateLocked()
+}
 
 func saveStateLocked() {
         b, _ := json.Marshal(state)

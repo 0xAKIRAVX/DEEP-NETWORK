@@ -158,7 +158,55 @@ func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
 
 // ─────────── main API dispatcher ───────────
 
+// handleAutoScan: GET → status payload; POST → {"enabled":bool} toggle and/or
+// {"action":"run"} triggers an immediate scan in the background.
+func handleAutoScan(w http.ResponseWriter, r *http.Request) {
+        if r.Method == http.MethodPost {
+                d := readJSONBody(r)
+                if v, ok := d["enabled"]; ok {
+                        if b, ok := v.(bool); ok {
+                                stateMu.Lock()
+                                state.AutoScan = b
+                                stateMu.Unlock()
+                                saveState()
+                        }
+                }
+                wantRun := false
+                if a, _ := d["action"].(string); a == "run" {
+                        wantRun = true
+                }
+                if _, exists := d["run"]; exists {
+                        wantRun = true
+                }
+                if wantRun && !autoScanRunning.Load() {
+                        go autoScanOnce()
+                        sendJSON(w, 200, map[string]any{"started": true})
+                        return
+                }
+                sendJSON(w, 200, map[string]any{"started": false, "running": autoScanRunning.Load()})
+                return
+        }
+        sendJSONGz(r, w, 200, autoScanPayload())
+}
+
+// rememberHost records the last public Host header (the background auto-scanner
+// needs a domain to probe through the CDN edges when DOMAIN is not exported).
+func rememberHost(r *http.Request) {
+        h := requestHost(r)
+        if h == "" || isIPLiteral(h) || !hostRe.MatchString(h) {
+                return
+        }
+        stateMu.Lock()
+        changed := state.LastHost != h
+        state.LastHost = h
+        stateMu.Unlock()
+        if changed {
+                saveState()
+        }
+}
+
 func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
+        rememberHost(r)
         switch r.Method {
         case http.MethodGet, http.MethodHead:
                 // speedblob is public: it serves plain zero bytes and is fetched through
@@ -188,6 +236,9 @@ func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
                 case path == "/panel/api/localmode":
                         // v3.11: national-internet kit — settings + relay guide.
                         sendJSONGz(r, w, 200, localModePayload(requestHost(r)))
+                case path == "/panel/api/autoscan":
+                        // v3.14: automatic scanner — status (GET; POST handled below).
+                        sendJSONGz(r, w, 200, autoScanPayload())
                 case path == "/panel/api/localmode/kit":
                         // v3.11: offline survival kit (download & save BEFORE a cutoff).
                         sendBytes(w, 200, []byte(localModeKitText(requestHost(r))),
@@ -269,6 +320,9 @@ func handleAPI(w http.ResponseWriter, r *http.Request, path string) {
                         handleProbe(w, r)
                 case "/panel/api/edgespeed":
                         handleEdgeSpeed(w, r)
+                case "/panel/api/autoscan":
+                        // v3.14: automatic scanner — status on GET, run/enable on POST.
+                        handleAutoScan(w, r)
                 case "/panel/api/telegram":
                         handleTelegramConnect(w, r)
                 default:
@@ -368,6 +422,8 @@ func statePayload(r *http.Request) map[string]any {
                 "tcp_ready": tcpReady(),
                 "top_edges": state.TopEdges, "multi_edge": state.MultiEdge,
                 "local_mode": localModeGet(),
+                "auto_scan": map[string]any{"enabled": state.AutoScan,
+                        "last_run": state.AutoScanAt, "auto_addr": state.AutoAddr},
                 "telegram": map[string]any{"connected": state.TGToken != "",
                         "bot_username": state.TGBotUser, "admin_id": state.TGAdminID},
         }
@@ -1256,6 +1312,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
         }
         if v, ok := d["address"]; ok {
                 a := strings.TrimSpace(fmt.Sprintf("%v", v))
+                state.AutoAddr = false // manual address wins over auto-scan
                 if a != "" && !validAddress(a) {
                         stateMu.Unlock()
                         sendJSON(w, 400, map[string]any{"error": "آدرس نامعتبر است"})
@@ -1292,7 +1349,13 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
                         }
                 }
         }
-        // v3.11: national-internet kit (relay / direct-IP / white-SNI).
+        // v3.14: automatic edge scanner toggle.
+        if v, ok := d["auto_scan"]; ok {
+                if b, ok := v.(bool); ok {
+                        state.AutoScan = b
+                }
+        }
+        // v3.11: national-internet kit (relay / direct-IP).
         if v, ok := d["local_mode"]; ok {
                 if m, ok := v.(map[string]any); ok {
                         lm := &LocalModeState{}

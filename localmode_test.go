@@ -7,6 +7,7 @@ import (
         "net/http"
         "net/http/httptest"
         "strings"
+        "time"
         "testing"
 )
 
@@ -61,10 +62,10 @@ func TestBuildLocalLinksRelayAndVariants(t *testing.T) {
         stateMu.Unlock()
         const host = "deep-network-development-w4a86.lucity.app"
         links := buildLocalLinks(lmTestClient(), host)
-        if len(links) < 5 {
-                t.Fatalf("expected >=5 local variants (direct + white-SNI + relay×3), got %d", len(links))
+        if len(links) < 4 {
+                t.Fatalf("expected >=4 local variants (direct + relay×3), got %d", len(links))
         }
-        var haveRelay, haveDirect, haveWhite bool
+        var haveRelay, haveDirect bool
         for _, l := range links {
                 switch l.Key {
                 case "vless-ws-relay":
@@ -89,25 +90,19 @@ func TestBuildLocalLinksRelayAndVariants(t *testing.T) {
                         if strings.Contains(l.URL, "allowInsecure=1") {
                                 t.Errorf("direct link must NOT need allowInsecure — %s", l.URL)
                         }
-                case "vless-ws-whitesni":
-                        haveWhite = true
-                        if !strings.Contains(l.URL, "sni=www.arvancloud.ir") {
-                                t.Errorf("white-SNI link must carry the whitelisted SNI — %s", l.URL)
-                        }
-                        if !strings.Contains(l.URL, "allowInsecure=1") {
-                                t.Errorf("white-SNI link MUST set allowInsecure=1 (cert will mismatch) — %s", l.URL)
-                        }
-                        if !strings.Contains(l.URL, "host=deep-network-development-w4a86.lucity.app") {
-                                t.Errorf("white-SNI routing Host must remain the real panel host — %s", l.URL)
-                        }
                 case "vless-hu-relay", "trojan-ws-relay":
                         if !strings.Contains(l.URL, "79.175.129.200:2053") {
                                 t.Errorf("%s must carry relay addr:port — %s", l.Key, l.URL)
                         }
                 }
         }
-        if !haveRelay || !haveDirect || !haveWhite {
-                t.Fatalf("missing variants: relay=%v direct=%v white=%v (links=%d)", haveRelay, haveDirect, haveWhite, len(links))
+        for _, l := range links { // v3.14: allowInsecure was removed from modern cores — no link may carry it
+                if strings.Contains(l.URL, "allowInsecure=1") {
+                        t.Errorf("no variant may ship allowInsecure=1 (modern xray cores reject it) — %s", l.URL)
+                }
+        }
+        if !haveRelay || !haveDirect {
+                t.Fatalf("missing variants: relay=%v direct=%v (links=%d)", haveRelay, haveDirect, len(links))
         }
 }
 
@@ -207,6 +202,9 @@ func TestSubCarriesSurvivalVariants(t *testing.T) {
         }
         if !strings.Contains(body, "%F0%9F%87%AE%F0%9F%87%B7") && !strings.Contains(body, "🇮🇷") {
                 t.Errorf("relay links must be labelled with the 🇮🇷 marker")
+        }
+        if strings.Contains(body, "allowInsecure=1") {
+                t.Errorf("subscription must not carry allowInsecure (removed from modern cores)")
         }
 }
 
@@ -323,23 +321,72 @@ func TestNoCDNVariantsForIPRelay(t *testing.T) {
         }
 }
 
-// v3.13: the payload must carry the SNI quick-picks and a real count of
-// DNS-free routes; the kit must document the no-KYC reality honestly.
-func TestPayloadCarriesSniPicksAndDirectRoutes(t *testing.T) {
+// v3.14: the payload must count DNS-free routes; with edges configured the
+// count must grow (direct origin IP + graded edges).
+func TestPayloadCountsDirectRoutes(t *testing.T) {
         t.Setenv("DATA_DIR", t.TempDir())
         loadState()
         stateMu.Lock()
-        state.LocalMode = &LocalModeState{Enabled: true, FakeSNI: "www.aparat.com"}
+        state.LocalMode = &LocalModeState{Enabled: true}
         state.Tuning = defaultTuning()
         stateMu.Unlock()
-        p := localModePayload("deep-network-development-w4a86.lucity.app")
-        picks, _ := p["sni_picks"].([]string)
-        if len(picks) < 3 || !containsStr(picks, "www.arvancloud.ir") {
-                t.Fatalf("sni_picks missing/short: %v", picks)
+        base := localModePayload("deep-network-development-w4a86.lucity.app")
+        dr0, _ := base["direct_routes"].(int)
+        if dr0 < 1 {
+                t.Fatalf("direct_routes must count at least the origin direct-IP variant, got %v", base["direct_routes"])
         }
-        if dr, _ := p["direct_routes"].(int); dr < 1 {
-                t.Fatalf("direct_routes must count at least the origin direct-IP variant, got %v", p["direct_routes"])
+        stateMu.Lock()
+        state.TopEdges = []*EdgeScore{{IP: "185.180.12.68", Med: 40, Loss: 0, SpeedKbps: 90, Score: 42}}
+        state.MultiEdge = true
+        stateMu.Unlock()
+        withEdges := localModePayload("deep-network-development-w4a86.lucity.app")
+        dr1, _ := withEdges["direct_routes"].(int)
+        if dr1 <= dr0 {
+                t.Fatalf("edge set must add direct routes: base=%d withEdges=%d", dr0, dr1)
         }
+}
+
+// v3.14: auto-scan apply semantics — manual address survives, auto address is
+// replaceable, TopEdges/MultiEdge always updated.
+func TestApplyAutoEdges(t *testing.T) {
+        now := time.Now()
+        mk := func(ip string, med float64) *EdgeScore {
+                return &EdgeScore{IP: ip, Med: med, Loss: 0, SpeedKbps: 80, Score: med}
+        }
+        t.Run("manual address survives", func(t *testing.T) {
+                st := &State{Address: "1.2.3.4", AutoAddr: false}
+                got := applyAutoEdges(st, []*EdgeScore{mk("9.9.9.9", 20), mk("8.8.8.8", 25)}, now)
+                if got != "1.2.3.4" || st.Address != "1.2.3.4" || st.AutoAddr {
+                        t.Fatalf("manual address must survive: got=%q addr=%q auto=%v", got, st.Address, st.AutoAddr)
+                }
+                if len(st.TopEdges) != 2 || !st.MultiEdge || st.AutoScanAt != now.Unix() {
+                        t.Fatalf("edges/multi/at not applied: %+v", st)
+                }
+        })
+        t.Run("auto address replaces", func(t *testing.T) {
+                st := &State{Address: "1.2.3.4", AutoAddr: true}
+                got := applyAutoEdges(st, []*EdgeScore{mk("9.9.9.9", 20)}, now)
+                if got != "9.9.9.9" || !st.AutoAddr {
+                        t.Fatalf("auto address must be replaceable: got=%q addr=%q", got, st.Address)
+                }
+        })
+        t.Run("empty/domain address becomes best", func(t *testing.T) {
+                st := &State{Address: ""}
+                if got := applyAutoEdges(st, []*EdgeScore{mk("9.9.9.9", 20)}, now); got != "9.9.9.9" || !st.AutoAddr {
+                        t.Fatalf("empty address must become best: got=%q", got)
+                }
+                st2 := &State{Address: "panel.example.com"}
+                if got := applyAutoEdges(st2, []*EdgeScore{mk("9.9.9.9", 20)}, now); got != "9.9.9.9" {
+                        t.Fatalf("domain address must become best: got=%q", got)
+                }
+        })
+        t.Run("empty result is a no-op", func(t *testing.T) {
+                st := &State{Address: "1.2.3.4", TopEdges: []*EdgeScore{mk("9.9.9.9", 20)}}
+                applyAutoEdges(st, nil, now)
+                if len(st.TopEdges) != 1 || st.Address != "1.2.3.4" {
+                        t.Fatalf("empty scan must not wipe state")
+                }
+        })
 }
 
 func TestLocalModeKitText(t *testing.T) {
@@ -351,7 +398,7 @@ func TestLocalModeKitText(t *testing.T) {
         stateMu.Unlock()
         kit := localModeKitText("deep-network-development-w4a86.lucity.app")
         for _, want := range []string{
-                "کیت بقا برای شبکه ملی", "🇮🇷", "socat", "systemd", "iptables", "CDN ایرانی", "arvancloud.ir", "بدون ثبت هویت و بدون دامنه",
+                "کیت بقا برای شبکه ملی", "🇮🇷", "socat", "systemd", "iptables", "CDN ایرانی", "arvancloud.ir", "بدون ثبت هویت و بدون دامنه", "اسکن خودکار",
                 "79.175.129.200:443", "185.59.222.196:443", "آبان ۹۸",
         } {
                 if !strings.Contains(kit, want) {

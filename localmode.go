@@ -133,7 +133,7 @@ func buildLocalLinks(c *Client, host string) []Link {
         if !lm.Enabled {
                 return nil
         }
-        if lm.RelayHost == "" && lm.DirectIP == "" && resolveOriginIP(host) == "" && lm.FakeSNI == "" {
+        if lm.RelayHost == "" && lm.DirectIP == "" && resolveOriginIP(host) == "" {
                 return nil
         }
         allowed := userProtocols(c)
@@ -169,26 +169,6 @@ func buildLocalLinks(c *Client, host string) []Link {
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                 cid, bracketV6(directAddr), pyQuote(sni), pyQuote(fp), alpn, pyQuote(panelHost),
                                 pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
-        }
-
-        // ── 2) 🎭 whitelisted-SNI variant: DPI sees an allowed domain;
-        //    the real routing rides the (encrypted) WS Host header.
-        if lm.FakeSNI != "" && allowed["vless-ws"] {
-                target := directAddr
-                if target == "" {
-                        if a := stateAddress(host); isIPLiteral(a) {
-                                target = strings.Trim(a, "[]")
-                        } else if a != "" && lm.RelayHost == "" {
-                                target = resolveOriginIP(a)
-                        }
-                }
-                if target != "" {
-                        nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", lm.FakeSNI) + " 🎭 SNI سفید"
-                        add("vless-ws-whitesni", "VLESS · WS · SNI سفید",
-                                fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s&allowInsecure=1#%s",
-                                        cid, bracketV6(target), pyQuote(lm.FakeSNI), pyQuote(fp), alpn, pyQuote(panelHost),
-                                        pyQuote(wsPath()+"?ed=2048"), pyQuote(nm)))
-                }
         }
 
         // ── 3) 🇮🇷 domestic relay: TCP pipe inside Iran → origin. TLS stays
@@ -267,15 +247,6 @@ func stateAddress(host string) string {
         return host
 }
 
-// sniPicks are well-known, domestically-allowed Iranian sites. The white-SNI
-// variant presents one of these names in the TLS ClientHello — the operator's
-// filter lets it pass. OWNING the domain is NOT needed: it is just a name on
-// the wire (the real routing rides the encrypted WS Host header).
-var sniPicks = []string{
-        "www.arvancloud.ir", "www.aparat.com", "www.digikala.com",
-        "www.snapp.ir", "www.irancell.ir",
-}
-
 // countDirectRoutes tells the admin how many DNS-free IP-literal routes the
 // current subscription carries (the origin direct-IP variant plus the graded
 // edge set when the all-operator optimizer has run).
@@ -314,7 +285,6 @@ func localModePayload(host string) map[string]any {
         }
         return map[string]any{
                 "enabled":     lm.Enabled,
-                "sni_picks":   sniPicks,
                 "direct_routes": countDirectRoutes(&Client{Name: "main", ID: mainUUID()}, host),
                 "relay_host":  lm.RelayHost,
                 "relay_port":  lm.RelayPort,
@@ -409,9 +379,9 @@ func localModeKitText(host string) string {
         b.WriteString("دامنه پنل: " + panelHost + "\n\n")
 
         b.WriteString("── سه سناریو، سه راه نجات ──────────────────────────────────\n\n")
-        b.WriteString("۱) فیلتر SNI / DNS (بین‌الملل وصل است):\n")
-        b.WriteString("   کانفیگ‌های «🛡️ IP مستقیم» (بدون نیاز به DNS) و «🎭 SNI سفید»\n")
-        b.WriteString("   همین حالا داخل همین فایل کار می‌کنند.\n\n")
+        b.WriteString("۱) فیلتر DNS / بلاک‌شدن لبه‌ها (بین‌الملل وصل است):\n")
+        b.WriteString("   کانفیگ‌های «🛡️ IP مستقیم» (بدون نیاز به DNS) و مسیرهای\n")
+        b.WriteString("   لبه 🥈🥉 (از اسکن/بهینه‌سازی) همین حالا کار می‌کنند.\n\n")
         b.WriteString("۲) قطع بین‌الملل / اینترنت ملی (local mode):\n")
         b.WriteString("   فقط کانفیگ‌های «🇮🇷 رله داخلی» کار می‌کنند — مشروط به اینکه\n")
         b.WriteString("   رله داخل ایران باشد و دیتاسنتر آن ترانزیت بین‌الملل خود را\n")
@@ -428,11 +398,9 @@ func localModeKitText(host string) string {
         b.WriteString("کانفیگ‌های «🛡️ IP مستقیم» و «🎭 SNI سفید» هیچ‌کدام ثبت هویت،\n")
         b.WriteString("دامنه یا سرور نمی‌خواهند و همین حالا (بدون هیچ تنظیمی) کار می‌کنند:\n")
         b.WriteString("  * 🛡️ IP مستقیم: آیپی واقعی پنل به‌جای دامنه — ضد فیلتر DNS.\n")
-        b.WriteString("  * 🎭 SNI سفید: فقط یک «اسم» دامنه مجاز در تنظیمات پنل وارد\n")
-        b.WriteString("    می‌کنید — مالکیت دامنه لازم نیست؛ مسیر واقعی داخل هدر\n")
-        b.WriteString("    رمزنگاری‌شده WS مخفی است.\n")
-        b.WriteString("  * مسیرهای لبه (🥈🥉…): اگر «بهینه‌سازی همه‌اپراتوره» را یک بار\n")
-        b.WriteString("    اجرا کنید، چند IP مستقیم دیگر هم به اشتراک اضافه می‌شود.\n\n")
+        b.WriteString("  * مسیرهای لبه (🥈🥉…): اسکن خودکار پنل هر ۶ ساعت بهترین\n")
+        b.WriteString("    لبه‌های پکت‌لاست ۰ و پرسرعت را می‌سنجد و به‌صورت خودکار\n")
+        b.WriteString("    در کانفیگ‌ها جایگزاری می‌کند — بدون هیچ ثبت‌نامی.\n\n")
         b.WriteString("صادقانه: در قطع کامل بین‌الملل، تنها راهِ باقی‌ماندن آنلاین یک\n")
         b.WriteString("نقطه ورود داخل ایران است — و طبق قانون، هر سرویس ایرانی (CDN،\n")
         b.WriteString("VPS، هاست، دامنه .ir) ثبت هویت می‌خواهد. مسیر بدون هویت برای\n")

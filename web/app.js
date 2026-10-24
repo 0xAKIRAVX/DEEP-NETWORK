@@ -496,7 +496,22 @@
     scanner() {
       const t = (S.state && S.state.settings.tuning) || {};
       const curAddr = (S.state && S.state.settings.address) || '';
-      return `<section class="info-sec" style="margin-top:20px">
+      const as = (S.state && S.state.settings.auto_scan) || {};
+      const asEdges = (S.state && S.state.settings.top_edges) || [];
+      const rel = as.last_run ? Math.max(0, Math.round((Date.now()/1000 - as.last_run))) : 0;
+      const relTxt = as.last_run ? (rel < 90 ? 'همین حالا' : rel < 5400 ? Math.round(rel/60)+' دقیقه پیش' : rel < 172800 ? Math.round(rel/3600)+' ساعت پیش' : new Date(as.last_run*1000).toLocaleDateString('fa-IR')) : 'هرگز';
+      return `<section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
+      <h3>🤖 اسکن و جایگزاری خودکار <span style="font-size:10px;color:#7fb98a">${as.enabled ? 'فعال' : 'خاموش'}</span></h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">پنل <b>خودش</b> هر ۶ ساعت لبه‌های نزدیک ایران را می‌سنجد — فقط لبه‌های با <b>پکت‌لاست ۰</b>، پینگ پایین و <b>سرعت واقعی</b> — و بهترین‌ها را <b>خودکار در کانفیگ همه کاربران جایگزاری می‌کند</b>. آدرسی که خودتان دستی انتخاب کرده باشید هرگز لمس نمی‌شود.</p>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:6px 2px"><input type="checkbox" id="as-on" ${as.enabled ? 'checked' : ''}><span class="cbx"></span><b>اسکن خودکار فعال باشد</b> (هر ۶ ساعت)</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn primary" id="as-run">🤖 اسکن و جایگزاری فوری</button>
+      </div>
+      <p id="as-status" style="font-size:11.5px;color:#8d8d8d;margin:10px 0 0;line-height:1.9">آخرین اسکن: <b>${relTxt}</b>${as.enabled ? ' — اسکن بعدی خودکار انجام می‌شود' : ' — اسکن خودکار خاموش است'}</p>
+      <div id="as-edges">${asEdges.length ? asEdges.map(e => `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid var(--line);border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono)">${esc(e.ip)} · ${Math.round(e.med)}ms · ${Math.round(e.kbps||0)}KB/s${e.city ? ' · ' + esc(e.city) : ''}</span>`).join('') : '<p style="font-size:11px;color:#8d8d8d;margin-top:6px">هنوز اسکنی انجام نشده — دکمه بالا را بزنید.</p>'}</div>
+      </section>
+
+      <section class="info-sec" style="margin-top:20px">
       <h3>بهینه‌ساز هوشمند — بهترین و سریع‌ترین تنظیمات برای شبکه گوشی شما</h3>
       <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">فقط <b>یک دکمه</b> بزنید؛ سنجش از داخل مرورگر گوشی شما (یعنی دقیقاً روی اینترنت خودتان) انجام می‌شود: اپراتور تشخیص داده می‌شود، همه لبه‌های نزدیک ایران (IPv4 و IPv6) چند بار پینگ می‌شوند، <b>سریع‌ترین و کم‌نوسان‌ترین</b> لبه انتخاب و روی همه کانفیگ‌ها اعمال می‌شود، پروفایل ضد فیلتر اپراتور شما (FinalMask) و <b>بسته سرعت (Mux + KeepAlive)</b> هم خودکار فعال می‌گردد.</p>
       <label class="field sel" style="max-width:280px;margin-bottom:10px"><select id="scan-fam">
@@ -575,18 +590,15 @@
       <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">وقتی اینترنت بین‌الملل در ایران قطع شود (حالت شبکه ملی)، لبه‌های CDN و خود پنل از دسترس کاربران خارج می‌شوند و کانفیگ‌های معمولی همه با هم می‌میرند. این کیت سه <b>واریانت بقا</b> به اشتراک همه کاربران اضافه می‌کند تا کلاینت‌ها (با «تست همه کانفیگ‌ها») اولین مسیر سالم را خودکار پیدا کنند. <b>پیش از هر قطعی کیت آفلاین را ذخیره کنید</b> — در حالت قطعی، خود پنل هم در دسترس نیست.</p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل به‌جای دامنه — بدون نیاز به DNS کاربر. برای فیلتر DNS و بلاک‌شدن لبه‌ها. <b>همیشه خودکار ساخته می‌شود.</b></p>
-        </div>
-        <div style="background:rgba(214,201,107,.06);border:1px solid rgba(214,201,107,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#e2d67e">🎭 SNI سفید</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">SNI یک دامنه مجاز + AllowInsecure — برای وقتی SNI ها را لیست سفید/سیاه می‌کنند. یک دامنه در کادر تنظیمات وارد کنید.</p>
+          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم (کار می‌کند — بدون ثبت‌نام)</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل + مسیرهای لبه 🥈🥉 از اسکن خودکار — بدون نیاز به DNS و بدون هیچ ثبت‌نامی. <b>تست‌شده و در حال کار.</b></p>
         </div>
         <div style="background:rgba(240,160,90,.07);border:1px solid rgba(240,160,90,.3);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی <span style="font-size:9.5px;color:#d8a8a8">[نیازمند ثبت هویت — قانونی، برای همه سرویس‌های ایرانی]</span></b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">یک سرور داخل ایران که ترافیک را لوله‌کشی می‌کند — <b>راه‌حل واقعی قطع بین‌الملل.</b> راه‌اندازی‌اش یک خط است (پایین صفحه). <b>بدون VPS؟ از CDN ایرانی استفاده کنید — راهنمای زیر.</b></p>
+          <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی / CDN ایرانی <span style="font-size:9.5px;color:#d8a8a8">[نیازمند ثبت هویت — قانونی، برای همه سرویس‌های ایرانی]</span></b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">نقطه ورود داخل ایران — <b>راه‌حل واقعی قطع بین‌الملل.</b> با VPS (یک خط) یا بدون VPS با CDN ایرانی. راهنما پایین صفحه.</p>
         </div>
       </div>
+      <p style="font-size:11px;color:#8d8d8d;margin-top:10px;line-height:1.9">ℹ️ گزینه قبلی «SNI سفید» حذف شد — قابلیت AllowInsecure که آن کانفیگ‌ها به آن وابسته بودند از هسته‌های جدید xray (۲۵ به بعد) به‌طور رسمی حذف شده و کانفیگ‌ها در کلاینت‌های جدید اصلاً لود نمی‌شدند. به‌جای آن <b>اسکن خودکار</b> (منوی «بهینه‌ساز و اسکنر») بهترین لبه‌های پکت‌لاست ۰ را در کانفیگ‌ها جایگزاری می‌کند.</p>
       <div style="margin-top:12px;background:rgba(248,180,180,.05);border:1px solid rgba(248,180,180,.18);border-radius:12px;padding:11px 14px">
         <p style="font-size:11px;color:#d8a8a8;line-height:1.9"><b>صادقانه:</b> در «حالت شبکه ملی» دیتاسنترهای ایرانی تا امروز ترانزیت بین‌الملل خود را حفظ کرده‌اند، پس رله داخلی کار می‌کند؛ اما در خاموشی مطلق (مثل آبان ۹۸ که حتی دیتاسنترها قطع شدند) هیچ کانفیگ و نرم‌افزاری نمی‌تواند کار کند — فقط مسیر فیزیکی جایگزین. وعده‌ای بیشتر از این نمی‌دهیم که واقعیت باشد.</p>
       </div>
@@ -594,15 +606,15 @@
 
       <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
       <h3>🆓 بدون ثبت هویت، بدون دامنه، بدون سرور</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 10px;line-height:2">این دو واریانت <b>همین حالا بدون هیچ ثبت‌نام و هزینه‌ای</b> در اشتراک همه کاربران فعال‌اند و در فیلتر DNS و SNI (شایع‌ترین اختلال‌ها) کار می‌کنند:</p>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 10px;line-height:2">مسیرهای IP مستقیم <b>همین حالا بدون هیچ ثبت‌نام و هزینه‌ای</b> در اشتراک همه کاربران فعال‌اند و در فیلتر DNS و بلاک‌شدن لبه‌ها (شایع‌ترین اختلال‌ها) کار می‌کنند — و <b>اسکن خودکار</b> هر ۶ ساعت بهترین لبه‌های پکت‌لاست ۰ را جایگزاری می‌کند:</p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل، بدون نیاز به DNS — <b>بدون هیچ تنظیمی، خودکار فعال.</b></p>
+          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم + مسیرهای لبه</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل بدون نیاز به DNS + چند مسیر لبه از اسکن/بهینه‌سازی — <b>بدون هیچ تنظیمی، خودکار فعال و تست‌شده.</b></p>
         </div>
-        <div style="background:rgba(214,201,107,.06);border:1px solid rgba(214,201,107,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#e2d67e">🎭 SNI سفید — مالکیت دامنه لازم نیست!</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">فقط یک <b>اسم</b> دامنه مجاز در تنظیمات وارد می‌شود (از پیشنهادهای زیر انتخاب کنید) — دامنه‌ای که مالکش نیستید، فقط یک اسم روی سیم است؛ مسیر واقعی داخل هدر رمزنگاری‌شده WS مخفی می‌ماند.</p>
+        <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
+          <b style="font-size:12.5px;color:#9fd8aa">🤖 اسکن خودکار هر ۶ ساعت</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">پنل خودش لبه‌های سالم (پکت‌لاست ۰، پینگ پایین، پرسرعت) را می‌یابد و در کانفیگ‌ها جایگزاری می‌کند — از منوی «بهینه‌ساز و اسکنر» فعال کنید.</p>
         </div>
       </div>
       <p id="lm-nokyc-status" style="font-size:11.5px;color:#7fb98a;margin-top:10px;line-height:2"></p>
@@ -616,11 +628,8 @@
         <label class="field"><input id="lm-port" type="number" min="1" max="65535" value="${s.relay_port || 443}" placeholder="پورت رله (پیش‌فرض 443)"></label>
       </div>
       <div class="row2" style="margin-top:10px">
-        <label class="field"><input id="lm-fakesni" dir="ltr" value="${esc(s.fake_sni || '')}" placeholder="SNI سفید (مثلاً www.arvancloud.ir)"></label>
         <label class="field"><input id="lm-direct" dir="ltr" value="${esc(s.direct_ip || '')}" placeholder="IP مستقیم (خالی = خودکار از دامنه)"></label>
       </div>
-      <p style="font-size:11px;color:#8d8d8d;margin-top:8px;line-height:1.9">پیشنهاد SNI مجاز (بدون نیاز به مالکیت — فقط کلیک کنید):</p>
-      <div id="lm-snipicks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
       <div class="btns" style="margin-top:12px"><button class="btn primary" id="lm-save">ذخیره تنظیمات کیت</button></div>
       <p id="lm-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
       <div id="lm-variants"></div>
@@ -859,6 +868,37 @@
         oCands = $('#opt-cands'), oStop = $('#opt-stop'), oRun = $('#opt-run');
       // guard: placeholder render (state not yet arrived) has none of these elements
       if (!oRun || !oStatus || !oStop || !$('#scan-bunny')) return;
+
+      // ── v3.14: auto-scan card wiring ──
+      const asToggle = $('#as-on'), asRun = $('#as-run'), asStatus = $('#as-status');
+      if (asToggle) asToggle.addEventListener('change', async () => {
+        try {
+          await api('autoscan', { enabled: asToggle.checked });
+          if (S.state && S.state.settings) S.state.settings.auto_scan = Object.assign(S.state.settings.auto_scan || {}, { enabled: asToggle.checked });
+          toast(asToggle.checked ? 'اسکن خودکار فعال شد ✓ — هر ۶ ساعت بهترین لبه‌ها جایگزاری می‌شوند' : 'اسکن خودکار خاموش شد', 'ok');
+        } catch (ex) { toast(ex.message, 'err'); asToggle.checked = !asToggle.checked; }
+      });
+      if (asRun) asRun.addEventListener('click', async () => {
+        if (asRun.dataset.busy === '1') return;
+        asRun.dataset.busy = '1'; asRun.disabled = true;
+        if (asStatus) asStatus.innerHTML = 'در حال اسکن… لبه‌های نزدیک ایران از نظر پینگ، پکت‌لاست و سرعت سنجیده می‌شوند (تا ۲ دقیقه)';
+        try {
+          await api('autoscan', { run: true });
+          // poll until finished (max ~100s)
+          for (let i = 0; i < 50; i++) {
+            await new Promise(rr => setTimeout(rr, 2000));
+            let st; try { st = await api('autoscan', {}); } catch { continue; }
+            if (!st.running) {
+              await refreshAll(); renderView('scanner');
+              toast('اسکن خودکار انجام شد — بهترین لبه‌ها در کانفیگ‌ها جایگزاری شدند ✓', 'ok');
+              return;
+            }
+            if (asStatus) asStatus.innerHTML = 'در حال اسکن… ' + ((i + 1) * 2) + ' ثانیه گذشته';
+          }
+          if (asStatus) asStatus.textContent = 'اسکن هنوز در جریان است — چند لحظه بعد وضعیت را رفرش کنید.';
+        } catch (ex) { if (asStatus) asStatus.textContent = 'خطا: ' + ex.message; }
+        finally { asRun.dataset.busy = ''; asRun.disabled = false; }
+      });
       let optStop = false;
       oStop.addEventListener('click', () => { optStop = true; });
       const setStep = (txt, pct) => {
@@ -1372,22 +1412,12 @@
         if (lm.resolved_ip && $('#lm-direct') && !$('#lm-direct').value) {
           $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + lm.resolved_ip + ')';
         }
-        // v3.13: no-KYC status line
+        // v3.14: no-KYC status line — direct routes only (white-SNI removed)
         const stBox = $('#lm-nokyc-status');
         if (stBox) {
           const dr = lm.direct_routes != null ? lm.direct_routes : '?';
-          stBox.innerHTML = '✓ وضعیت فعلی: <b>' + dr + '</b> مسیر IP مستقیم (بدون DNS) در اشتراک‌ها فعال است' +
-            (lm.fake_sni ? ' — SNI سفید: <b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(lm.fake_sni) + '</b>' : ' — SNI سفید هنوز تنظیم نشده (از پیشنهادهای زیر انتخاب کنید)');
-        }
-        // v3.13: white-SNI quick picks — one click, no typing, no ownership
-        const picks = $('#lm-snipicks');
-        if (picks && lm.sni_picks && lm.sni_picks.length) {
-          picks.innerHTML = lm.sni_picks.map(d =>
-            '<button type="button" class="mini-btn lm-pick" data-sni="' + esc(d) + '" style="direction:ltr;font-family:var(--mono)">' + esc(d) + '</button>').join('');
-          $$('.lm-pick').forEach(b => b.addEventListener('click', () => {
-            const inp = $('#lm-fakesni');
-            if (inp) { inp.value = b.dataset.sni; inp.focus(); toast('SNI سفید تنظیم شد: ' + b.dataset.sni + ' — ذخیره را بزنید', 'ok'); }
-          }));
+          stBox.innerHTML = '✓ وضعیت فعلی: <b>' + dr + '</b> مسیر IP مستقیم (بدون DNS، بدون ثبت‌نام) در اشتراک‌ها فعال است' +
+            (lm.relay_host ? ' — رله داخلی: <b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(lm.relay_host) + ':' + (lm.relay_port || 443) + '</b>' : '');
         }
         const freeBox = $('#lm-freecdn');
         if (freeBox && lm.guide && lm.guide.freecdn) {
@@ -1421,7 +1451,6 @@
           enabled: $('#lm-on').checked,
           relay_host: $('#lm-relay').value.trim(),
           relay_port: +$('#lm-port').value || 443,
-          fake_sni: $('#lm-fakesni').value.trim(),
           direct_ip: $('#lm-direct').value.trim(),
         };
         try {
