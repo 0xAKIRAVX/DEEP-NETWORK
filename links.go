@@ -432,6 +432,19 @@ func geoCityFor(ip string) (city, cc string) {
         return "", ""
 }
 
+// cityShortEn compacts the verbose forms bunny's geo feed returns
+// ("Frankfurt am Main" → "Frankfurt") so the geo slot stays tight.
+var cityShortEn = map[string]string{
+        "frankfurt am main": "Frankfurt",
+}
+
+func cityEN(city string) string {
+        if s, ok := cityShortEn[strings.ToLower(strings.TrimSpace(city))]; ok {
+                return s
+        }
+        return strings.TrimSpace(city)
+}
+
 // geoToken builds the location segment of the new name format:
 //
 //      rank > 0            → "FRANKFURT 🇩🇪⁰¹"   (city + flag + superscript rank)
@@ -441,8 +454,9 @@ func geoCityFor(ip string) (city, cc string) {
 // fallbackCity is used when the city cannot be resolved (the manual primary
 // may not be in the scan set) so the format never degrades.
 func geoToken(city, cc string, rank int, icon string, fallbackCity string) string {
-        if strings.TrimSpace(city) == "" {
-                city = strings.TrimSpace(fallbackCity)
+        city = cityEN(city)
+        if city == "" {
+                city = cityEN(fallbackCity)
         }
         if city == "" {
                 city = "CDN"
