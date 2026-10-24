@@ -47,19 +47,23 @@ input::placeholder{color:#6b6b6b}
 .lbg{position:fixed;inset:0;z-index:0;pointer-events:none;background:#000}
 #fx-login{position:absolute;inset:0;width:100%;height:100%}
 .lbg-ribbon{position:absolute;top:-10%;left:-8%;width:min(64vw,780px);opacity:.82;
-  filter:grayscale(.75) brightness(.72) contrast(1.22);mix-blend-mode:screen;animation:ribbonFloat 26s var(--ease) infinite alternate;will-change:transform}
+  filter:grayscale(.75) brightness(.72) contrast(1.22);animation:ribbonFloat 26s var(--ease) infinite alternate;will-change:transform}
 .lbg-planet{position:absolute;top:-12%;right:-16%;width:min(54vw,580px);opacity:.9;
-  filter:grayscale(1) brightness(.92) contrast(1.12);mix-blend-mode:screen;animation:planetFloat 34s var(--ease) infinite alternate;will-change:transform}
+  filter:grayscale(1) brightness(.92) contrast(1.12);animation:planetFloat 34s var(--ease) infinite alternate;will-change:transform}
 .lbg-mountains{position:absolute;bottom:-6%;left:-4%;width:106%;opacity:.95;
   filter:grayscale(1) contrast(1.62) brightness(.62);animation:mtnFloat 40s var(--ease) infinite alternate;will-change:transform}
+/* v3.18 PERF: mix-blend-mode:screen removed from planet/ribbon — a blend
+   must be re-composited against the animating backdrop EVERY frame; on
+   phones that alone held the login page under 30fps. Baked the “screen”
+   brightening into the filter instead (zero per-frame cost). */
 .lbg-glow{position:absolute;left:50%;bottom:14%;width:70vw;height:34vh;transform:translateX(-50%);
   background:radial-gradient(ellipse at center,rgba(255,255,255,.16),transparent 62%);
-  animation:glowPulse 7s ease-in-out infinite}
+  animation:glowPulse 7s ease-in-out infinite;will-change:opacity}
 .lbg-vignette{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 42%,transparent 38%,rgba(0,0,0,.82) 100%)}
 @keyframes ribbonFloat{from{transform:translate3d(0,0,0) rotate(0deg) scale(1)}to{transform:translate3d(3vw,-2vh,0) rotate(2.4deg) scale(1.05)}}
 @keyframes planetFloat{from{transform:translate3d(0,0,0)}to{transform:translate3d(-2vw,1.6vh,0)}}
 @keyframes mtnFloat{from{transform:translate3d(0,0,0)}to{transform:translate3d(-3vw,0,0)}}
-@keyframes glowPulse{0%,100%{opacity:.75;transform:translateX(-50%) scale(1)}50%{opacity:1;transform:translateX(-50%) scale(1.08)}}
+@keyframes glowPulse{0%,100%{opacity:.75}50%{opacity:1}} /* v3.18: opacity-only — no scale = no per-frame layer resize */
 
 .reticle{position:absolute;opacity:.5}
 .reticle-c{top:17%;left:50%;width:96px;height:96px;transform:translateX(-50%)}
@@ -148,8 +152,10 @@ input::placeholder{color:#6b6b6b}
   transition:transform .18s var(--ease),box-shadow .25s;position:relative;overflow:hidden}
 .lc-submit::after{content:'';position:absolute;top:0;bottom:0;left:-70%;width:45%;
   background:linear-gradient(105deg,transparent,rgba(255,255,255,.22),transparent);
-  transform:skewX(-18deg);animation:sheen 3.8s var(--ease) infinite}
-@keyframes sheen{0%{left:-70%}55%,100%{left:130%}}
+  transform:skewX(-18deg) translate3d(0,0,0);animation:sheen 3.8s var(--ease) infinite;will-change:transform}
+@keyframes sheen{0%{transform:skewX(-18deg) translate3d(0,0,0)}55%,100%{transform:skewX(-18deg) translate3d(480%,0,0)}}
+/* v3.18 PERF: sheen animated `left` before — a LAYOUT property, forcing
+   relayout+repaint of the button every frame. transform-only now. */
 .lc-submit:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 0 34px rgba(255,255,255,.16),0 10px 24px rgba(0,0,0,.55)}
 .lc-submit:active{transform:translateY(1px)}
 .lc-submit span{transition:transform .25s var(--ease)}
@@ -596,6 +602,27 @@ body[data-fx="low"] .lbg-ribbon,
 body[data-fx="low"] .lbg-planet,
 body[data-fx="low"] .reticle{display:none}
 body[data-fx="low"] .login-card{backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* ═══════════════ v3.18 — the "60fps on weak phones" pass ═══════════════
+   User report: "صفحه لوگین خیلی لگ است، فریم ریت را حداکثر کن حتی روی
+   گوشی‌های ضعیف، بدون افت فریم" — root causes fixed:
+   1) mix-blend-mode:screen on the animating planet/ribbon forced a
+      per-frame re-composite of the whole backdrop (removed globally above).
+   2) backdrop-filter over an ANIMATING background is re-blurred every frame —
+      in low mode NO element anywhere carries a backdrop-filter.
+   3) glowPulse/sheen animating layout/scale → opacity/transform-only.
+   4) Remaining decorative infinite animations (mountains drift, ring spin,
+      star-field shooting particles) freeze to a static frame in low mode. */
+body[data-fx="low"] *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body[data-fx="low"] .lbg-mountains,
+body[data-fx="low"] .lbg-glow,
+body[data-fx="low"] .lc-ring .spin-ccw,
+body[data-fx="low"] .lc-submit::after,
+body[data-fx="low"] .hero-img,
+body[data-fx="low"] .dot{animation:none!important}
+body[data-fx="low"] .g-card{background:rgba(12,12,12,.9)}
+/* dashboard: offscreen sections skip layout+paint entirely */
+.chart-sec,.rings,.duo,.globe-sec,.users-sec,.info-sec{content-visibility:auto;contain-intrinsic-size:auto 340px}
 
 /* accessibility: users who ask for less motion get a calm UI */
 @media (prefers-reduced-motion:reduce){

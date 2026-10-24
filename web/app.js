@@ -530,7 +530,7 @@
         : `<p style="font-size:11px;color:#c9b98a;margin-top:8px;line-height:1.9">🎯 جلوی SNI هنوز فعال نیست — بعد از اولین اسکن اثبات و فعال می‌شود. کاندیداها دامنه‌های واقعی bunny هستند (<span dir="ltr" style="font-family:var(--mono)">fonts.bunny.net</span>، <span dir="ltr" style="font-family:var(--mono)">bunny.net</span>، <span dir="ltr" style="font-family:var(--mono)">*.b-cdn.net</span>) — هر کدام که از ۶ نود ایرانی سالم باشد فعال می‌شود؛ مسیر با Host هدر رمزنگاری‌شده حفظ می‌شود.</p>`;
       return `<section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
       <h3>🤖 اسکن و جایگزاری خودکار <span style="font-size:10px;color:#7fb98a">${as.enabled ? 'فعال' : 'خاموش'}</span></h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">پنل <b>خودش</b> هر <b>${hours === 1 ? '۱ ساعت' : hours + ' ساعت'}</b> لبه‌های نزدیک ایران را می‌سنجد — فقط لبه‌های با <b>پکت‌لاست ۰</b>، پینگ پایین و <b>سرعت واقعی</b> — و بهترین‌ها را <b>خودکار در کانفیگ همه کاربران جایگزاری می‌کند</b>. آدرسی که خودتان دستی انتخاب کرده باشید هرگز لمس نمی‌شود.</p>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">پنل <b>خودش</b> هر <b>${hours === 1 ? '۱ ساعت' : hours + ' ساعت'}</b> لبه‌ها را از <b>همه مناطق</b> می‌سنجد — پکت‌لاست ۰، پینگ پایین، سرعت واقعی — و فقط لبه‌هایی که <b>TLS واقعی از ۶ نود ایرانی پاس بدهند</b> در کانفیگ‌ها می‌روند؛ بقیه (که برای کاربر ایرانی منفی یک می‌دهند) <b>خودکار حذف می‌شوند</b>. آدرس دستی خودتان هرگز لمس نمی‌شود.</p>
       <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:6px 2px"><input type="checkbox" id="as-on" ${as.enabled ? 'checked' : ''}><span class="cbx"></span><b>اسکن خودکار فعال باشد</b></label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
         <label class="field sel" style="max-width:190px;margin:0"><select id="as-every">
@@ -544,7 +544,7 @@
         <button class="btn primary" id="as-run">🤖 اسکن و جایگزاری فوری</button>
       </div>
       <p id="as-status" style="font-size:11.5px;color:#8d8d8d;margin:10px 0 0;line-height:1.9">آخرین اسکن: <b>${relTxt}</b>${as.enabled ? nextTxt : ' — اسکن خودکار خاموش است'}</p>
-      <div id="as-edges">${asEdges.length ? asEdges.map(e => `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid var(--line);border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono)">${esc(e.ip)} · ${Math.round(e.med)}ms · ${Math.round(e.kbps||0)}KB/s${e.city ? ' · ' + esc(e.city) : ''}${e.ir_ok > 0 ? ' · 🇮🇷 ' + e.ir_ok + '/6' : (e.ir_ok === 0 ? ' · 🇮🇷 ✗' : '')}</span>`).join('') : '<p style="font-size:11px;color:#8d8d8d;margin-top:6px">هنوز اسکنی انجام نشده — دکمه بالا را بزنید.</p>'}</div>
+      <div id="as-edges">${asEdges.length ? asEdges.map(e => `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid ${e.ir_tls === 0 ? 'rgba(248,120,120,.45)' : 'var(--line)'};border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono)">${esc(e.ip)} · ${Math.round(e.med)}ms · ${Math.round(e.kbps||0)}KB/s${e.city ? ' · ' + esc(e.city) : ''}${e.ir_tls > 0 ? ' · 🔒🇮🇷 ' + e.ir_tls + '/6' : (e.ir_tls === 0 ? ' · 🇮🇷 ✗ حذف شد' : (e.ir_ok > 0 ? ' · 🇮🇷 ' + e.ir_ok + '/6' : ''))}</span>`).join('') : '<p style="font-size:11px;color:#8d8d8d;margin-top:6px">هنوز اسکنی انجام نشده — دکمه بالا را بزنید.</p>'}<p style="font-size:10.5px;color:#8d8d8d;margin:6px 0 0;line-height:1.9">🔒 = TLS واقعی از ۶ نود ایرانی پاس گرفته — <b>فقط</b> این لبه‌ها داخل اشتراک‌ها می‌روند؛ لبه‌ای که از ایران TLS ندهد (✗) <b>خودکار حذف می‌شود</b> تا هیچ کانفیگی منفی یک ندهد.</p></div>
       ${irBanner}
       ${frontBox}
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -650,7 +650,7 @@
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم (کار می‌کند — بدون ثبت‌نام)</b>
+          <b style="font-size:12.5px;color:#9fd8aa">🛡️ مستقیم (کار می‌کند — بدون ثبت‌نام)</b>
           <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل + مسیرهای لبه 🥈🥉 از اسکن خودکار — بدون نیاز به DNS و بدون هیچ ثبت‌نامی. <b>تست‌شده و در حال کار.</b></p>
         </div>
         <div style="background:rgba(240,160,90,.07);border:1px solid rgba(240,160,90,.3);border-radius:12px;padding:12px 14px">
@@ -666,10 +666,10 @@
 
       <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
       <h3>🆓 بدون ثبت هویت، بدون دامنه، بدون سرور</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 10px;line-height:2">مسیرهای IP مستقیم <b>همین حالا بدون هیچ ثبت‌نام و هزینه‌ای</b> در اشتراک همه کاربران فعال‌اند و در فیلتر DNS و بلاک‌شدن لبه‌ها (شایع‌ترین اختلال‌ها) کار می‌کنند — و <b>اسکن خودکار</b> هر ۶ ساعت بهترین لبه‌های پکت‌لاست ۰ را جایگزاری می‌کند:</p>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 10px;line-height:2">مسیرهای IP مستقیم <b>همین حالا بدون هیچ ثبت‌نام و هزینه‌ای</b> در اشتراک همه کاربران فعال‌اند و در فیلتر DNS و بلاک‌شدن لبه‌ها (شایع‌ترین اختلال‌ها) کار می‌کنند — و <b>اسکن خودکار</b> هر ساعت بهترین لبه‌های پکت‌لاست ۰ و <b>قابل‌اتصال از ایران</b> را جایگزاری می‌کند:</p>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم + مسیرهای لبه</b>
+          <b style="font-size:12.5px;color:#9fd8aa">🛡️ مستقیم + مسیرهای لبه</b>
           <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل بدون نیاز به DNS + چند مسیر لبه از اسکن/بهینه‌سازی — <b>بدون هیچ تنظیمی، خودکار فعال و تست‌شده.</b></p>
         </div>
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
@@ -688,7 +688,7 @@
         <label class="field"><input id="lm-port" type="number" min="1" max="65535" value="${s.relay_port || 443}" placeholder="پورت رله (پیش‌فرض 443)"></label>
       </div>
       <div class="row2" style="margin-top:10px">
-        <label class="field"><input id="lm-direct" dir="ltr" value="${esc(s.direct_ip || '')}" placeholder="IP مستقیم (خالی = خودکار از دامنه)"></label>
+        <label class="field"><input id="lm-direct" dir="ltr" value="${esc(s.direct_ip || '')}" placeholder="IP مستقیم (خالی = خودکار، بهترین آیپی اثبات‌شده)"></label>
       </div>
       <div class="btns" style="margin-top:12px"><button class="btn primary" id="lm-save">ذخیره تنظیمات کیت</button></div>
       <p id="lm-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
@@ -989,19 +989,20 @@
       if (asRun) asRun.addEventListener('click', async () => {
         if (asRun.dataset.busy === '1') return;
         asRun.dataset.busy = '1'; asRun.disabled = true;
-        if (asStatus) asStatus.innerHTML = 'در حال اسکن… لبه‌های نزدیک ایران از نظر پینگ، پکت‌لاست و سرعت سنجیده می‌شوند (تا ۲ دقیقه)';
+        if (asStatus) asStatus.innerHTML = 'در حال اسکن… لبه‌ها از همه مناطق سنجیده می‌شوند و در پایان فقط لبه‌های قابل‌اتصال از ایران (تست TLS واقعی از ۶ نود) در کانفیگ‌ها می‌مانند (تا ۵ دقیقه)';
         try {
           await api('autoscan', { run: true });
-          // poll until finished (max ~100s)
-          for (let i = 0; i < 50; i++) {
+          // poll until finished (max ~6 min — the IR-TLS gate adds real
+          // handshake probes from 6 Iranian nodes to every candidate edge)
+          for (let i = 0; i < 180; i++) {
             await new Promise(rr => setTimeout(rr, 2000));
             let st; try { st = await api('autoscan', {}); } catch { continue; }
             if (!st.running) {
               await refreshAll(); renderView('scanner');
-              toast('اسکن خودکار انجام شد — بهترین لبه‌ها در کانفیگ‌ها جایگزاری شدند ✓', 'ok');
+              toast('اسکن خودکار انجام شد — لبه‌های قابل‌اتصال از ایران در کانفیگ‌ها هستند ✓', 'ok');
               return;
             }
-            if (asStatus) asStatus.innerHTML = 'در حال اسکن… ' + ((i + 1) * 2) + ' ثانیه گذشته';
+            if (asStatus) asStatus.innerHTML = 'در حال اسکن و تست TLS از ۶ نود ایرانی… ' + ((i + 1) * 2) + ' ثانیه گذشته';
           }
           if (asStatus) asStatus.textContent = 'اسکن هنوز در جریان است — چند لحظه بعد وضعیت را رفرش کنید.';
         } catch (ex) { if (asStatus) asStatus.textContent = 'خطا: ' + ex.message; }
@@ -1518,7 +1519,7 @@
       try {
         const lm = await api('localmode');
         if (lm.resolved_ip && $('#lm-direct') && !$('#lm-direct').value) {
-          $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + lm.resolved_ip + ')';
+          $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + (lm.direct_addr || lm.resolved_ip) + ')';
         }
         // v3.14: no-KYC status line — direct routes only (white-SNI removed)
         const stBox = $('#lm-nokyc-status');

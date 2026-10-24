@@ -15,15 +15,19 @@
   };
   window.FX = FX;
 
-  // ─────────── low-end device detection (v3.3) ───────────
-  // Cheap phones (≤4 cores / ≤4GB) start degrading immediately instead of
+  // ─────────── low-end device detection (v3.3 → v3.18) ───────────
+  // Cheap phones (≤4 cores / ≤4GB) start degraded immediately instead of
   // waiting 3+ seconds of measured low FPS — the panel must feel smooth from
   // the very first frame.
+  // v3.18: mid/weak PHONES (coarse pointer + ≤6 cores or ≤4GB) join them —
+  // the user asked for max framerate "حتی روی گوشی‌های ضعیف، بدون افت فریم",
+  // and the measured-FPS fallback alone left a janky first seconds.
   {
     const cores = navigator.hardwareConcurrency || 8;
     const mem = navigator.deviceMemory || 8;
-    if (cores <= 4 || mem <= 4) {
-      FX.quality = .6;
+    const coarse = matchMedia('(pointer:coarse)').matches;
+    if (cores <= 4 || mem <= 4 || (coarse && (cores <= 6 || mem <= 4))) {
+      FX.quality = coarse && cores > 4 ? .7 : .6;
       FX.dpr = Math.min(FX.dpr, 1.25);
       try { document.body.setAttribute('data-fx', 'low'); } catch { }
     }
@@ -55,7 +59,7 @@
     }
     const dpr = FX.dpr;
     if (cv.width !== d.w * dpr || cv.height !== d.h * dpr) { cv.width = d.w * dpr; cv.height = d.h * dpr; }
-    const c = cv.getContext('2d');
+    const c = cv.getContext('2d', { alpha: true, desynchronized: true }); // v3.18: desynchronized = lower latency on Android/Chrome
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     return [c, d.w, d.h];
   }
@@ -162,8 +166,8 @@
         c.fillStyle = '#fff';
         c.beginPath(); c.arc(s.x * w, s.y * h, s.r * (0.8 + tw * .4), 0, 6.283); c.fill();
       }
-      // shooting particles
-      if (o.shoots && FX.quality > .5) {
+      // shooting particles (full quality only — v3.18: off in low mode)
+      if (o.shoots && FX.quality > .7) {
         if (Math.random() < dt * .14) shoots.push({ x: Math.random() * w * .7 + w * .15, y: Math.random() * h * .35, vx: (Math.random() * 300 + 250), vy: (Math.random() * 90 + 40), life: 1 });
         for (let i = shoots.length - 1; i >= 0; i--) {
           const p = shoots[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * .8;

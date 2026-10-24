@@ -121,6 +121,35 @@ func resolveOriginIP(host string) string {
         return ""
 }
 
+// localDirectAddr resolves the connect address for the 🛡️ مستقیم variant
+// (v3.18 — the fix for "main-VLESS-WS 🛡️ IP مستقیم = -1"). The OLD behavior
+// (resolveOriginIP: whatever the panel's own resolver gets for the domain)
+// shipped 185.111.111.156 — bunny's geo answer for this cluster, which is
+// TLS-dead from every Iranian probe node. Priority now: admin override →
+// the scanner/admin-proven primary address (state.Address, e.g. the working
+// Frankfurt PoP) → the best IR-verified edge → only then a fresh DNS lookup.
+func localDirectAddr(lm LocalModeState, host string) string {
+        if dip := strings.TrimSpace(lm.DirectIP); dip != "" && isIPLiteral(dip) && validAddress(dip) {
+                return strings.Trim(dip, "[]")
+        }
+        if a := stateAddress(host); isIPLiteral(a) {
+                return a
+        }
+        stateMu.RLock()
+        var top string
+        for _, e := range state.TopEdges {
+                if e.IRTLS > 0 {
+                        top = e.IP
+                        break
+                }
+        }
+        stateMu.RUnlock()
+        if top != "" {
+                return top
+        }
+        return resolveOriginIP(host)
+}
+
 // buildLocalLinks emits the national-internet survival variants for one
 // client. They are appended AFTER the normal CDN/edge routes so daily use
 // keeps its fast paths; client apps that test all configs simply pick the
@@ -156,14 +185,11 @@ func buildLocalLinks(c *Client, host string) []Link {
                 out = append(out, Link{key, label, url})
         }
 
-        directAddr := lm.DirectIP
-        if directAddr == "" {
-                directAddr = resolveOriginIP(host)
-        }
+        directAddr := localDirectAddr(lm, host)
 
         // ── 1) 🛡️ direct-IP variant: real SNI, literal address → no client DNS.
         if directAddr != "" && directAddr != lm.RelayHost && allowed["vless-ws"] {
-                nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", directAddr) + " 🛡️ IP مستقیم"
+                nm := fmtName(fmtStr, c, "VLESS-WS", "VLESS", "WS", "TLS", directAddr) + " 🛡️ مستقیم"
                 sni := linkSNI(panelHost)
                 add("vless-ws-direct", "VLESS · WS · مستقیم",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
@@ -290,6 +316,7 @@ func localModePayload(host string) map[string]any {
                 "relay_port":  lm.RelayPort,
                 "fake_sni":    lm.FakeSNI,
                 "direct_ip":   lm.DirectIP,
+                "direct_addr": localDirectAddr(lm, host), // v3.18: the address actually shipped in 🛡️ links
                 "panel_host":  panelHost,
                 "resolved_ip": resolved,
                 "variants":    variantKeys,
@@ -380,11 +407,14 @@ func localModeKitText(host string) string {
 
         b.WriteString("── سه سناریو، سه راه نجات ──────────────────────────────────\n\n")
         b.WriteString("۱) فیلتر DNS / بلاک‌شدن لبه‌ها (بین‌الملل وصل است):\n")
-        b.WriteString("   کانفیگ‌های «🛡️ IP مستقیم» (بدون نیاز به DNS) و مسیرهای\n")
-        b.WriteString("   لبه 🥈🥉 (از اسکن/بهینه‌سازی) همین حالا کار می‌کنند.\n")
+        b.WriteString("   کانفیگ‌های «🛡️ مستقیم» (بدون نیاز به DNS، روی همان آیپی\n")
+        b.WriteString("   اثبات‌شده‌ی مسیر اصلی) و لبه‌های تأییدشده از ایران\n")
+        b.WriteString("   (🥈🥉 — فقط لبه‌هایی که از نودهای ایرانی TLS واقعی\n")
+        b.WriteString("   پاسخ گرفته‌اند در اشتراک می‌آیند) همین حالا کار می‌کنند.\n")
         b.WriteString("   مهم: دامنه پنل از داخل ایران DNS-پویزن است (تست‌شده از\n")
-        b.WriteString("   ۶ نود ایرانی) — کانفیگ‌های «🌐 DNS» در ایران کار\n")
-        b.WriteString("   نمی‌کنند؛ آیپی‌های لبه از همه نودها در دسترس‌اند.\n")
+        b.WriteString("   ۶ نود ایرانی) — تا وقتی دامنه از ایران جواب ندهد،\n")
+        b.WriteString("   کانفیگ‌های «🌐 دامنه» خودکار از اشتراک حذف می‌شوند و\n")
+        b.WriteString("   فقط مسیرهای IP مستقیم و لبه‌های سالم باقی می‌مانند.\n")
         if front := frontFromState(); front != "" {
                 b.WriteString("   جلوی SNI فعال است (" + front + ") — اسم دامنه پنل\n")
                 b.WriteString("   دیگر روی سیم نیست؛ certificate معتبر bunny.\n")
@@ -406,9 +436,9 @@ func localModeKitText(host string) string {
         b.WriteString("تا اولین مسیر سالم را خودکار پیدا کند.\n\n")
 
         b.WriteString("── بدون ثبت هویت و بدون دامنه؟ ──────────────────────────────\n\n")
-        b.WriteString("کانفیگ‌های «🛡️ IP مستقیم» هیچ ثبت هویت، دامنه یا\n")
+        b.WriteString("کانفیگ‌های «🛡️ مستقیم» هیچ ثبت هویت، دامنه یا\n")
         b.WriteString("سروری نمی‌خواهند و همین حالا (بدون هیچ تنظیمی) کار می‌کنند:\n")
-        b.WriteString("  * 🛡️ IP مستقیم: آیپی واقعی پنل به‌جای دامنه — ضد فیلتر DNS.\n")
+        b.WriteString("  * 🛡️ مستقیم: آیپی اثبات‌شده‌ی مسیر اصلی به‌جای دامنه — ضد فیلتر DNS.\n")
         b.WriteString("  * جلوی SNI: certificate معتبر bunny به‌جای دامنه\n")
         b.WriteString("    پنل در handshake — ضد فیلتر SNI، بدون allowInsecure؛\n")
         b.WriteString("    چند کاندیدا (fonts.bunny.net / bunny.net / *.b-cdn.net)\n")

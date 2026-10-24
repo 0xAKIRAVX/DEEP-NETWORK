@@ -141,8 +141,10 @@ func irPoll(kind, target string, nodes []string) map[string]json.RawMessage {
         return nil
 }
 
-// irCheckEdge TCP-probes one edge IP from all Iranian nodes; returns the
-// success count (-1 = check-host unavailable).
+// irCheckEdgeTCP-probes one edge IP from all Iranian nodes; returns the
+// success count (-1 = check-host unavailable). v3.18: superseded for gating
+// by irCheckEdgeTLS (bare TCP proved meaningless — dead edges answered SYN
+// 6/6); kept for ad-hoc diagnostics.
 func irCheckEdge(ip string) int {
         nodes := irNodeList()
         if len(nodes) == 0 {
@@ -163,6 +165,18 @@ func irCheckEdge(ip string) int {
                 }
         }
         return ok
+}
+
+// irCheckEdgeTLS does a REAL TLS handshake + HTTP request to https://<ip>/
+// from every Iranian node (v3.18). TCP-reachable is NOT enough: every PoP the
+// users reported as -1 (Bucharest RO / Karbala IQ / EdgeUno-Istanbul / the
+// panel's own 185.111.111.x geo answer) accepted TCP from all 6 IR nodes but
+// timed out the moment a TLS ClientHello arrived — while the Frankfurt
+// primary kept working for real users. Any HTTP answer (even 403/404/421 —
+// bunny's error pages) proves the TLS handshake completed; all-nodes-fail =
+// the edge is TLS-dead from Iran and must never ride a subscription.
+func irCheckEdgeTLS(ip string) int {
+        return irCheckURL("https://" + ip + "/")
 }
 
 // irCheckDomain HTTP-fetches the panel domain from all Iranian nodes and
@@ -281,9 +295,11 @@ func irProbeAll() {
                         go doctorRun()
                 }
         }
-        // per-edge TCP reachability (sequential: polite with the free API)
+        // per-edge REAL-TLS reachability (v3.18: upgraded from bare TCP —
+        // every edge the users reported as -1 was TCP-reachable 6/6 but
+        // TLS-dead from Iran). IROk carries the same verdict for the UI chips.
         for _, ip := range edges {
-                ok := irCheckEdge(ip)
+                ok := irCheckEdgeTLS(ip)
                 if ok < 0 {
                         continue
                 }
@@ -292,6 +308,8 @@ func irProbeAll() {
                         if e.IP == ip {
                                 e.IROk = ok
                                 e.IRAt = time.Now().Unix()
+                                e.IRTLS = ok
+                                e.IRTLSAt = e.IRAt
                         }
                 }
                 stateMu.Unlock()

@@ -103,6 +103,70 @@ func probeEdge(ip, domain string, geo map[string]map[string]string) EdgeScore {
         return es
 }
 
+// irProbeTLS is the per-edge TLS prober (var so tests can stub the network).
+var irProbeTLS = irCheckEdgeTLS
+
+// irGateEdges (v3.18): the subscription gate that ended the "-1 configs".
+// An edge can look perfect from the panel's EU vantage (loss 0, 400 KB/s,
+// TCP-reachable 6/6 from Iranian probe nodes) and still be TLS-dead from
+// Iran — every regional PoP the users reported (🥈 Bucharest / E5 Karbala /
+// EdgeUno-Istanbul / the panel's own 185.111.111.x geo answer) accepted the
+// TCP SYN from all 6 IR nodes and timed out on the TLS ClientHello. This
+// gate asks the IR nodes to do a REAL https://<ip>/ fetch: an edge is only
+// allowed into subscriptions when at least one Iranian node completed the
+// handshake. Probing unavailable (-1) keeps the edge (panel-side health
+// remains the fallback); a probed-and-all-failed edge (0) is dropped.
+// Survivors are re-ordered: IR-verified first (most nodes, then rank).
+func irGateEdges(healthy []*EdgeScore, maxProbe int) []*EdgeScore {
+        if len(healthy) == 0 {
+                return healthy
+        }
+        cands := healthy
+        if len(cands) > maxProbe {
+                cands = cands[:maxProbe]
+        }
+        var wg sync.WaitGroup
+        sem := make(chan struct{}, 3) // polite with the free check-host API
+        for _, e := range cands {
+                wg.Add(1)
+                go func(e *EdgeScore) {
+                        defer wg.Done()
+                        sem <- struct{}{}
+                        defer func() { <-sem }()
+                        if v := irProbeTLS(e.IP); v >= 0 {
+                                e.IRTLS, e.IRTLSAt = v, time.Now().Unix()
+                        }
+                }(e)
+        }
+        wg.Wait()
+        // probed-this-round = IRTLSAt landed now (the candidates arrive fresh from
+        // probeEdge with IRTLSAt == 0, so any timestamp is from this gate pass).
+        probed := map[string]bool{}
+        for _, e := range cands {
+                if e.IRTLSAt > 0 {
+                        probed[e.IP] = true
+                }
+        }
+        var verified, rest []*EdgeScore
+        for _, e := range healthy {
+                switch {
+                case e.IRTLS > 0:
+                        verified = append(verified, e)
+                case e.IRTLS == 0 && (probed[e.IP] || e.IRTLSAt > 0):
+                        // measured TLS-dead from Iran — never ships (buildLinks drops it too)
+                default:
+                        rest = append(rest, e) // -1 = probe unavailable, or not yet probed this round
+                }
+        }
+        // stable sort: verified by node count (desc), keep original rank within ties
+        for i := 1; i < len(verified); i++ {
+                for j := i; j > 0 && verified[j-1].IRTLS < verified[j].IRTLS; j-- {
+                        verified[j-1], verified[j] = verified[j], verified[j-1]
+                }
+        }
+        return append(verified, rest...)
+}
+
 // applyAutoEdges is the pure state-transition of an auto-scan (unit-testable):
 // returns the new primary address. A manually-set address survives untouched.
 func applyAutoEdges(st *State, healthy []*EdgeScore, now time.Time) string {
@@ -179,10 +243,33 @@ func autoScanOnce() (bool, string) {
                 healthy = healthy[:autoScanKeep]
         }
 
+        // v3.18: IR-TLS gate — an edge that cannot complete a TLS handshake
+        // from Iranian vantage points is a guaranteed -1 for the users, no
+        // matter how well it scores from the panel's EU vantage. Dead edges
+        // never ride the subscription again.
+        healthy = irGateEdges(healthy, 8)
+        if len(healthy) == 0 {
+                stateMu.Lock()
+                state.TopEdges = nil
+                state.MultiEdge = false
+                state.AutoScanAt = time.Now().Unix()
+                saveStateLocked()
+                enabled := state.AutoScan
+                stateMu.Unlock()
+                go doctorRun()
+                logf("auto-scan: all %d healthy edges are TLS-dead from Iran — shipping primary/DNS/🎭/🛡️ only", autoScanKeep)
+                msg := "هیچ لبه‌ای از ایران قابل اتصال (TLS) نبود — کانفیگ‌ها فقط با مسیر اصلی، دامنه، 🎭 و 🛡️ مستقیم ساخته می‌شوند تا هیچ کانفیگ منفی یک ندهد"
+                if !enabled {
+                        msg += " (اسکن خودکار خاموش است — فقط این بار اجرا شد)"
+                }
+                return true, msg
+        }
+
         stateMu.Lock()
         newAddr := applyAutoEdges(state, healthy, time.Now())
         enabled := state.AutoScan
         mode := state.FrontMode
+        saveStateLocked() // v3.18 fix: scan results could be lost on restart when the IR probe goroutine bailed early
         stateMu.Unlock()
 
         // v3.16→3.17 FIX: the front probe is a NETWORK call (TLS dial + HTTP

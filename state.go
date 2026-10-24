@@ -59,8 +59,10 @@ type EdgeScore struct {
         CC        string  `json:"cc,omitempty"`
         City      string  `json:"city,omitempty"`
         TS        int64   `json:"ts,omitempty"`
-        IROk      int     `json:"ir_ok,omitempty"` // v3.15: reachable from Iranian probe nodes (count)
-        IRAt      int64   `json:"ir_at,omitempty"`
+        IROk      int     `json:"ir_ok,omitempty"`   // v3.15: reachable from Iranian probe nodes (count)
+        IRAt      int64   `json:"ir_at,omitempty"`   // v3.18: IROk now carries the TLS-level verdict
+        IRTLS     int     `json:"ir_tls,omitempty"` // v3.18: nodes that completed a REAL TLS handshake to this IP (0 = dead from Iran, -1 = probe unavailable)
+        IRTLSAt   int64   `json:"ir_tls_at,omitempty"`
 }
 
 // DocRes is one transport's doctor (self-test) verdict — a REAL end-to-end

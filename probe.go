@@ -535,24 +535,23 @@ var edgeRegionTiers = []map[string]int{
         {"SE": 3, "NO": 3, "DK": 3, "FI": 3, "LT": 3, "LV": 3, "EE": 3, "BE": 3, "LU": 2, "GB": 3, "IE": 2, "ES": 3, "PT": 2}, // tier 4 — fallback breadth
 }
 
-// pickEdgesByRegion walks the tiers in order, taking up to perCC edges from
-// each country until total is filled (unknown-geo edges are skipped).
+// pickEdgesByRegion builds a shortlist balanced ACROSS tiers (v3.18).
+// v3.9 walked the tiers in order and filled the whole budget with tier-1
+// (TR/AZ/GE/IQ/RO…) — but the field data of 2026-10 proved the opposite of
+// the "near-Iran first" assumption: the regional PoPs are TCP-reachable yet
+// TLS-dead from Iranian consumer ISPs, while the Frankfurt/EU PoPs the users
+// actually ride were tier-3. The shortlist is now round-robin interleaved
+// (tier1 → tier2 → tier3 → tier4 …) so the first autoScanTargets probes
+// cover every region and the IR-TLS gate — not geography — picks winners.
 func pickEdgesByRegion(ips []string, geo map[string]map[string]string, total int) []string {
         if len(geo) == 0 || total <= 0 {
                 return nil
         }
-        seen := make(map[string]bool, len(ips))
-        var out []string
-        budget := total
+        var tiers [][]string
         for _, tier := range edgeRegionTiers {
                 used := map[string]int{}
+                var list []string
                 for _, ip := range ips {
-                        if budget <= 0 {
-                                return out
-                        }
-                        if seen[ip] {
-                                continue
-                        }
                         g, ok := geo[ip]
                         if !ok {
                                 continue
@@ -562,10 +561,32 @@ func pickEdgesByRegion(ips []string, geo map[string]map[string]string, total int
                         if !has || used[cc] >= cap {
                                 continue
                         }
-                        seen[ip] = true
                         used[cc]++
+                        list = append(list, ip)
+                }
+                tiers = append(tiers, list)
+        }
+        var out []string
+        seen := map[string]bool{}
+        for round := 0; len(out) < total; round++ {
+                progressed := false
+                for ti := range tiers {
+                        if round >= len(tiers[ti]) {
+                                continue
+                        }
+                        ip := tiers[ti][round]
+                        if seen[ip] {
+                                continue
+                        }
+                        seen[ip] = true
                         out = append(out, ip)
-                        budget--
+                        progressed = true
+                        if len(out) >= total {
+                                return out
+                        }
+                }
+                if !progressed {
+                        break
                 }
         }
         return out

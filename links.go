@@ -384,33 +384,69 @@ func encParams(p map[string]string) string {
         return strings.Join(parts, "&")
 }
 
+// cityFa renders CDN PoP cities in short, clean Persian (v3.18 naming pass —
+// "اسم کانفیگ‌ها زیبا و کوتا"): "🥈 بخارست" instead of "🥈 Bucharest 76ms".
+var cityFa = map[string]string{
+        "bucharest": "بخارست", "istanbul": "استانبول", "ankara": "آنکارا", "izmir": "ازمیر",
+        "karbala": "کربلا", "baghdad": "بغداد", "sofia": "صوفیه", "varna": "وارنا",
+        "warsaw": "ورشو", "vienna": "وین", "frankfurt am main": "فرانکفورت", "frankfurt": "فرانکفورت",
+        "berlin": "برلین", "amsterdam": "آمستردام", "london": "لندن", "paris": "پاریس",
+        "brussels": "بروکسل", "zurich": "زوریخ", "milan": "میلان", "rome": "رم",
+        "prague": "پراگ", "budapest": "بوداپست", "baku": "باکو", "tbilisi": "تفلیس",
+        "yerevan": "ایروان", "athens": "آتن", "dubai": "دبی", "abu dhabi": "ابوظبی",
+        "doha": "دوحه", "manama": "منامه", "kuwait city": "کویت", "riyadh": "ریاض",
+        "jeddah": "جده", "muscat": "مسقط", "nicosia": "نیکوزیا", "limassol": "لیماسول",
+        "belgrade": "بلگراد", "zagreb": "زاگرب", "ljubljana": "لیوبلیانا", "skopje": "اسکوپیه",
+        "chisinau": "کیشیناو", "stockholm": "استکهلم", "copenhagen": "کپنهاگ", "helsinki": "هلسینکی",
+        "oslo": "اسلو", "riga": "ریگا", "vilnius": "ویلنیوس", "tallinn": "تالین",
+        "bratislava": "براتیسلاوا", "luxembourg": "لوکزامبورگ", "madrid": "مادرید",
+        "lisbon": "لیسبون", "dublin": "دوبلین", "moscow": "مسکو", "kyiv": "کیف",
+        "hong kong": "هنگ‌کنگ", "singapore": "سنگاپور", "tokyo": "توکیو", "seoul": "سئول",
+}
+
+// faCity maps an edge's city (or country code) to its short Persian form.
+func faCity(city, cc string) string {
+        if c, ok := cityFa[strings.ToLower(strings.TrimSpace(city))]; ok {
+                return c
+        }
+        if strings.TrimSpace(city) != "" {
+                return strings.TrimSpace(city)
+        }
+        return strings.TrimSpace(cc)
+}
+
 // buildLinks generates every share link for one client (byte-compatible with
 // the Python panel). v3.9: when the all-operator edge set (state.TopEdges) is
 // active, the list expands to one variant per graded edge plus the DNS-auto
 // entry — every client app then picks its best route per operator.
 // v3.11: the national-internet kit (relay/direct/white-SNI survival variants)
 // is appended last so daily traffic keeps the fast CDN paths.
+// v3.18: (a) edges MEASURED TLS-dead from Iran (IRTLS==0 with a probe
+// timestamp) are SKIPPED — a dead variant in the list is a guaranteed -1; (b) names are
+// short and Persian (🥇 اصلی / 🥈 بخارست / 🌐 دامنه / 🛡️ مستقیم).
 func buildLinks(c *Client, host string) []Link {
         stateMu.RLock()
         addr := state.Address
         multi := state.MultiEdge && len(state.TopEdges) > 0
         edges := append([]*EdgeScore(nil), state.TopEdges...)
+        domainIR := state.DomainIR
         stateMu.RUnlock()
         if addr == "" {
                 addr = host
         }
         if !multi || host == "" {
-                out := buildLinksAddr(c, addr, host, "", true)
+                out := buildLinksAddr(c, addr, host, " \U0001F947", true)
                 out = appendFrontAlts(c, addr, host, out)
                 return appendLocalLinks(c, host, out)
         }
-        out := buildLinksAddr(c, addr, host, "", true)
+        out := buildLinksAddr(c, addr, host, " \U0001F947", true)
         seen := map[string]bool{}
         for _, l := range out {
                 seen[l.URL] = true
         }
-        // 🥇 is implicit for the primary (first) entries; variants get 🥈🥉…
-        medals := []string{"\U0001F948", "\U0001F949", "E4", "E5"} // 🥈🥉
+        // 🥇 rides the primary set; variants get 🥈🥉🏅🎖 — short Persian names,
+        // no latency noise (the scanner UI shows the live numbers instead).
+        medals := []string{"\U0001F948", "\U0001F949", "\U0001F3C5", "\U0001F396"} // 🥈🥉🏅🎖
         rank := 0
         for _, e := range edges {
                 if rank >= len(medals) {
@@ -419,11 +455,10 @@ func buildLinks(c *Client, host string) []Link {
                 if e.IP == addr {
                         continue // already the primary entry
                 }
-                city := e.City
-                if city == "" {
-                        city = e.CC
+                if e.IRTLS == 0 && e.IRTLSAt > 0 {
+                        continue // v3.18: MEASURED TLS-dead from Iran (IRTLSAt proves a real probe) — never ship a -1
                 }
-                suf := fmt.Sprintf(" %s %s %dms", medals[rank], city, int(e.Med))
+                suf := " " + medals[rank] + " " + faCity(e.City, e.CC)
                 for _, l := range buildLinksAddr(c, e.IP, host, suf, false) {
                         if !seen[l.URL] {
                                 seen[l.URL] = true
@@ -432,9 +467,11 @@ func buildLinks(c *Client, host string) []Link {
                 }
                 rank++
         }
-        // DNS-auto: let bunny geo-DNS pick the per-operator PoP itself.
-        if !isIPLiteral(host) && host != addr {
-                for _, l := range buildLinksAddr(c, host, host, " \U0001F310 DNS", false) {
+        // DNS-auto: let bunny geo-DNS pick the per-operator PoP itself. Skipped
+        // while the domain is measured dead-from-Iran (DomainIR==2) — shipping it
+        // then is just another guaranteed -1 row in the client's test list.
+        if !isIPLiteral(host) && host != addr && domainIR != 2 {
+                for _, l := range buildLinksAddr(c, host, host, " \U0001F310 دامنه", false) {
                         if !seen[l.URL] {
                                 seen[l.URL] = true
                                 out = append(out, l)
