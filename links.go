@@ -458,6 +458,9 @@ func buildLinks(c *Client, host string) []Link {
                 if e.IRTLSAt > 0 && e.IRTLS != 1 {
                         continue // v3.18.1: MEASURED TLS-dead from Iran (0 or legacy 2) — never ship a -1
                 }
+                if edgeBlockedState(e.IP) {
+                        continue // v3.19: the admin measured this edge dead on their own ISP
+                }
                 suf := " " + medals[rank] + " " + faCity(e.City, e.CC)
                 for _, l := range buildLinksAddr(c, e.IP, host, suf, false) {
                         if !seen[l.URL] {
@@ -504,7 +507,7 @@ func appendFrontAlts(c *Client, addr, host string, out []Link) []Link {
         }
         n := 0
         for _, p := range picks {
-                if n >= 2 {
+                if n >= 3 { // v3.19: three alternate fronts ride along (was 2) — more SNI diversity per subscription
                         break
                 }
                 if p.Base == "" || p.Base == active || p.IR == 2 {
@@ -579,19 +582,27 @@ func buildLinksAddrSNI(c *Client, addr, host, suffix string, primary bool, sniOv
         addLink := func(key, label, url string) {
                 links = append(links, Link{key, label, url})
         }
-        if allowed["vless-ws"] {
-                n1 := nm("VLESS-WS", "VLESS", "WS", "TLS", addr)
-                addLink("vless-ws", "VLESS · WebSocket",
-                        fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=ws&host=%s&path=%s#%s",
-                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
-                                pyQuote(wsPath()+"?ed=2048"), pyQuote(n1)))
-        }
+        // v3.19: XHTTP rides FIRST. Measured live (26.10): the chain itself is
+        // fast (warm requests ~200ms + 1.3MB/s through the tunnel from a
+        // far-away vantage), so the "connects but opens nothing" reports are
+        // Iranian DPI throttling of long-lived bidirectional WS flows.
+        // XHTTP packet-up splits the stream into ordinary chunked POST
+        // requests — the pattern the DPI does not flag. v2rayNG picks the
+        // FIRST config when testing, so the pattern-resistant transport
+        // becomes the one users actually get.
         if allowed["vless-xhttp"] {
                 n2 := nm("VLESS-XHTTP", "VLESS", "XHTTP", "TLS", addr)
                 addLink("vless-xhttp", "VLESS · XHTTP",
                         fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
                                 cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "h2,http/1.1")), pyQuote(sniHost),
                                 pyQuote(xhttpPath()), pyQuote(n2)))
+        }
+        if allowed["vless-ws"] {
+                n1 := nm("VLESS-WS", "VLESS", "WS", "TLS", addr)
+                addLink("vless-ws", "VLESS · WebSocket",
+                        fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                cid, uriAddr, tlsParam, pyQuote(orStr(alpnOv, "http/1.1")), pyQuote(sniHost),
+                                pyQuote(wsPath()+"?ed=2048"), pyQuote(n1)))
         }
         if allowed["vless-hu"] {
                 n3 := nm("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", addr)

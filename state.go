@@ -109,6 +109,11 @@ type State struct {
         // All-operator optimization (v3.9): graded edge set + subscription expansion.
         TopEdges  []*EdgeScore `json:"top_edges,omitempty"`
         MultiEdge bool         `json:"multi_edge,omitempty"`
+        // v3.19: edge IPs the ADMIN reported as dead for their own ISP ("-1") —
+        // never shipped in any subscription and never re-added by the scanner.
+        // The probe nodes cannot see every Iranian ISP; this is the user's ground
+        // truth override.
+        EdgeBlock []string `json:"edge_block,omitempty"`
         // National-internet kit (v3.11): survival variants (relay/direct).
         LocalMode *LocalModeState `json:"local_mode,omitempty"`
         // Auto edge scanner (v3.14): the panel scans & applies best edges.

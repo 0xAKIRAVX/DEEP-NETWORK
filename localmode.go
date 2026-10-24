@@ -138,7 +138,7 @@ func localDirectAddr(lm LocalModeState, host string) string {
         stateMu.RLock()
         var top string
         for _, e := range state.TopEdges {
-                if e.IRTLS == 1 {
+                if e.IRTLS == 1 && !edgeBlockedLocked(e.IP) { // v3.19: never point 🛡️ at a blocked edge
                         top = e.IP
                         break
                 }

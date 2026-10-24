@@ -489,6 +489,7 @@ func statePayload(r *http.Request) map[string]any {
                 "tuning":    tuningSanitize(state.Tuning),
                 "tcp_ready": tcpReady(),
                 "top_edges": state.TopEdges, "multi_edge": state.MultiEdge,
+                "edge_block": append([]string(nil), state.EdgeBlock...),
                 "local_mode": lmSan,
                 "auto_scan": asSum,
                 "telegram": map[string]any{"connected": state.TGToken != "",
@@ -1415,6 +1416,12 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
                                 state.MultiEdge = true
                         }
                 }
+        }
+        // v3.19: edge blocklist — the admin's ground truth about their own ISP.
+        // Any edge IP listed here is dropped from every subscription and is
+        // never re-added by the scanner (probe nodes cannot see every ISP).
+        if v, ok := d["edge_block"]; ok {
+                state.EdgeBlock = parseEdgeBlock(v)
         }
         // v3.14: automatic edge scanner toggle.
         if v, ok := d["auto_scan"]; ok {

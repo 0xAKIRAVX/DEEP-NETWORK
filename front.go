@@ -37,7 +37,11 @@ import (
 // frontCandidates are tried in order (auto mode). Order rationale
 // (2026-10 measurements from Iran): fonts.bunny.net is embedded by an
 // enormous number of ordinary websites (an ISP blocking it breaks normal
-// Iranian sites), bunny.net is the vendor apex, and the shared *.b-cdn.net
+// Iranian sites); bunnycdn.com / dash.bunny.net / docs.bunny.net are three
+// more bunny-owned zones, each with its OWN exact certificate (verified:
+// strict TLS + Host-header routing to this panel all pass) — added in
+// v3.19 so a per-ISP SNI block against one name cannot strand the user;
+// bunny.net stays as a further fallback, and the shared *.b-cdn.net
 // wildcard stays as the last resort — Iran currently blocks it 6/6, but it
 // may come back and it still works outside Iran.
 var frontCandidates = []struct {
@@ -45,6 +49,9 @@ var frontCandidates = []struct {
         rand bool
 }{
         {"fonts.bunny.net", false},
+        {"bunnycdn.com", false},
+        {"dash.bunny.net", false},
+        {"docs.bunny.net", false},
         {"bunny.net", false},
         {"b-cdn.net", true},
 }

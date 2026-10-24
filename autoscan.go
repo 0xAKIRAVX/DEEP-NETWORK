@@ -103,6 +103,54 @@ func probeEdge(ip, domain string, geo map[string]map[string]string) EdgeScore {
         return es
 }
 
+// ─────────── v3.19: edge blocklist (the admin's ground truth) ───────────
+// The 6 Iranian probe nodes and every sandbox measurement can pass an edge
+// that the ADMIN's own ISP still kills (measured live: Stockholm
+// 195.181.166.158 and the bunny.net SNI front passed 6/6 probes while the
+// user's v2rayNG reported -1). parseEdgeBlock accepts a JSON array or a
+// comma/space separated string and keeps only valid IP literals.
+func parseEdgeBlock(v any) []string {
+        var raw []string
+        switch x := v.(type) {
+        case []any:
+                for _, it := range x {
+                        raw = append(raw, fmt.Sprintf("%v", it))
+                }
+        case string:
+                raw = strings.FieldsFunc(x, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' })
+        }
+        seen := map[string]bool{}
+        var out []string
+        for _, s := range raw {
+                s = strings.TrimSpace(strings.Trim(s, "[]"))
+                if s == "" || seen[s] || !isIPLiteral(s) {
+                        continue
+                }
+                seen[s] = true
+                out = append(out, s)
+        }
+        return out
+}
+
+// edgeBlocked reports whether ip sits on the blocklist (NO lock taken —
+// callers already hold stateMu or use edgeBlockedState).
+func edgeBlockedLocked(ip string) bool {
+        for _, b := range state.EdgeBlock {
+                if b == ip {
+                        return true
+                }
+        }
+        return false
+}
+
+// edgeBlockedState is the lock-taking variant for code paths that hold no
+// stateMu when they call (buildLinks edge loop, localDirectAddr).
+func edgeBlockedState(ip string) bool {
+        stateMu.RLock()
+        defer stateMu.RUnlock()
+        return edgeBlockedLocked(ip)
+}
+
 // irProbeTLS is the per-edge TLS prober (var so tests can stub the network).
 var irProbeTLS = irCheckEdgeTLS
 
@@ -224,6 +272,34 @@ func autoScanOnce() (bool, string) {
         }
         if len(healthy) == 0 {
                 return false, fmt.Sprintf("هیچ لبه سالمی (پکت‌لاست ۰) از %d لبه پیدا نشد", len(edges))
+        }
+        // v3.19: the admin's blocklist is ground truth — an edge the user
+        // measured as -1 on their own ISP never rides the subscription again,
+        // even when every probe node disagrees.
+        {
+                var keep []*EdgeScore
+                for _, e := range healthy {
+                        if !edgeBlockedState(e.IP) {
+                                keep = append(keep, e)
+                        }
+                }
+                healthy = keep
+        }
+        if len(healthy) == 0 {
+                stateMu.Lock()
+                state.TopEdges = nil
+                state.MultiEdge = false
+                state.AutoScanAt = time.Now().Unix()
+                saveStateLocked()
+                enabled := state.AutoScan
+                stateMu.Unlock()
+                go doctorRun()
+                logf("auto-scan: every healthy edge is on the admin blocklist — shipping primary/DNS/🎭/🛡️ only")
+                msg := "همه لبه‌های سالم در فهرست حذف شما هستند — کانفیگ‌ها فقط با مسیر اصلی، دامنه، 🎭 و 🛡️ مستقیم ساخته می‌شوند"
+                if !enabled {
+                        msg += " (اسکن خودکار خاموش است — فقط این بار اجرا شد)"
+                }
+                return true, msg
         }
         if len(healthy) > autoScanKeep {
                 healthy = healthy[:autoScanKeep]

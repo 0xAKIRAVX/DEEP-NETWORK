@@ -29,8 +29,8 @@ func TestEvaluateFrontsPrefersIRAlive(t *testing.T) {
                 return -1
         }
         picks := evaluateFronts("", probe, ir)
-        if len(picks) != 2 {
-                t.Fatalf("picks = %v, want the 2 proven candidates", picks)
+        if len(picks) != 5 { // v3.19: all candidates except the failing fonts.bunny.net
+                t.Fatalf("picks = %v, want the 5 proven candidates", picks)
         }
         pick, ok := pickFront(picks)
         if !ok || pick.Base != "b-cdn.net" {
@@ -43,7 +43,7 @@ func TestEvaluateFrontsPrefersIRAlive(t *testing.T) {
         // no IR data at all (check-host down): fall back to the first proven
         picks2 := evaluateFronts("", probe, nil)
         pick2, ok2 := pickFront(picks2)
-        if !ok2 || pick2.Base != "bunny.net" {
+        if !ok2 || pick2.Base != "bunnycdn.com" { // v3.19: first proven is now bunnycdn.com (fonts fails)
                 t.Fatalf("fallback pick = %+v, want first proven", pick2)
         }
         if pick2.IR != -1 {
@@ -95,8 +95,8 @@ func TestApplyFrontsFromStoresPicks(t *testing.T) {
         if state.FrontIR != 1 {
                 t.Fatalf("legacy FrontIR = %d, want 1 (active front verdict)", state.FrontIR)
         }
-        if len(state.FrontPicks) != 2 {
-                t.Fatalf("FrontPicks = %v, want both proven candidates", state.FrontPicks)
+        if len(state.FrontPicks) != 5 { // v3.19: five proven candidates ride the picks
+                t.Fatalf("FrontPicks = %v, want all five proven candidates", state.FrontPicks)
         }
         if time.Now().Unix()-state.FrontPicksAt > 5 {
                 t.Fatalf("FrontPicksAt not refreshed: %d", state.FrontPicksAt)
