@@ -25,6 +25,7 @@ package main
 import (
         "fmt"
         "net"
+        net_url "net/url"
         "strings"
         "sync"
         "time"
@@ -266,6 +267,36 @@ func stateAddress(host string) string {
         return host
 }
 
+// sniPicks are well-known, domestically-allowed Iranian sites. The white-SNI
+// variant presents one of these names in the TLS ClientHello — the operator's
+// filter lets it pass. OWNING the domain is NOT needed: it is just a name on
+// the wire (the real routing rides the encrypted WS Host header).
+var sniPicks = []string{
+        "www.arvancloud.ir", "www.aparat.com", "www.digikala.com",
+        "www.snapp.ir", "www.irancell.ir",
+}
+
+// countDirectRoutes tells the admin how many DNS-free IP-literal routes the
+// current subscription carries (the origin direct-IP variant plus the graded
+// edge set when the all-operator optimizer has run).
+func countDirectRoutes(c *Client, host string) int {
+        n := 0
+        for _, l := range buildLinks(c, host) {
+                u, err := net_url.Parse(l.URL)
+                if err != nil || u.Host == "" {
+                        continue
+                }
+                hp := u.Host
+                if i := strings.LastIndex(hp, ":"); i > strings.LastIndex(hp, "]") {
+                        hp = hp[:i]
+                }
+                if isIPLiteral(hp) {
+                        n++
+                }
+        }
+        return n
+}
+
 // localModePayload feeds the panel «شبکه ملی» view (settings + guide).
 func localModePayload(host string) map[string]any {
         lm := localModeGet()
@@ -283,6 +314,8 @@ func localModePayload(host string) map[string]any {
         }
         return map[string]any{
                 "enabled":     lm.Enabled,
+                "sni_picks":   sniPicks,
+                "direct_routes": countDirectRoutes(&Client{Name: "main", ID: mainUUID()}, host),
                 "relay_host":  lm.RelayHost,
                 "relay_port":  lm.RelayPort,
                 "fake_sni":    lm.FakeSNI,
@@ -390,6 +423,20 @@ func localModeKitText(host string) string {
         b.WriteString("   هیچ مسیر نرم‌افزاری وجود ندارد. صادقانه.\n\n")
         b.WriteString("در همه حالت‌ها کلاینت خود را روی «تست همه کانفیگ‌ها» بگذارید\n")
         b.WriteString("تا اولین مسیر سالم را خودکار پیدا کند.\n\n")
+
+        b.WriteString("── بدون ثبت هویت و بدون دامنه؟ ──────────────────────────────\n\n")
+        b.WriteString("کانفیگ‌های «🛡️ IP مستقیم» و «🎭 SNI سفید» هیچ‌کدام ثبت هویت،\n")
+        b.WriteString("دامنه یا سرور نمی‌خواهند و همین حالا (بدون هیچ تنظیمی) کار می‌کنند:\n")
+        b.WriteString("  * 🛡️ IP مستقیم: آیپی واقعی پنل به‌جای دامنه — ضد فیلتر DNS.\n")
+        b.WriteString("  * 🎭 SNI سفید: فقط یک «اسم» دامنه مجاز در تنظیمات پنل وارد\n")
+        b.WriteString("    می‌کنید — مالکیت دامنه لازم نیست؛ مسیر واقعی داخل هدر\n")
+        b.WriteString("    رمزنگاری‌شده WS مخفی است.\n")
+        b.WriteString("  * مسیرهای لبه (🥈🥉…): اگر «بهینه‌سازی همه‌اپراتوره» را یک بار\n")
+        b.WriteString("    اجرا کنید، چند IP مستقیم دیگر هم به اشتراک اضافه می‌شود.\n\n")
+        b.WriteString("صادقانه: در قطع کامل بین‌الملل، تنها راهِ باقی‌ماندن آنلاین یک\n")
+        b.WriteString("نقطه ورود داخل ایران است — و طبق قانون، هر سرویس ایرانی (CDN،\n")
+        b.WriteString("VPS، هاست، دامنه .ir) ثبت هویت می‌خواهد. مسیر بدون هویت برای\n")
+        b.WriteString("قطع کامل، فقط گزینه‌های فیزیکی (مثل اینترنت ماهواره‌ای) است.\n\n")
 
         b.WriteString("── بدون VPS؟ مسیر رایگان: CDN ایرانی ────────────────────────\n\n")
         b.WriteString("سرور لازم نیست! یک CDN ایرانی (آروان‌کلاد/دراک) جلوی پنل\n")

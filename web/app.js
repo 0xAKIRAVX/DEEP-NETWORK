@@ -583,13 +583,29 @@
           <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">SNI یک دامنه مجاز + AllowInsecure — برای وقتی SNI ها را لیست سفید/سیاه می‌کنند. یک دامنه در کادر تنظیمات وارد کنید.</p>
         </div>
         <div style="background:rgba(240,160,90,.07);border:1px solid rgba(240,160,90,.3);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">یک سرور داخل ایران که ترافیک را لوله‌کشی می‌کند — <b>راه‌حل واقعی قطع بین‌الملل.</b> راه‌اندازی‌اش یک خط است (پایین صفحه). <b>بدون VPS؟ از CDN ایرانی رایگان استفاده کنید — راهنمای زیر.</b></p>
+          <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی <span style="font-size:9.5px;color:#d8a8a8">[نیازمند ثبت هویت — قانونی، برای همه سرویس‌های ایرانی]</span></b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">یک سرور داخل ایران که ترافیک را لوله‌کشی می‌کند — <b>راه‌حل واقعی قطع بین‌الملل.</b> راه‌اندازی‌اش یک خط است (پایین صفحه). <b>بدون VPS؟ از CDN ایرانی استفاده کنید — راهنمای زیر.</b></p>
         </div>
       </div>
       <div style="margin-top:12px;background:rgba(248,180,180,.05);border:1px solid rgba(248,180,180,.18);border-radius:12px;padding:11px 14px">
         <p style="font-size:11px;color:#d8a8a8;line-height:1.9"><b>صادقانه:</b> در «حالت شبکه ملی» دیتاسنترهای ایرانی تا امروز ترانزیت بین‌الملل خود را حفظ کرده‌اند، پس رله داخلی کار می‌کند؛ اما در خاموشی مطلق (مثل آبان ۹۸ که حتی دیتاسنترها قطع شدند) هیچ کانفیگ و نرم‌افزاری نمی‌تواند کار کند — فقط مسیر فیزیکی جایگزین. وعده‌ای بیشتر از این نمی‌دهیم که واقعیت باشد.</p>
       </div>
+      </section>
+
+      <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
+      <h3>🆓 بدون ثبت هویت، بدون دامنه، بدون سرور</h3>
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 10px;line-height:2">این دو واریانت <b>همین حالا بدون هیچ ثبت‌نام و هزینه‌ای</b> در اشتراک همه کاربران فعال‌اند و در فیلتر DNS و SNI (شایع‌ترین اختلال‌ها) کار می‌کنند:</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
+        <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
+          <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل، بدون نیاز به DNS — <b>بدون هیچ تنظیمی، خودکار فعال.</b></p>
+        </div>
+        <div style="background:rgba(214,201,107,.06);border:1px solid rgba(214,201,107,.25);border-radius:12px;padding:12px 14px">
+          <b style="font-size:12.5px;color:#e2d67e">🎭 SNI سفید — مالکیت دامنه لازم نیست!</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">فقط یک <b>اسم</b> دامنه مجاز در تنظیمات وارد می‌شود (از پیشنهادهای زیر انتخاب کنید) — دامنه‌ای که مالکش نیستید، فقط یک اسم روی سیم است؛ مسیر واقعی داخل هدر رمزنگاری‌شده WS مخفی می‌ماند.</p>
+        </div>
+      </div>
+      <p id="lm-nokyc-status" style="font-size:11.5px;color:#7fb98a;margin-top:10px;line-height:2"></p>
       </section>
 
       <section class="info-sec" style="margin-top:20px;max-width:720px">
@@ -603,13 +619,15 @@
         <label class="field"><input id="lm-fakesni" dir="ltr" value="${esc(s.fake_sni || '')}" placeholder="SNI سفید (مثلاً www.arvancloud.ir)"></label>
         <label class="field"><input id="lm-direct" dir="ltr" value="${esc(s.direct_ip || '')}" placeholder="IP مستقیم (خالی = خودکار از دامنه)"></label>
       </div>
+      <p style="font-size:11px;color:#8d8d8d;margin-top:8px;line-height:1.9">پیشنهاد SNI مجاز (بدون نیاز به مالکیت — فقط کلیک کنید):</p>
+      <div id="lm-snipicks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
       <div class="btns" style="margin-top:12px"><button class="btn primary" id="lm-save">ذخیره تنظیمات کیت</button></div>
       <p id="lm-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
       <div id="lm-variants"></div>
       </section>
 
       <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.35)">
-      <h3>🆓 بدون VPS — با CDN ایرانی رایگان (پیشنهادی برای شروع)</h3>
+      <h3>بدون VPS — با CDN ایرانی <span style="font-size:10px;color:#d8a8a8">(نیازمند ثبت هویت در پنل CDN + یک دامنه)</span></h3>
       <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">سرور و هزینه ماهانه لازم نیست: یک <b>CDN داخل ایران</b> (آروان‌کلاد یا دراک) جلوی پنل می‌نشیند، داخل شبکه ملی همیشه در دسترس است و ترانزیت بین‌الملل خود را در قطعی‌ها حفظ کرده است. فقط یک دامنه لازم دارید (ارزان‌ترین دامنه ایرانی کافی است) و دامنه را <b>از همین حالا</b> تنظیم کنید — در روز قطعی تغییر DNS ممکن نیست:</p>
       <div id="lm-freecdn">در حال دریافت راهنما…</div>
       </section>
@@ -1353,6 +1371,23 @@
         const lm = await api('localmode');
         if (lm.resolved_ip && $('#lm-direct') && !$('#lm-direct').value) {
           $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + lm.resolved_ip + ')';
+        }
+        // v3.13: no-KYC status line
+        const stBox = $('#lm-nokyc-status');
+        if (stBox) {
+          const dr = lm.direct_routes != null ? lm.direct_routes : '?';
+          stBox.innerHTML = '✓ وضعیت فعلی: <b>' + dr + '</b> مسیر IP مستقیم (بدون DNS) در اشتراک‌ها فعال است' +
+            (lm.fake_sni ? ' — SNI سفید: <b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(lm.fake_sni) + '</b>' : ' — SNI سفید هنوز تنظیم نشده (از پیشنهادهای زیر انتخاب کنید)');
+        }
+        // v3.13: white-SNI quick picks — one click, no typing, no ownership
+        const picks = $('#lm-snipicks');
+        if (picks && lm.sni_picks && lm.sni_picks.length) {
+          picks.innerHTML = lm.sni_picks.map(d =>
+            '<button type="button" class="mini-btn lm-pick" data-sni="' + esc(d) + '" style="direction:ltr;font-family:var(--mono)">' + esc(d) + '</button>').join('');
+          $$('.lm-pick').forEach(b => b.addEventListener('click', () => {
+            const inp = $('#lm-fakesni');
+            if (inp) { inp.value = b.dataset.sni; inp.focus(); toast('SNI سفید تنظیم شد: ' + b.dataset.sni + ' — ذخیره را بزنید', 'ok'); }
+          }));
         }
         const freeBox = $('#lm-freecdn');
         if (freeBox && lm.guide && lm.guide.freecdn) {

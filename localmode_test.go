@@ -323,6 +323,25 @@ func TestNoCDNVariantsForIPRelay(t *testing.T) {
         }
 }
 
+// v3.13: the payload must carry the SNI quick-picks and a real count of
+// DNS-free routes; the kit must document the no-KYC reality honestly.
+func TestPayloadCarriesSniPicksAndDirectRoutes(t *testing.T) {
+        t.Setenv("DATA_DIR", t.TempDir())
+        loadState()
+        stateMu.Lock()
+        state.LocalMode = &LocalModeState{Enabled: true, FakeSNI: "www.aparat.com"}
+        state.Tuning = defaultTuning()
+        stateMu.Unlock()
+        p := localModePayload("deep-network-development-w4a86.lucity.app")
+        picks, _ := p["sni_picks"].([]string)
+        if len(picks) < 3 || !containsStr(picks, "www.arvancloud.ir") {
+                t.Fatalf("sni_picks missing/short: %v", picks)
+        }
+        if dr, _ := p["direct_routes"].(int); dr < 1 {
+                t.Fatalf("direct_routes must count at least the origin direct-IP variant, got %v", p["direct_routes"])
+        }
+}
+
 func TestLocalModeKitText(t *testing.T) {
         t.Setenv("DATA_DIR", t.TempDir())
         loadState()
@@ -332,7 +351,7 @@ func TestLocalModeKitText(t *testing.T) {
         stateMu.Unlock()
         kit := localModeKitText("deep-network-development-w4a86.lucity.app")
         for _, want := range []string{
-                "کیت بقا برای شبکه ملی", "🇮🇷", "socat", "systemd", "iptables", "CDN ایرانی", "arvancloud.ir",
+                "کیت بقا برای شبکه ملی", "🇮🇷", "socat", "systemd", "iptables", "CDN ایرانی", "arvancloud.ir", "بدون ثبت هویت و بدون دامنه",
                 "79.175.129.200:443", "185.59.222.196:443", "آبان ۹۸",
         } {
                 if !strings.Contains(kit, want) {
