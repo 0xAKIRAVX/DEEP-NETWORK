@@ -199,10 +199,16 @@ func sniFor(addr, host string) string {
 
 // linkSNI rides a random subdomain of the platform wildcard zone: the DPI never
 // sees a known hostname while the cert still validates and routing is unchanged.
+// v3.15: when a PROVEN SNI front is active (bunny's shared *.b-cdn.net cert —
+// the panel domain is DNS-poisoned inside Iran, the front removes it from the
+// wire entirely) it takes precedence and applies to every emitted link.
 func linkSNI(sniHost string) string {
         host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(sniHost)), ".")
         if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
                 return sniHost
+        }
+        if s := frontFromState(); s != "" {
+                return s
         }
         if !strings.HasSuffix(host, ".lucity.app") || host == "lucity.app" {
                 return sniHost

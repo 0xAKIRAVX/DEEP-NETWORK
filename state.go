@@ -59,6 +59,17 @@ type EdgeScore struct {
         CC        string  `json:"cc,omitempty"`
         City      string  `json:"city,omitempty"`
         TS        int64   `json:"ts,omitempty"`
+        IROk      int     `json:"ir_ok,omitempty"` // v3.15: reachable from Iranian probe nodes (count)
+        IRAt      int64   `json:"ir_at,omitempty"`
+}
+
+// DocRes is one transport's doctor (self-test) verdict — a REAL end-to-end
+// tunnel probe through the CDN edge with the exact link parameters users get.
+type DocRes struct {
+        OK   bool   `json:"ok"`
+        MS   int64  `json:"ms,omitempty"`
+        Err  string `json:"err,omitempty"`
+        Edge string `json:"edge,omitempty"` // edge IP the probe rode
 }
 
 type Tuning struct {
@@ -103,6 +114,16 @@ type State struct {
         AutoScanAt int64  `json:"auto_scan_at,omitempty"`
         AutoAddr   bool   `json:"auto_addr,omitempty"` // Address was set by auto-scan
         LastHost   string `json:"last_host,omitempty"` // last seen public Host header
+        // v3.15: scan cadence in hours (default 1), SNI front, doctor, Iran probe.
+        AutoScanHours int    `json:"auto_scan_hours,omitempty"` // 0 → 1h
+        FrontSNI      string `json:"front_sni,omitempty"`       // active front base domain ("" = off)
+        FrontRand     bool   `json:"front_rand,omitempty"`      // front cert is a wildcard → random label
+        FrontAt       int64  `json:"front_at,omitempty"`        // last successful front probe
+        FrontMode     string `json:"front_mode,omitempty"`       // "" = auto, "off", or custom domain
+        Doctor        map[string]DocRes `json:"doctor,omitempty"` // per-transport E2E health
+        DoctorAt      int64  `json:"doctor_at,omitempty"`
+        DomainIR      int    `json:"domain_ir,omitempty"`       // 0 unknown, 1 reachable, 2 poisoned/blocked
+        DomainIRAt    int64  `json:"domain_ir_at,omitempty"`
         // Telegram bot / Mini App (v3.4)
         TGToken      string     `json:"tg_token,omitempty"`
         TGAdminID    string     `json:"tg_admin_id,omitempty"`

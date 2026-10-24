@@ -171,6 +171,52 @@ func handleAutoScan(w http.ResponseWriter, r *http.Request) {
                                 saveState()
                         }
                 }
+                if v, ok := d["every_hours"]; ok {
+                        if f, ok := v.(float64); ok {
+                                h := int(f)
+                                if h < 1 {
+                                        h = 1
+                                }
+                                if h > 24 {
+                                        h = 24
+                                }
+                                stateMu.Lock()
+                                state.AutoScanHours = h
+                                stateMu.Unlock()
+                                saveState()
+                        }
+                }
+                if v, ok := d["front_sni"]; ok {
+                        if s, ok := v.(string); ok {
+                                stateMu.Lock()
+                                state.FrontMode = strings.ToLower(strings.TrimSpace(s))
+                                stateMu.Unlock()
+                                saveState()
+                                // re-probe the front immediately on the best edge
+                                go func() {
+                                        if domain := autoScanDomain(); domain != "" {
+                                                stateMu.RLock()
+                                                edge := ""
+                                                if len(state.TopEdges) > 0 {
+                                                        edge = state.TopEdges[0].IP
+                                                } else if isIPLiteral(strings.TrimSpace(state.Address)) {
+                                                        edge = strings.TrimSpace(state.Address)
+                                                }
+                                                mode := state.FrontMode
+                                                stateMu.RUnlock()
+                                                if edge != "" {
+                                                        stateMu.Lock()
+                                                        applyFront(state, mode, edge, domain, func(base string, rand bool) error {
+                                                                return frontProbe(edge, domain, base, rand)
+                                                        })
+                                                        stateMu.Unlock()
+                                                        saveState()
+                                                        go doctorRun()
+                                                }
+                                        }
+                                }()
+                        }
+                }
                 wantRun := false
                 if a, _ := d["action"].(string); a == "run" {
                         wantRun = true
@@ -181,6 +227,11 @@ func handleAutoScan(w http.ResponseWriter, r *http.Request) {
                 if wantRun && !autoScanRunning.Load() {
                         go autoScanOnce()
                         sendJSON(w, 200, map[string]any{"started": true})
+                        return
+                }
+                if b, ok := d["doctor"].(bool); ok && b {
+                        go doctorRun()
+                        sendJSON(w, 200, map[string]any{"started": true, "doctor": true})
                         return
                 }
                 sendJSON(w, 200, map[string]any{"started": false, "running": autoScanRunning.Load()})
@@ -411,6 +462,7 @@ func statePayload(r *http.Request) map[string]any {
         if v := strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]; strings.TrimSpace(v) == "http" {
                 scheme = "http"
         }
+        asSum := autoScanSummary() // v3.15: front/doctor/ir/hours — takes its own locks
         stateMu.RLock()
         clients := append([]*Client(nil), state.Clients...)
         settings := map[string]any{
@@ -422,8 +474,7 @@ func statePayload(r *http.Request) map[string]any {
                 "tcp_ready": tcpReady(),
                 "top_edges": state.TopEdges, "multi_edge": state.MultiEdge,
                 "local_mode": localModeGet(),
-                "auto_scan": map[string]any{"enabled": state.AutoScan,
-                        "last_run": state.AutoScanAt, "auto_addr": state.AutoAddr},
+                "auto_scan": asSum,
                 "telegram": map[string]any{"connected": state.TGToken != "",
                         "bot_username": state.TGBotUser, "admin_id": state.TGAdminID},
         }

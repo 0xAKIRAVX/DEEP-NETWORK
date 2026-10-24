@@ -498,17 +498,61 @@
       const curAddr = (S.state && S.state.settings.address) || '';
       const as = (S.state && S.state.settings.auto_scan) || {};
       const asEdges = (S.state && S.state.settings.top_edges) || [];
+      const front = as.front || {}, doctor = as.doctor || {}, ir = as.ir || {};
+      const docRes = doctor.results || {};
+      const docLabels = { 'vless-ws': 'VLESS·WS', 'vless-xhttp': 'VLESS·XHTTP', 'vless-hu': 'VLESS·HTTPUpgrade', 'vmess-ws': 'VMess·WS', 'trojan-ws': 'Trojan·WS' };
+      const docChips = Object.keys(docLabels).map(k => {
+        const r = docRes[k];
+        if (!r) return '';
+        return `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid ${r.ok ? 'rgba(127,185,138,.4)' : 'rgba(248,120,120,.45)'};border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono);color:${r.ok ? '#9fd8aa' : '#f0a0a0'}">${r.ok ? '✓' : '✗'} ${docLabels[k]}${r.ok && r.ms ? ' ' + r.ms + 'ms' : ''}</span>`;
+      }).join('');
       const rel = as.last_run ? Math.max(0, Math.round((Date.now()/1000 - as.last_run))) : 0;
       const relTxt = as.last_run ? (rel < 90 ? 'همین حالا' : rel < 5400 ? Math.round(rel/60)+' دقیقه پیش' : rel < 172800 ? Math.round(rel/3600)+' ساعت پیش' : new Date(as.last_run*1000).toLocaleDateString('fa-IR')) : 'هرگز';
+      const docRel = doctor.at ? Math.max(0, Math.round(Date.now()/1000 - doctor.at)) : 0;
+      const docRelTxt = doctor.at ? (docRel < 90 ? 'همین حالا' : docRel < 5400 ? Math.round(docRel/60)+' دقیقه پیش' : Math.round(docRel/3600)+' ساعت پیش') : 'هرگز';
+      const hours = as.every_hours || 1;
+      const nextTxt = as.enabled && as.next_in > 0 ? ' — اسکن بعدی: ' + (as.next_in < 5400 ? Math.max(1, Math.round(as.next_in/60)) + ' دقیقه دیگر' : Math.round(as.next_in/3600) + ' ساعت دیگر') : '';
+      const irBanner = (ir.domain === 2) ? `<div style="margin-top:10px;background:rgba(248,150,150,.07);border:1px solid rgba(248,150,150,.3);border-radius:10px;padding:9px 12px"><p style="font-size:11px;color:#eab8b8;line-height:1.9"><b>⚠️ دامنه پنل از ایران قابل دسترس نیست</b> (تست‌شده از ۶ نود ایرانی — DNS به آیپی‌های مسدود تبدیل می‌شود). کانفیگ‌های «🌐 DNS» در ایران کار نمی‌کنند؛ <b>کانفیگ‌های آی‌پی (🛡️ و 🥇🥈🥉) را استفاده کنید</b> — جلوی SNI آن‌ها دیگر دامنه پنل نیست.</p></div>` : '';
+      const frontBox = front.active
+        ? `<div style="margin-top:10px;background:rgba(127,185,138,.08);border:1px solid rgba(127,185,138,.35);border-radius:10px;padding:9px 12px"><p style="font-size:11px;color:#a9dcb4;line-height:1.9"><b>🎯 جلوی SNI فعال: <span dir="ltr" style="font-family:var(--mono)">${esc(front.host)}</span></b> — SNI همه کانفیگ‌ها دیگر دامنه پنل نیست؛ با certificate معتبر bunny و بدون allowInsecure. دامنه پنل در ایران DNS-پویزن است و دست‌کاری handshake می‌شود — این جلو آن را از سیم کاملاً حذف می‌کند.</p></div>`
+        : `<p style="font-size:11px;color:#c9b98a;margin-top:8px;line-height:1.9">🎯 جلوی SNI هنوز فعال نیست — بعد از اولین اسکن اثبات و فعال می‌شود (bunny برای SNI ناشناخته certificate معتبر مشترک <span dir="ltr" style="font-family:var(--mono)">*.b-cdn.net</span> ارائه می‌دهد؛ مسیر با Host هدر رمزنگاری‌شده حفظ می‌شود).</p>`;
       return `<section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
       <h3>🤖 اسکن و جایگزاری خودکار <span style="font-size:10px;color:#7fb98a">${as.enabled ? 'فعال' : 'خاموش'}</span></h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">پنل <b>خودش</b> هر ۶ ساعت لبه‌های نزدیک ایران را می‌سنجد — فقط لبه‌های با <b>پکت‌لاست ۰</b>، پینگ پایین و <b>سرعت واقعی</b> — و بهترین‌ها را <b>خودکار در کانفیگ همه کاربران جایگزاری می‌کند</b>. آدرسی که خودتان دستی انتخاب کرده باشید هرگز لمس نمی‌شود.</p>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:6px 2px"><input type="checkbox" id="as-on" ${as.enabled ? 'checked' : ''}><span class="cbx"></span><b>اسکن خودکار فعال باشد</b> (هر ۶ ساعت)</label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">پنل <b>خودش</b> هر <b>${hours === 1 ? '۱ ساعت' : hours + ' ساعت'}</b> لبه‌های نزدیک ایران را می‌سنجد — فقط لبه‌های با <b>پکت‌لاست ۰</b>، پینگ پایین و <b>سرعت واقعی</b> — و بهترین‌ها را <b>خودکار در کانفیگ همه کاربران جایگزاری می‌کند</b>. آدرسی که خودتان دستی انتخاب کرده باشید هرگز لمس نمی‌شود.</p>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:6px 2px"><input type="checkbox" id="as-on" ${as.enabled ? 'checked' : ''}><span class="cbx"></span><b>اسکن خودکار فعال باشد</b></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
+        <label class="field sel" style="max-width:190px;margin:0"><select id="as-every">
+          <option value="1" ${hours === 1 ? 'selected' : ''}>هر ۱ ساعت (پیشنهادی)</option>
+          <option value="2" ${hours === 2 ? 'selected' : ''}>هر ۲ ساعت</option>
+          <option value="3" ${hours === 3 ? 'selected' : ''}>هر ۳ ساعت</option>
+          <option value="6" ${hours === 6 ? 'selected' : ''}>هر ۶ ساعت</option>
+          <option value="12" ${hours === 12 ? 'selected' : ''}>هر ۱۲ ساعت</option>
+          <option value="24" ${hours === 24 ? 'selected' : ''}>هر ۲۴ ساعت</option>
+        </select></label>
         <button class="btn primary" id="as-run">🤖 اسکن و جایگزاری فوری</button>
       </div>
-      <p id="as-status" style="font-size:11.5px;color:#8d8d8d;margin:10px 0 0;line-height:1.9">آخرین اسکن: <b>${relTxt}</b>${as.enabled ? ' — اسکن بعدی خودکار انجام می‌شود' : ' — اسکن خودکار خاموش است'}</p>
-      <div id="as-edges">${asEdges.length ? asEdges.map(e => `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid var(--line);border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono)">${esc(e.ip)} · ${Math.round(e.med)}ms · ${Math.round(e.kbps||0)}KB/s${e.city ? ' · ' + esc(e.city) : ''}</span>`).join('') : '<p style="font-size:11px;color:#8d8d8d;margin-top:6px">هنوز اسکنی انجام نشده — دکمه بالا را بزنید.</p>'}</div>
+      <p id="as-status" style="font-size:11.5px;color:#8d8d8d;margin:10px 0 0;line-height:1.9">آخرین اسکن: <b>${relTxt}</b>${as.enabled ? nextTxt : ' — اسکن خودکار خاموش است'}</p>
+      <div id="as-edges">${asEdges.length ? asEdges.map(e => `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid var(--line);border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono)">${esc(e.ip)} · ${Math.round(e.med)}ms · ${Math.round(e.kbps||0)}KB/s${e.city ? ' · ' + esc(e.city) : ''}${e.ir_ok > 0 ? ' · 🇮🇷 ' + e.ir_ok + '/6' : (e.ir_ok === 0 ? ' · 🇮🇷 ✗' : '')}</span>`).join('') : '<p style="font-size:11px;color:#8d8d8d;margin-top:6px">هنوز اسکنی انجام نشده — دکمه بالا را بزنید.</p>'}</div>
+      ${irBanner}
+      ${frontBox}
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label class="field sel" style="max-width:200px;margin:0"><select id="as-front-sel">
+          <option value="auto" selected>جلوی SNI: خودکار</option>
+          <option value="off">جلوی SNI: خاموش</option>
+          <option value="custom">جلوی SNI: سفارشی…</option>
+        </select></label>
+        <label class="field" style="flex:1;min-width:180px;margin:0"><input id="as-front-custom" dir="ltr" placeholder="دامنه جلو (مثلاً myzone.b-cdn.net)"></label>
+        <button class="btn" id="as-front-apply">اعمال جلو</button>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px dashed rgba(255,255,255,.08)">
+        <b style="font-size:12.5px;color:#cfcfcf">🩺 تست سلامت کانفیگ‌ها (دکتر)</b>
+        <p style="font-size:11px;color:#9d9d9d;margin:5px 0 8px;line-height:1.9">بعد از هر اسکن، پنل <b>واقعاً</b> هر پروتکل را با همان پارامترهایی که کاربران می‌گیرند تست می‌کند (کلاینت xray واقعی + تونل کامل) — اگر کانفیگی خراب باشد قبل از کاربران معلوم می‌شود.</p>
+        <div id="as-doc">${docChips || '<p style="font-size:11px;color:#8d8d8d">هنوز تستی انجام نشده.</p>'}</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <button class="btn" id="as-doc">🩺 تست فوری همه کانفیگ‌ها</button>
+          <p id="as-doc-status" style="font-size:11px;color:#8d8d8d;flex:1;margin:0">آخرین تست: <b>${doctor.running ? 'در حال اجرا…' : docRelTxt}</b>${docRes && Object.keys(docRes).length ? ' — از طریق ' + esc((docRes['vless-ws'] || {}).edge || '') : ''}</p>
+        </div>
+      </div>
       </section>
 
       <section class="info-sec" style="margin-top:20px">
@@ -588,6 +632,10 @@
       return `<section class="info-sec" style="margin-top:20px">
       <h3>🇮🇷 کیت شبکه ملی — بقا در قطع بین‌الملل</h3>
       <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">وقتی اینترنت بین‌الملل در ایران قطع شود (حالت شبکه ملی)، لبه‌های CDN و خود پنل از دسترس کاربران خارج می‌شوند و کانفیگ‌های معمولی همه با هم می‌میرند. این کیت سه <b>واریانت بقا</b> به اشتراک همه کاربران اضافه می‌کند تا کلاینت‌ها (با «تست همه کانفیگ‌ها») اولین مسیر سالم را خودکار پیدا کنند. <b>پیش از هر قطعی کیت آفلاین را ذخیره کنید</b> — در حالت قطعی، خود پنل هم در دسترس نیست.</p>
+      <div style="background:rgba(127,185,138,.07);border:1px solid rgba(127,185,138,.3);border-radius:12px;padding:11px 14px;margin-bottom:10px">
+        <b style="font-size:12.5px;color:#9fd8aa">🔍 چرا کانفیگ‌ها قبلاً کار نمی‌کردند؟ (ریشه واقعی پیدا شد)</b>
+        <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">دامنه پنل از <b>داخل ایران DNS-پویزن</b> است (تست‌شده از ۶ نود ایرانی: DNS به آیپی‌های مسدود 185.111.111.x تبدیل می‌شود) ولی آیپی‌های لبه bunny از همه ۶ نود <b>در دسترس</b> هستند. یعنی مشکل، آیپی‌ها نبود — <b>SNI</b> بود: handshake همه کانفیگ‌ها اسم دامنه پنل را روی سیم حمل می‌کرد و فیلترشده کشته می‌شد. <b>نسخه ۳.۱۵:</b> جلوی SNI (certificate معتبر مشترک bunny) اثبات و فعال شد — SNI همه کانفیگ‌ها حالا <span dir="ltr" style="font-family:var(--mono)">ng…b-cdn.net</span> است و اسم دامنه پنل دیگر هیچ‌جا روی سیم نیست. اشتراک را در کلاینت <b>یک بار آپدیت کنید</b> (فقط با زدن دکمه آپدیت اشتراک، بدون حذف و افزودن مجدد).</p>
+      </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
           <b style="font-size:12.5px;color:#9fd8aa">🛡️ IP مستقیم (کار می‌کند — بدون ثبت‌نام)</b>
@@ -598,7 +646,7 @@
           <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">نقطه ورود داخل ایران — <b>راه‌حل واقعی قطع بین‌الملل.</b> با VPS (یک خط) یا بدون VPS با CDN ایرانی. راهنما پایین صفحه.</p>
         </div>
       </div>
-      <p style="font-size:11px;color:#8d8d8d;margin-top:10px;line-height:1.9">ℹ️ گزینه قبلی «SNI سفید» حذف شد — قابلیت AllowInsecure که آن کانفیگ‌ها به آن وابسته بودند از هسته‌های جدید xray (۲۵ به بعد) به‌طور رسمی حذف شده و کانفیگ‌ها در کلاینت‌های جدید اصلاً لود نمی‌شدند. به‌جای آن <b>اسکن خودکار</b> (منوی «بهینه‌ساز و اسکنر») بهترین لبه‌های پکت‌لاست ۰ را در کانفیگ‌ها جایگزاری می‌کند.</p>
+      <p style="font-size:11px;color:#8d8d8d;margin-top:10px;line-height:1.9">ℹ️ گزینه قبلی «SNI سفید» حذف شد — قابلیت AllowInsecure که آن کانفیگ‌ها به آن وابسته بودند از هسته‌های جدید xray (۲۵ به بعد) به‌طور رسمی حذف شده و کانفیگ‌ها در کلاینت‌های جدید اصلاً لود نمی‌شدند. به‌جای آن <b>اسکن خودکار + جلوی SNI</b> (منوی «بهینه‌ساز و اسکنر») بهترین لبه‌های پکت‌لاست ۰ را با certificate معتبر در کانفیگ‌ها جایگزاری می‌کند — بدون AllowInsecure.</p>
       <div style="margin-top:12px;background:rgba(248,180,180,.05);border:1px solid rgba(248,180,180,.18);border-radius:12px;padding:11px 14px">
         <p style="font-size:11px;color:#d8a8a8;line-height:1.9"><b>صادقانه:</b> در «حالت شبکه ملی» دیتاسنترهای ایرانی تا امروز ترانزیت بین‌الملل خود را حفظ کرده‌اند، پس رله داخلی کار می‌کند؛ اما در خاموشی مطلق (مثل آبان ۹۸ که حتی دیتاسنترها قطع شدند) هیچ کانفیگ و نرم‌افزاری نمی‌تواند کار کند — فقط مسیر فیزیکی جایگزین. وعده‌ای بیشتر از این نمی‌دهیم که واقعیت باشد.</p>
       </div>
@@ -613,8 +661,8 @@
           <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل بدون نیاز به DNS + چند مسیر لبه از اسکن/بهینه‌سازی — <b>بدون هیچ تنظیمی، خودکار فعال و تست‌شده.</b></p>
         </div>
         <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🤖 اسکن خودکار هر ۶ ساعت</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">پنل خودش لبه‌های سالم (پکت‌لاست ۰، پینگ پایین، پرسرعت) را می‌یابد و در کانفیگ‌ها جایگزاری می‌کند — از منوی «بهینه‌ساز و اسکنر» فعال کنید.</p>
+          <b style="font-size:12.5px;color:#9fd8aa">🤖 اسکن خودکار هر ۱ ساعت + تست سلامت</b>
+          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">پنل خودش هر ساعت لبه‌های سالم (پکت‌لاست ۰، پینگ پایین، پرسرعت) را می‌یابد، در کانفیگ‌ها جایگزاری می‌کند، هر پروتکل را <b>واقعاً تست</b> می‌کند (دکتر) و دسترسی آیپی‌ها را از <b>نودهای داخل ایران</b> چک می‌کند.</p>
         </div>
       </div>
       <p id="lm-nokyc-status" style="font-size:11.5px;color:#7fb98a;margin-top:10px;line-height:2"></p>
@@ -871,11 +919,59 @@
 
       // ── v3.14: auto-scan card wiring ──
       const asToggle = $('#as-on'), asRun = $('#as-run'), asStatus = $('#as-status');
+      const asEvery = $('#as-every'), asFrontSel = $('#as-front-sel'),
+        asFrontCustom = $('#as-front-custom'), asFrontApply = $('#as-front-apply'),
+        asDoc = $('#as-doc'), asDocStatus = $('#as-doc-status');
+      if (asEvery) asEvery.addEventListener('change', async () => {
+        try {
+          const h = parseInt(asEvery.value, 10) || 1;
+          await api('autoscan', { every_hours: h });
+          if (S.state && S.state.settings && S.state.settings.auto_scan) S.state.settings.auto_scan.every_hours = h;
+          toast('بازه اسکن خودکار: هر ' + (h === 1 ? '۱ ساعت' : h + ' ساعت') + ' ✓', 'ok');
+        } catch (ex) { toast(ex.message, 'err'); }
+      });
+      if (asFrontApply) asFrontApply.addEventListener('click', async () => {
+        const sel = asFrontSel ? asFrontSel.value : 'auto';
+        let val = 'auto';
+        if (sel === 'off') val = 'off';
+        else if (sel === 'custom') {
+          val = (asFrontCustom ? asFrontCustom.value.trim() : '');
+          if (!val) { toast('دامنه جلو را وارد کنید یا حالت خودکار را انتخاب کنید', 'err'); return; }
+        }
+        try {
+          asFrontApply.disabled = true;
+          await api('autoscan', { front_sni: val });
+          toast('جلوی SNI اعمال شد — در حال اثبات از طریق لبه… چند لحظه بعد وضعیت را رفرش کنید ✓', 'ok');
+          setTimeout(async () => { try { await refreshAll(); renderView('scanner'); } catch {} }, 4000);
+        } catch (ex) { toast(ex.message, 'err'); }
+        finally { asFrontApply.disabled = false; }
+      });
+      if (asDoc) asDoc.addEventListener('click', async () => {
+        if (asDoc.dataset.busy === '1') return;
+        asDoc.dataset.busy = '1'; asDoc.disabled = true;
+        if (asDocStatus) asDocStatus.innerHTML = 'در حال تست واقعی همه پروتکل‌ها از طریق بهترین لبه… (تا ۴۵ ثانیه)';
+        try {
+          await api('autoscan', { doctor: true });
+          for (let i = 0; i < 22; i++) {
+            await new Promise(rr => setTimeout(rr, 2000));
+            let st; try { st = await api('autoscan', {}); } catch { continue; }
+            if (st && st.doctor && !st.doctor.running) {
+              await refreshAll(); renderView('scanner');
+              const okc = Object.values(st.doctor.results || {}).filter(r => r.ok).length;
+              toast('تست سلامت انجام شد — ' + okc + '/' + Object.keys(st.doctor.results || {}).length + ' کانفیگ سالم ✓', okc ? 'ok' : 'err');
+              return;
+            }
+            if (asDocStatus) asDocStatus.innerHTML = 'در حال تست… ' + ((i + 1) * 2) + ' ثانیه گذشته';
+          }
+          if (asDocStatus) asDocStatus.textContent = 'تست هنوز در جریان است — چند لحظه بعد رفرش کنید.';
+        } catch (ex) { if (asDocStatus) asDocStatus.textContent = 'خطا: ' + ex.message; }
+        finally { asDoc.dataset.busy = ''; asDoc.disabled = false; }
+      });
       if (asToggle) asToggle.addEventListener('change', async () => {
         try {
           await api('autoscan', { enabled: asToggle.checked });
           if (S.state && S.state.settings) S.state.settings.auto_scan = Object.assign(S.state.settings.auto_scan || {}, { enabled: asToggle.checked });
-          toast(asToggle.checked ? 'اسکن خودکار فعال شد ✓ — هر ۶ ساعت بهترین لبه‌ها جایگزاری می‌شوند' : 'اسکن خودکار خاموش شد', 'ok');
+          toast(asToggle.checked ? 'اسکن خودکار فعال شد ✓ — هر ساعت بهترین لبه‌ها جایگزاری می‌شوند' : 'اسکن خودکار خاموش شد', 'ok');
         } catch (ex) { toast(ex.message, 'err'); asToggle.checked = !asToggle.checked; }
       });
       if (asRun) asRun.addEventListener('click', async () => {

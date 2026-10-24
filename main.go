@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.14.0"
+const Version = "3.15.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -133,11 +133,24 @@ func bootReport() {
         if dom != "" {
                 logf("  DOMAIN     : %s - all links/subs are generated on this host.", dom)
         }
+        stateMu.RLock()
+        front := state.FrontSNI
+        hours := state.AutoScanHours
+        stateMu.RUnlock()
+        if hours < 1 || hours > 24 {
+                hours = 1
+        }
+        logf("  autoscan   : every %dh (best 0-loss edges auto-applied into configs)", hours)
+        if front != "" {
+                logf("  SNI front  : %s active (links hide the panel domain from the wire)", front)
+        } else {
+                logf("  SNI front  : pending first scan (bunny shared-cert front, proven before use)")
+        }
         logf("  anti-SNI   : random-subdomain SNI is ON for *.lucity.app links")
         logf("               (Settings can disable it); sub-130ms ping: IP Scanner ->")
         logf("               scan CDN edges, apply the nearest (Turkey/Azerbaijan/Iraq).")
         if state.AutoScan {
-                logf("  auto-scan : ON — panel scans & applies 0-loss edges every 6h")
+                logf("  auto-scan : ON — panel scans & applies 0-loss edges every %dh + doctor self-test", hours)
         }
         if lm := localModeGet(); lm.Enabled {
                 logf("  local-mode : kit ON — survival variants ride every subscription")

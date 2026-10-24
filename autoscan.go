@@ -28,11 +28,25 @@ import (
 )
 
 const (
-        autoScanEvery   = 6 * time.Hour
         autoScanTargets = 24 // probe head of the geo-balanced shortlist
         autoScanKeep    = 5
         autoScanMinKBps = 15 // edge must actually move bytes to qualify
 )
+
+// autoScanInterval is the scan cadence (admin-settable, default 1h per user
+// request, clamped to [1, 24]).
+func autoScanInterval() time.Duration {
+        stateMu.RLock()
+        h := state.AutoScanHours
+        stateMu.RUnlock()
+        if h < 1 {
+                h = 1
+        }
+        if h > 24 {
+                h = 24
+        }
+        return time.Duration(h) * time.Hour
+}
 
 var (
         autoScanMu      sync.Mutex // serializes scans
@@ -168,18 +182,37 @@ func autoScanOnce() (bool, string) {
         stateMu.Lock()
         newAddr := applyAutoEdges(state, healthy, time.Now())
         enabled := state.AutoScan
+        mode := state.FrontMode
+        stateMu.Unlock()
+
+        // v3.15: prove/refresh the SNI front (bunny shared cert — the panel
+        // domain is DNS-poisoned inside Iran; without the front every link's
+        // TLS handshake carries the filtered domain and dies).
+        front := ""
+        stateMu.Lock()
+        front = applyFront(state, mode, healthy[0].IP, domain, func(base string, rand bool) error {
+                return frontProbe(healthy[0].IP, domain, base, rand)
+        })
         stateMu.Unlock()
         saveState()
+
+        // v3.15: self-test every transport end-to-end with the fresh SNI +
+        // probe the edges/domain from Iranian vantage points (background).
+        go doctorRun()
+        go irProbeAll()
 
         best := healthy[0]
         city := best.City
         if city == "" {
                 city = best.CC
         }
-        logf("auto-scan: %d/%d edges healthy — applied top %d (best %s %s: %.0fms, %.0f KB/s, loss 0)",
-                len(healthy), len(edges), len(healthy), best.IP, city, best.Med, best.SpeedKbps)
+        logf("auto-scan: %d/%d edges healthy — applied top %d (best %s %s: %.0fms, %.0f KB/s, loss 0) front=%q",
+                len(healthy), len(edges), len(healthy), best.IP, city, best.Med, best.SpeedKbps, front)
         msg := fmt.Sprintf("بهترین لبه: %s (%s) — پینگ %.0fms · پکت‌لاست ۰ · %.0f KB/s — در کانفیگ‌ها جایگزاری شد",
                 best.IP, orStr(city, "—"), best.Med, best.SpeedKbps)
+        if front != "" {
+                msg += fmt.Sprintf(" · جلوی SNI فعال شد (%s)", front)
+        }
         if !enabled {
                 msg += " (اسکن خودکار خاموش است — فقط این بار اجرا شد)"
         }
@@ -201,7 +234,7 @@ func autoScanLastAt() int64 {
 }
 
 // autoScanLoop: first run 90s after boot, then every 5 min decide whether the
-// 6h cadence is due (cheap check, heavy work stays rare).
+// (default 1h) cadence is due — cheap check, heavy work stays rare.
 func autoScanLoop() {
         go func() {
                 time.Sleep(90 * time.Second)
@@ -214,40 +247,79 @@ func autoScanLoop() {
                         if !autoScanEnabled() {
                                 continue
                         }
-                        if time.Since(time.Unix(autoScanLastAt(), 0)) >= autoScanEvery {
+                        if time.Since(time.Unix(autoScanLastAt(), 0)) >= autoScanInterval() {
                                 autoScanOnce()
                         }
                 }
         }()
 }
 
+// autoScanSummary is the compact status block embedded in statePayload —
+// takes its own locks, so callers must NOT hold stateMu.
+func autoScanSummary() map[string]any {
+        doc, docAt, docRunning := doctorPayload()
+        stateMu.RLock()
+        hours := state.AutoScanHours
+        frontHost := state.FrontSNI
+        frontRand := state.FrontRand
+        frontAt := state.FrontAt
+        frontMode := state.FrontMode
+        domainIR := state.DomainIR
+        domainIRAt := state.DomainIRAt
+        stateMu.RUnlock()
+        if hours < 1 || hours > 24 {
+                hours = 1
+        }
+        return map[string]any{
+                "enabled":     autoScanEnabled(),
+                "last_run":    autoScanLastAt(),
+                "auto_addr":   autoAddrNow(),
+                "every_hours": hours,
+                "front": map[string]any{
+                        "active": frontHost != "",
+                        "host":   frontHost,
+                        "rand":   frontRand,
+                        "at":     frontAt,
+                        "mode":   frontMode,
+                },
+                "doctor": map[string]any{
+                        "results": doc,
+                        "at":      docAt,
+                        "running": docRunning,
+                },
+                "ir": map[string]any{
+                        "domain":    domainIR,
+                        "domain_at": domainIRAt,
+                },
+        }
+}
+
+func autoAddrNow() bool {
+        stateMu.RLock()
+        defer stateMu.RUnlock()
+        return state.AutoAddr
+}
+
 // autoScanPayload feeds the scanner view card + status API.
 func autoScanPayload() map[string]any {
         stateMu.RLock()
-        enabled := state.AutoScan
         last := state.AutoScanAt
         edges := append([]*EdgeScore(nil), state.TopEdges...)
         multi := state.MultiEdge
         addr := state.Address
-        autoAddr := state.AutoAddr
         stateMu.RUnlock()
-        nextIn := int64(0)
-        if enabled {
-                v := int64(autoScanEvery.Seconds()) - int64(time.Since(time.Unix(last, 0)).Seconds())
+        p := autoScanSummary()
+        if autoScanEnabled() {
+                v := int64(autoScanInterval().Seconds()) - int64(time.Since(time.Unix(last, 0)).Seconds())
                 if v < 0 {
                         v = 0
                 }
-                nextIn = v
+                p["next_in"] = v
         }
-        return map[string]any{
-                "enabled":  enabled,
-                "last_run": last,
-                "next_in":  nextIn,
-                "running":  autoScanRunning.Load(),
-                "edges":    edges,
-                "multi":    multi,
-                "address":  addr,
-                "auto_addr": autoAddr,
-                "every_s":  int(autoScanEvery.Seconds()),
-        }
+        p["running"] = autoScanRunning.Load()
+        p["edges"] = edges
+        p["multi"] = multi
+        p["address"] = addr
+        p["every_s"] = int(autoScanInterval().Seconds())
+        return p
 }
