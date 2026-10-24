@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.15.0"
+const Version = "3.16.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -136,6 +136,7 @@ func bootReport() {
         stateMu.RLock()
         front := state.FrontSNI
         hours := state.AutoScanHours
+        autoScanOn := state.AutoScan // v3.16: read under the lock (was a stray unlocked read)
         stateMu.RUnlock()
         if hours < 1 || hours > 24 {
                 hours = 1
@@ -149,7 +150,8 @@ func bootReport() {
         logf("  anti-SNI   : random-subdomain SNI is ON for *.lucity.app links")
         logf("               (Settings can disable it); sub-130ms ping: IP Scanner ->")
         logf("               scan CDN edges, apply the nearest (Turkey/Azerbaijan/Iraq).")
-        if state.AutoScan {
+        logf("  watchdog   : ON — a frozen state lock dumps stacks and self-restarts")
+        if autoScanOn {
                 logf("  auto-scan : ON — panel scans & applies 0-loss edges every %dh + doctor self-test", hours)
         }
         if lm := localModeGet(); lm.Enabled {
@@ -232,7 +234,8 @@ func main() {
         go watchdogLoop()
         go usageLoop()
         go serverGeo()
-        go autoScanLoop() // v3.14: scan & apply best edges automatically
+        go autoScanLoop()  // v3.14: scan & apply best edges automatically
+        go lockWatchdog()  // v3.16: a frozen state lock dumps stacks + self-restarts
 
         // v3.5: Telegram install bot (optional — activated by INSTALL_BOT_TOKEN).
         // Deploys new DEEP NETWORK panels on requesters' own Lucity accounts.

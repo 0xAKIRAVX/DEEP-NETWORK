@@ -82,34 +82,49 @@ func frontProbe(edgeIP, domain, base string, rand bool) error {
         return nil
 }
 
-// applyFront is the pure state-transition (unit-testable): picks/keeps/clears
-// the front following the admin mode, given a probe callback.
-// mode: "" (auto), "off", or a custom base domain (wildcard assumed when it
-// starts with "*.").
-func applyFront(st *State, mode string, edgeIP, domain string, probe func(base string, rand bool) error) (applied string) {
+// applyFront is the pure, LOCK-FREE composition kept for unit tests — it must
+// never be called on the global state while holding stateMu (v3.16: the
+// production call sites use chooseFront + applyFrontChoice so the network
+// probe runs with no lock held anywhere).
+func applyFront(st *State, mode string, probe func(base string, rand bool) error) (applied string) {
+        base, rand := chooseFront(mode, probe)
+        applyFrontChoice(st, base, rand)
+        return base
+}
+
+// chooseFront is the decision half (network probe, NO state access — must be
+// called with NO stateMu held): mode "" (auto) walks frontCandidates in order;
+// "off" disables; any other value is a custom base domain ("*.x" implies a
+// random label).
+func chooseFront(mode string, probe func(base string, rand bool) error) (string, bool) {
         mode = strings.ToLower(strings.TrimSpace(mode))
         if mode == "off" {
-                st.FrontSNI, st.FrontRand, st.FrontAt = "", false, 0
-                return ""
+                return "", false
         }
         if mode != "" && mode != "auto" {
                 base := strings.TrimPrefix(strings.TrimPrefix(mode, "*."), ".")
                 rand := strings.HasPrefix(mode, "*") || strings.HasPrefix(mode, ".")
                 if probe(base, rand) == nil {
-                        st.FrontSNI, st.FrontRand, st.FrontAt = base, rand, time.Now().Unix()
-                        return base
+                        return base, rand
                 }
-                st.FrontSNI, st.FrontRand, st.FrontAt = "", false, 0
-                return ""
+                return "", false
         }
         for _, cand := range frontCandidates {
                 if probe(cand.base, cand.rand) == nil {
-                        st.FrontSNI, st.FrontRand, st.FrontAt = cand.base, cand.rand, time.Now().Unix()
-                        return cand.base
+                        return cand.base, cand.rand
                 }
         }
-        st.FrontSNI, st.FrontRand, st.FrontAt = "", false, 0
-        return ""
+        return "", false
+}
+
+// applyFrontChoice is the state-write half — caller MUST hold stateMu.
+// ("", false) clears the front.
+func applyFrontChoice(st *State, base string, rand bool) {
+        if base == "" {
+                st.FrontSNI, st.FrontRand, st.FrontAt = "", false, 0
+                return
+        }
+        st.FrontSNI, st.FrontRand, st.FrontAt = base, rand, time.Now().Unix()
 }
 
 // frontFromState renders the current front SNI ("" = no front).

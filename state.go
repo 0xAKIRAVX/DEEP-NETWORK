@@ -124,6 +124,8 @@ type State struct {
         DoctorAt      int64  `json:"doctor_at,omitempty"`
         DomainIR      int    `json:"domain_ir,omitempty"`       // 0 unknown, 1 reachable, 2 poisoned/blocked
         DomainIRAt    int64  `json:"domain_ir_at,omitempty"`
+        FrontIR       int    `json:"front_ir,omitempty"`        // v3.16: SNI front from Iran — 0 unknown, 1 passes, 2 blocked
+        FrontIRAt     int64  `json:"front_ir_at,omitempty"`
         // Telegram bot / Mini App (v3.4)
         TGToken      string     `json:"tg_token,omitempty"`
         TGAdminID    string     `json:"tg_admin_id,omitempty"`

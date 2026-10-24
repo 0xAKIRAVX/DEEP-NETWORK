@@ -93,6 +93,12 @@ func trunc(s string, n int) string {
         return string(out[:n])
 }
 
+// subUpdateIntervalHours is the client auto-refresh cadence (hours) sent in
+// the subscription headers. Kept in sync with the auto-scan cadence: the
+// panel substitutes fresh edge IPs hourly, so clients caching links for half
+// a day would ride dead edges (v3.16: was 12).
+const subUpdateIntervalHours = "1"
+
 // handleSub serves /sub/<token> — default: base64 link list for v2rayNG-style
 // clients. ?fmt=json → [{name,url}] array; ?fmt=xray → full ready-to-import
 // Xray client config (the "most optimal" JSON sub — speed pack baked in).
@@ -124,7 +130,9 @@ func handleSub(w http.ResponseWriter, r *http.Request, tok string) {
         }
         hdrs := map[string]string{
                 "Profile-Title":           "base64:" + base64.StdEncoding.EncodeToString([]byte(match.Name)),
-                "Profile-Update-Interval": "12",
+                // v3.16: hourly — links carry auto-scanned edge IPs that rotate
+                // every hour; a 12h cache meant clients rode dead edges.
+                "Profile-Update-Interval": subUpdateIntervalHours,
                 "Subscription-Userinfo":   strings.Join(info, "; "),
                 "X-Frame-Options":         "DENY",
         }
@@ -205,10 +213,13 @@ func handleAutoScan(w http.ResponseWriter, r *http.Request) {
                                                 mode := state.FrontMode
                                                 stateMu.RUnlock()
                                                 if edge != "" {
-                                                        stateMu.Lock()
-                                                        applyFront(state, mode, edge, domain, func(base string, rand bool) error {
-                                                                return frontProbe(edge, domain, base, rand)
+                                                        // v3.16 FIX: probe OUTSIDE the lock (network under
+                                                        // stateMu froze the whole panel), store inside.
+                                                        base, rand := chooseFront(mode, func(b string, r bool) error {
+                                                                return frontProbe(edge, domain, b, r)
                                                         })
+                                                        stateMu.Lock()
+                                                        applyFrontChoice(state, base, rand)
                                                         stateMu.Unlock()
                                                         saveState()
                                                         go doctorRun()
@@ -465,6 +476,12 @@ func statePayload(r *http.Request) map[string]any {
         asSum := autoScanSummary() // v3.15: front/doctor/ir/hours — takes its own locks
         stateMu.RLock()
         clients := append([]*Client(nil), state.Clients...)
+        // v3.16 FIX: localModeGet() takes stateMu itself — calling it under
+        // this RLock was a RECURSIVE RLock (deadlock whenever a writer
+        // raced; /panel/api/state runs on every dashboard poll). The struct
+        // is only ever REPLACED (never mutated in place), so a pointer copy
+        // + a pure sanitize is race-free.
+        lmSan := localModeSanitize(state.LocalMode)
         settings := map[string]any{
                 "user": state.AdminUser, "address": state.Address,
                 "sni_override": state.SNIOverride, "random_sni": state.RandomSNI,
@@ -473,7 +490,7 @@ func statePayload(r *http.Request) map[string]any {
                 "tuning":    tuningSanitize(state.Tuning),
                 "tcp_ready": tcpReady(),
                 "top_edges": state.TopEdges, "multi_edge": state.MultiEdge,
-                "local_mode": localModeGet(),
+                "local_mode": lmSan,
                 "auto_scan": asSum,
                 "telegram": map[string]any{"connected": state.TGToken != "",
                         "bot_username": state.TGBotUser, "admin_id": state.TGAdminID},

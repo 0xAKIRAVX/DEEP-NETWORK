@@ -185,14 +185,16 @@ func autoScanOnce() (bool, string) {
         mode := state.FrontMode
         stateMu.Unlock()
 
-        // v3.15: prove/refresh the SNI front (bunny shared cert — the panel
-        // domain is DNS-poisoned inside Iran; without the front every link's
-        // TLS handshake carries the filtered domain and dies).
-        front := ""
-        stateMu.Lock()
-        front = applyFront(state, mode, healthy[0].IP, domain, func(base string, rand bool) error {
-                return frontProbe(healthy[0].IP, domain, base, rand)
+        // v3.15→3.16 FIX: the front probe is a NETWORK call (TLS dial + HTTP
+        // request, up to ~14s per candidate). It used to run while holding
+        // stateMu.Lock() — every API/sub request in the whole panel froze for
+        // its duration. Probe OUTSIDE the lock, then store the result inside.
+        base, rand := chooseFront(mode, func(b string, r bool) error {
+                return frontProbe(healthy[0].IP, domain, b, r)
         })
+        front := base
+        stateMu.Lock()
+        applyFrontChoice(state, base, rand)
         stateMu.Unlock()
         saveState()
 
@@ -264,6 +266,8 @@ func autoScanSummary() map[string]any {
         frontRand := state.FrontRand
         frontAt := state.FrontAt
         frontMode := state.FrontMode
+        frontIR := state.FrontIR
+        frontIRAt := state.FrontIRAt
         domainIR := state.DomainIR
         domainIRAt := state.DomainIRAt
         stateMu.RUnlock()
@@ -281,6 +285,10 @@ func autoScanSummary() map[string]any {
                         "rand":   frontRand,
                         "at":     frontAt,
                         "mode":   frontMode,
+                        // v3.16: 1 = the front SNI survives Iranian DPI (an IR
+                        // node completed the TLS handshake), 2 = blocked
+                        "ir":     frontIR,
+                        "ir_at":  frontIRAt,
                 },
                 "doctor": map[string]any{
                         "results": doc,

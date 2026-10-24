@@ -54,7 +54,7 @@ func TestApplyFrontModes(t *testing.T) {
 
         // auto: first candidate wins
         st := &State{}
-        if got := applyFront(st, "", "1.2.3.4", "x.example", probeOK); got != "b-cdn.net" {
+        if got := applyFront(st, "", probeOK); got != "b-cdn.net" {
                 t.Fatalf("auto front = %q, want b-cdn.net", got)
         }
         if !st.FrontRand || st.FrontSNI != "b-cdn.net" || st.FrontAt == 0 {
@@ -63,7 +63,7 @@ func TestApplyFrontModes(t *testing.T) {
 
         // auto with failing probe: front cleared
         st2 := &State{FrontSNI: "b-cdn.net", FrontRand: true, FrontAt: 42}
-        if got := applyFront(st2, "", "1.2.3.4", "x.example", probeFail); got != "" {
+        if got := applyFront(st2, "", probeFail); got != "" {
                 t.Fatalf("failing probe front = %q, want empty", got)
         }
         if st2.FrontSNI != "" || st2.FrontAt != 0 {
@@ -72,13 +72,13 @@ func TestApplyFrontModes(t *testing.T) {
 
         // off: always cleared
         st3 := &State{FrontSNI: "b-cdn.net", FrontRand: true, FrontAt: 42}
-        if got := applyFront(st3, "off", "1.2.3.4", "x.example", probeOK); got != "" || st3.FrontSNI != "" {
+        if got := applyFront(st3, "off", probeOK); got != "" || st3.FrontSNI != "" {
                 t.Fatalf("off must clear: %+v", st3)
         }
 
         // custom wildcard form
         st4 := &State{}
-        if got := applyFront(st4, "*.myfront.example", "1.2.3.4", "x.example", probeOK); got != "myfront.example" {
+        if got := applyFront(st4, "*.myfront.example", probeOK); got != "myfront.example" {
                 t.Fatalf("custom wildcard front = %q, want myfront.example", got)
         }
         if !st4.FrontRand {
@@ -87,7 +87,7 @@ func TestApplyFrontModes(t *testing.T) {
 
         // custom exact form
         st5 := &State{}
-        if got := applyFront(st5, "myfront.example", "1.2.3.4", "x.example", probeOK); got != "myfront.example" {
+        if got := applyFront(st5, "myfront.example", probeOK); got != "myfront.example" {
                 t.Fatalf("custom exact front = %q", got)
         }
         if st5.FrontRand {
@@ -96,7 +96,7 @@ func TestApplyFrontModes(t *testing.T) {
 
         // custom that fails the probe → cleared
         st6 := &State{}
-        if got := applyFront(st6, "broken.example", "1.2.3.4", "x.example", probeFail); got != "" || st6.FrontSNI != "" {
+        if got := applyFront(st6, "broken.example", probeFail); got != "" || st6.FrontSNI != "" {
                 t.Fatalf("failing custom must not apply: %+v", st6)
         }
 }

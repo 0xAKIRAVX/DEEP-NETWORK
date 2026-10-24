@@ -169,11 +169,20 @@ func irCheckEdge(ip string) int {
 // classifies: 1 = at least one node reached the panel, 2 = none did
 // (DNS-poisoned / blocked / unreachable), 0 = probe unavailable.
 func irCheckDomain(domain string) int {
+        return irCheckURL("https://" + domain + "/panel/")
+}
+
+// irCheckURL HTTP-fetches any URL from all Iranian nodes and classifies:
+// 1 = at least one node got an HTTP answer (TLS+SNI passed Iranian DPI),
+// 2 = none did, 0 = probe unavailable. Used both for the panel domain and
+// for the SNI front: bunny answers the shared-cert front hostname with a
+// 404/421 error page — ANY HTTP answer still proves the SNI survives DPI.
+func irCheckURL(rawurl string) int {
         nodes := irNodeList()
         if len(nodes) == 0 {
                 return 0
         }
-        res := irPoll("http", "https://"+domain+"/panel/", nodes)
+        res := irPoll("http", rawurl, nodes)
         if res == nil {
                 return 0
         }
@@ -192,15 +201,21 @@ func irCheckDomain(domain string) int {
         return 2
 }
 
-// irProbeAll updates IROk on the current top edges + the domain verdict.
-// Runs after each scan; every failure degrades silently (status stays "؟").
+// irProbeAll updates IROk on the current top edges + the domain verdict +
+// the front verdict. Runs after each scan; every failure degrades silently
+// (status stays "؟").
 func irProbeAll() {
+        // v3.16 CRITICAL FIX: autoScanDomain() takes stateMu itself, so it
+        // MUST be resolved BEFORE the outer RLock below. The old order held
+        // RLock and then called a function that takes RLock again — a
+        // recursive RLock that DEADLOCKS the whole panel whenever a writer
+        // queues in between (this is exactly what froze the live v3.15).
+        domain := autoScanDomain()
         nodes := irNodeList()
         if len(nodes) == 0 {
                 return
         }
         stateMu.RLock()
-        domain := autoScanDomain()
         var edges []string
         for i, e := range state.TopEdges {
                 if i >= irMaxEdges {
@@ -218,6 +233,17 @@ func irProbeAll() {
                 state.DomainIR = verdict
                 state.DomainIRAt = time.Now().Unix()
                 stateMu.Unlock()
+        }
+        // v3.16: does the SNI FRONT itself survive Iranian DPI? (any HTTP
+        // answer from an IR node on https://<front>/ = the TLS handshake with
+        // that SNI completed inside Iran — a reset/timeout = SNI blocked)
+        if front := frontFromState(); front != "" {
+                if verdict := irCheckURL("https://" + front + "/"); verdict != 0 {
+                        stateMu.Lock()
+                        state.FrontIR = verdict
+                        state.FrontIRAt = time.Now().Unix()
+                        stateMu.Unlock()
+                }
         }
         // per-edge TCP reachability (sequential: polite with the free API)
         for _, ip := range edges {

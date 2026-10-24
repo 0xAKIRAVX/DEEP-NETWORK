@@ -198,13 +198,24 @@ func doctorOne(c *Client, key, addr, domain string) DocRes {
         }()
         time.Sleep(900 * time.Millisecond)
 
-        t0 := time.Now()
-        conn, err := socksDial(socksPort, "www.gstatic.com")
-        if err != nil {
-                res.Err = "socks: " + err.Error()
+        // v3.16: the client core can need a moment to bind its SOCKS port —
+        // a single fast dial made the doctor flap on slower boots. Retry a few
+        // times before declaring the transport broken.
+        var conn net.Conn
+        var derr error
+        for try := 0; try < 4; try++ {
+                conn, derr = socksDial(socksPort, "www.gstatic.com")
+                if derr == nil {
+                        break
+                }
+                time.Sleep(700 * time.Millisecond)
+        }
+        if derr != nil {
+                res.Err = "socks: " + derr.Error()
                 return res
         }
         defer conn.Close()
+        t0 := time.Now()
         if _, err := conn.Write([]byte("HEAD /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nUser-Agent: dn-doctor\r\nConnection: close\r\n\r\n")); err != nil {
                 res.Err = "http write: " + err.Error()
                 return res
