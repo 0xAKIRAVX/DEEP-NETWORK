@@ -179,9 +179,9 @@ func handleTelegramConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := randHex(16)
 	if _, err := tgBotAPI(token, "setWebhook", map[string]any{
-		"url":                base + "/panel/tgwebhook",
-		"secret_token":       secret,
-		"allowed_updates":    []string{"message"},
+		"url":                  base + "/panel/tgwebhook",
+		"secret_token":         secret,
+		"allowed_updates":      []string{"message"},
 		"drop_pending_updates": true,
 	}); err != nil {
 		sendJSON(w, 400, map[string]any{"error": "ثبت وب‌هوک ناموفق بود: " + err.Error()})

@@ -59,7 +59,21 @@ go build -o out .
 
 # تست E2E (34 مورد)
 bash scripts/test_e2e_boot.sh
+
+# یا همه‌ی این‌ها با یک دستور (فرمت + تحلیل ایستا + تست)
+make check
 ```
+
+## ابزارهای خط فرمان (`tools/`)
+
+| ابزار | زبان | کاربرد |
+|---|---|---|
+| `tools/lucity_status.py` | Python | وضعیت لحظه‌ای سرویس روی Lucity (GraphQL + احراز هویت توکن) |
+| `tools/rollout_retry.py` | Python | کمپین تکرار rollout برای گرفتن ظرفیت هنگام `UNSCHEDULABLE` |
+| `tools/sub_e2e.py` | Python | اعتبارسنجی کامل ردیف‌های اشتراک `/sub/` مثل v2rayNG |
+| `tools/c/familycheck.c` | C | ماشین‌حساب خانواده‌ی /16 برای بلاک‌لیست لبه‌ها (ارجاع standalone) |
+| `tools/windows/panelcheck.ps1` | PowerShell | تست دسترسی پنل و اشتراک از ویندوز (شبکه‌ی خود کاربر) |
+| `rust-probe/` | Rust | پروب تأخیر TCP/TLS چندنخی (باینری استاتیک) |
 
 ## لایسنس
 

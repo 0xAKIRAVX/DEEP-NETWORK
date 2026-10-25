@@ -1,388 +1,388 @@
 package main
 
 import (
-        "bytes"
-        "crypto/tls"
-        "encoding/json"
-        "fmt"
-        "io"
-        "net"
-        "net/http"
-        "os/exec"
-        "path/filepath"
-        "strconv"
-        "strings"
-        "sync"
-        "time"
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 // ─────────── Rust prober (bin/deep-probe) + bunny CDN edge pipeline ───────────
 
 type ProbeTarget struct {
-        IP     string `json:"ip"`
-        Port   int    `json:"port"`
-        SNI    string `json:"sni,omitempty"`
-        Rounds int    `json:"rounds,omitempty"`
+	IP     string `json:"ip"`
+	Port   int    `json:"port"`
+	SNI    string `json:"sni,omitempty"`
+	Rounds int    `json:"rounds,omitempty"`
 }
 
 type ProbeResult struct {
-        Target string  `json:"target"`
-        IP     string  `json:"ip,omitempty"`
-        OK     bool    `json:"ok"`
-        TCPMs  float64 `json:"tcp_ms"`
-        TLSMs  float64 `json:"tls_ms"`
-        SNIOk  bool    `json:"sni_ok"`
-        SNIStat string `json:"sni_stat"`
+	Target  string  `json:"target"`
+	IP      string  `json:"ip,omitempty"`
+	OK      bool    `json:"ok"`
+	TCPMs   float64 `json:"tcp_ms"`
+	TLSMs   float64 `json:"tls_ms"`
+	SNIOk   bool    `json:"sni_ok"`
+	SNIStat string  `json:"sni_stat"`
 }
 
 type probeRequest struct {
-        Targets   []ProbeTarget `json:"targets"`
-        TimeoutMs int          `json:"timeout_ms"`
+	Targets   []ProbeTarget `json:"targets"`
+	TimeoutMs int           `json:"timeout_ms"`
 }
 
 type probeResponse struct {
-        Results []ProbeResult `json:"results"`
+	Results []ProbeResult `json:"results"`
 }
 
 func deepProbeBin() string {
-        for _, p := range []string{filepath.Join(appDir(), "bin", "deep-probe"), "/usr/local/bin/deep-probe", "deep-probe"} {
-                if st, err := statFile(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
-                        return p
-                }
-        }
-        if p, err := exec.LookPath("deep-probe"); err == nil {
-                return p
-        }
-        return ""
+	for _, p := range []string{filepath.Join(appDir(), "bin", "deep-probe"), "/usr/local/bin/deep-probe", "deep-probe"} {
+		if st, err := statFile(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("deep-probe"); err == nil {
+		return p
+	}
+	return ""
 }
 
 // runDeepProbe calls the Rust binary: fast parallel TCP + TLS-ClientHello probes.
 // Line protocol: "<ip> <port> <sni> <rounds>" in, "<ip> <ok> <tcp_ms> <tls_ms> <stat>" out.
 func runDeepProbe(targets []ProbeTarget, timeoutMs int) []ProbeResult {
-        if timeoutMs <= 0 {
-                timeoutMs = 2000
-        }
-        if len(targets) == 0 {
-                return nil
-        }
-        bin := deepProbeBin()
-        if bin == "" {
-                return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
-        }
-        var inbuf bytes.Buffer
-        for _, t := range targets {
-                rounds := t.Rounds
-                if rounds < 1 {
-                        rounds = 1
-                }
-                fmt.Fprintf(&inbuf, "%s %d %s %d\n", t.IP, orInt(t.Port, 443), t.SNI, rounds)
-        }
-        cmd := exec.Command(bin, itoa(timeoutMs))
-        cmd.Stdin = &inbuf
-        out, err := cmd.Output()
-        if err != nil && len(out) == 0 {
-                return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
-        }
-        var results []ProbeResult
-        for _, line := range strings.Split(string(out), "\n") {
-                f := strings.Fields(line)
-                if len(f) < 5 {
-                        continue
-                }
-                tcpMs, _ := strconv.ParseFloat(f[2], 64)
-                tlsMs, _ := strconv.ParseFloat(f[3], 64)
-                results = append(results, ProbeResult{
-                        Target: f[0], IP: f[0], OK: f[1] == "1",
-                        TCPMs: tcpMs, TLSMs: tlsMs,
-                        SNIOk: f[4] == "hello", SNIStat: f[4],
-                })
-        }
-        if len(results) == 0 {
-                return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
-        }
-        return results
+	if timeoutMs <= 0 {
+		timeoutMs = 2000
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	bin := deepProbeBin()
+	if bin == "" {
+		return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
+	}
+	var inbuf bytes.Buffer
+	for _, t := range targets {
+		rounds := t.Rounds
+		if rounds < 1 {
+			rounds = 1
+		}
+		fmt.Fprintf(&inbuf, "%s %d %s %d\n", t.IP, orInt(t.Port, 443), t.SNI, rounds)
+	}
+	cmd := exec.Command(bin, itoa(timeoutMs))
+	cmd.Stdin = &inbuf
+	out, err := cmd.Output()
+	if err != nil && len(out) == 0 {
+		return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
+	}
+	var results []ProbeResult
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 5 {
+			continue
+		}
+		tcpMs, _ := strconv.ParseFloat(f[2], 64)
+		tlsMs, _ := strconv.ParseFloat(f[3], 64)
+		results = append(results, ProbeResult{
+			Target: f[0], IP: f[0], OK: f[1] == "1",
+			TCPMs: tcpMs, TLSMs: tlsMs,
+			SNIOk: f[4] == "hello", SNIStat: f[4],
+		})
+	}
+	if len(results) == 0 {
+		return goFallbackProbe(targets, time.Duration(timeoutMs)*time.Millisecond)
+	}
+	return results
 }
 
 func orInt(v, def int) int {
-        if v == 0 {
-                return def
-        }
-        return v
+	if v == 0 {
+		return def
+	}
+	return v
 }
 
 // goFallbackProbe: pure-Go TCP connect probe (used when the Rust binary is absent).
 func goFallbackProbe(targets []ProbeTarget, timeout time.Duration) []ProbeResult {
-        type job struct {
-                idx int
-                t   ProbeTarget
-        }
-        jobs := make(chan job)
-        results := make([]ProbeResult, len(targets))
-        var wg sync.WaitGroup
-        workers := 32
-        if len(targets) < workers {
-                workers = len(targets)
-        }
-        if workers == 0 {
-                return results
-        }
-        for w := 0; w < workers; w++ {
-                wg.Add(1)
-                go func() {
-                        defer wg.Done()
-                        for j := range jobs {
-                                best := -1.0
-                                rounds := j.t.Rounds
-                                if rounds < 1 {
-                                        rounds = 1
-                                }
-                                if rounds > 3 {
-                                        rounds = 3
-                                }
-                                for i := 0; i < rounds; i++ {
-                                        t0 := time.Now()
-                                        conn, err := net.DialTimeout("tcp", net.JoinHostPort(j.t.IP, itoa(j.t.Port)), timeout)
-                                        if err == nil {
-                                                ms := float64(time.Since(t0).Microseconds()) / 1000.0
-                                                conn.Close()
-                                                if best < 0 || ms < best {
-                                                        best = ms
-                                                }
-                                        }
-                                }
-                                results[j.idx] = ProbeResult{Target: j.t.IP, IP: j.t.IP, OK: best >= 0, TCPMs: round1max(best)}
-                        }
-                }()
-        }
-        for i, t := range targets {
-                jobs <- job{i, t}
-        }
-        close(jobs)
-        wg.Wait()
-        return results
+	type job struct {
+		idx int
+		t   ProbeTarget
+	}
+	jobs := make(chan job)
+	results := make([]ProbeResult, len(targets))
+	var wg sync.WaitGroup
+	workers := 32
+	if len(targets) < workers {
+		workers = len(targets)
+	}
+	if workers == 0 {
+		return results
+	}
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				best := -1.0
+				rounds := j.t.Rounds
+				if rounds < 1 {
+					rounds = 1
+				}
+				if rounds > 3 {
+					rounds = 3
+				}
+				for i := 0; i < rounds; i++ {
+					t0 := time.Now()
+					conn, err := net.DialTimeout("tcp", net.JoinHostPort(j.t.IP, itoa(j.t.Port)), timeout)
+					if err == nil {
+						ms := float64(time.Since(t0).Microseconds()) / 1000.0
+						conn.Close()
+						if best < 0 || ms < best {
+							best = ms
+						}
+					}
+				}
+				results[j.idx] = ProbeResult{Target: j.t.IP, IP: j.t.IP, OK: best >= 0, TCPMs: round1max(best)}
+			}
+		}()
+	}
+	for i, t := range targets {
+		jobs <- job{i, t}
+	}
+	close(jobs)
+	wg.Wait()
+	return results
 }
 
 func round1max(v float64) float64 {
-        if v < 0 {
-                return 0
-        }
-        return round1(v)
+	if v < 0 {
+		return 0
+	}
+	return round1(v)
 }
 
 // ─────────── bunny CDN edge discovery (Lucity's own bunny.net-fronted domain) ───────────
 
 type bunnyCache struct {
-        mu     sync.Mutex
-        listT  time.Time
-        ips    []string
-        list6T time.Time
-        ips6   []string
-        verT   time.Time
-        ver6T  time.Time
-        dom    string
-        ok     []string
-        ok6    []string
-        geoT   time.Time
-        geo    map[string]map[string]string
-        geo6T  time.Time
-        geo6   map[string]map[string]string
+	mu     sync.Mutex
+	listT  time.Time
+	ips    []string
+	list6T time.Time
+	ips6   []string
+	verT   time.Time
+	ver6T  time.Time
+	dom    string
+	ok     []string
+	ok6    []string
+	geoT   time.Time
+	geo    map[string]map[string]string
+	geo6T  time.Time
+	geo6   map[string]map[string]string
 }
 
 var bunny = &bunnyCache{}
 
 func (b *bunnyCache) ipList() []string {
-        b.mu.Lock()
-        defer b.mu.Unlock()
-        if len(b.ips) > 0 && time.Since(b.listT) < 5*time.Minute {
-                return b.ips
-        }
-        c := http.Client{Timeout: 8 * time.Second}
-        resp, err := c.Get("https://api.bunny.net/system/edgeserverlist")
-        if err != nil {
-                return b.ips
-        }
-        defer resp.Body.Close()
-        body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-        var raw []string
-        if json.Unmarshal(body, &raw) == nil {
-                var clean []string
-                for _, ip := range raw {
-                        if isValidScanTarget(ip) {
-                                clean = append(clean, ip)
-                        }
-                }
-                if len(clean) > 600 {
-                        clean = clean[:600]
-                }
-                if len(clean) > 0 {
-                        b.ips = clean
-                        b.listT = time.Now()
-                }
-        }
-        return b.ips
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.ips) > 0 && time.Since(b.listT) < 5*time.Minute {
+		return b.ips
+	}
+	c := http.Client{Timeout: 8 * time.Second}
+	resp, err := c.Get("https://api.bunny.net/system/edgeserverlist")
+	if err != nil {
+		return b.ips
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var raw []string
+	if json.Unmarshal(body, &raw) == nil {
+		var clean []string
+		for _, ip := range raw {
+			if isValidScanTarget(ip) {
+				clean = append(clean, ip)
+			}
+		}
+		if len(clean) > 600 {
+			clean = clean[:600]
+		}
+		if len(clean) > 0 {
+			b.ips = clean
+			b.listT = time.Now()
+		}
+	}
+	return b.ips
 }
 
 // ipList6 fetches bunny's official IPv6 edge list (321 addresses, 2400:52e0::/32
 // and friends) from the legacy bunnycdn.com endpoint — the api.bunny.net list is
 // IPv4-only. Cached 5 minutes like the v4 list. (v3.7 IPv6 scanner support.)
 func (b *bunnyCache) ipList6() []string {
-        b.mu.Lock()
-        defer b.mu.Unlock()
-        if len(b.ips6) > 0 && time.Since(b.list6T) < 5*time.Minute {
-                return b.ips6
-        }
-        c := http.Client{Timeout: 8 * time.Second}
-        resp, err := c.Get("https://bunnycdn.com/api/system/edgeserverlist/IPv6")
-        if err != nil {
-                return b.ips6
-        }
-        defer resp.Body.Close()
-        body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-        var raw []string
-        if json.Unmarshal(body, &raw) == nil {
-                var clean []string
-                for _, ip := range raw {
-                        if isValidScanTarget(ip) {
-                                clean = append(clean, ip)
-                        }
-                }
-                if len(clean) > 600 {
-                        clean = clean[:600]
-                }
-                if len(clean) > 0 {
-                        b.ips6 = clean
-                        b.list6T = time.Now()
-                }
-        }
-        return b.ips6
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.ips6) > 0 && time.Since(b.list6T) < 5*time.Minute {
+		return b.ips6
+	}
+	c := http.Client{Timeout: 8 * time.Second}
+	resp, err := c.Get("https://bunnycdn.com/api/system/edgeserverlist/IPv6")
+	if err != nil {
+		return b.ips6
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var raw []string
+	if json.Unmarshal(body, &raw) == nil {
+		var clean []string
+		for _, ip := range raw {
+			if isValidScanTarget(ip) {
+				clean = append(clean, ip)
+			}
+		}
+		if len(clean) > 600 {
+			clean = clean[:600]
+		}
+		if len(clean) > 0 {
+			b.ips6 = clean
+			b.list6T = time.Now()
+		}
+	}
+	return b.ips6
 }
 
 func isValidScanTarget(t string) bool {
-        t = strings.TrimSpace(t)
-        if t == "" || len(t) > 253 {
-                return false
-        }
-        low := strings.ToLower(t)
-        if strings.HasSuffix(low, ".internal") || strings.HasSuffix(low, ".local") || strings.HasSuffix(low, ".svc") || strings.HasSuffix(low, ".svc.") {
-                return false
-        }
-        if isIPLiteral(t) {
-                ip := net.ParseIP(strings.Trim(t, "[]"))
-                if ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-                        return false
-                }
-                return true
-        }
-        return hostRe.MatchString(t)
+	t = strings.TrimSpace(t)
+	if t == "" || len(t) > 253 {
+		return false
+	}
+	low := strings.ToLower(t)
+	if strings.HasSuffix(low, ".internal") || strings.HasSuffix(low, ".local") || strings.HasSuffix(low, ".svc") || strings.HasSuffix(low, ".svc.") {
+		return false
+	}
+	if isIPLiteral(t) {
+		ip := net.ParseIP(strings.Trim(t, "[]"))
+		if ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return false
+		}
+		return true
+	}
+	return hostRe.MatchString(t)
 }
 
 func (b *bunnyCache) geoBatch(ips []string) map[string]map[string]string {
-        b.mu.Lock()
-        if len(b.geo) > 0 && time.Since(b.geoT) < 6*time.Hour {
-                cached := b.geo
-                b.mu.Unlock()
-                return cached
-        }
-        b.mu.Unlock()
-        geo := b.geoBatchFetch(ips)
-        b.mu.Lock()
-        if len(geo) > 0 {
-                b.geo = geo
-                b.geoT = time.Now()
-        }
-        out := b.geo
-        b.mu.Unlock()
-        return out
+	b.mu.Lock()
+	if len(b.geo) > 0 && time.Since(b.geoT) < 6*time.Hour {
+		cached := b.geo
+		b.mu.Unlock()
+		return cached
+	}
+	b.mu.Unlock()
+	geo := b.geoBatchFetch(ips)
+	b.mu.Lock()
+	if len(geo) > 0 {
+		b.geo = geo
+		b.geoT = time.Now()
+	}
+	out := b.geo
+	b.mu.Unlock()
+	return out
 }
 
 func (b *bunnyCache) geoBatch6(ips []string) map[string]map[string]string {
-        b.mu.Lock()
-        if len(b.geo6) > 0 && time.Since(b.geo6T) < 6*time.Hour {
-                cached := b.geo6
-                b.mu.Unlock()
-                return cached
-        }
-        b.mu.Unlock()
-        geo := b.geoBatchFetch(ips)
-        b.mu.Lock()
-        if len(geo) > 0 {
-                b.geo6 = geo
-                b.geo6T = time.Now()
-        }
-        out := b.geo6
-        b.mu.Unlock()
-        return out
+	b.mu.Lock()
+	if len(b.geo6) > 0 && time.Since(b.geo6T) < 6*time.Hour {
+		cached := b.geo6
+		b.mu.Unlock()
+		return cached
+	}
+	b.mu.Unlock()
+	geo := b.geoBatchFetch(ips)
+	b.mu.Lock()
+	if len(geo) > 0 {
+		b.geo6 = geo
+		b.geo6T = time.Now()
+	}
+	out := b.geo6
+	b.mu.Unlock()
+	return out
 }
 
 // geoBatchFetch does the actual ip-api.com batch lookup (IPv4 + IPv6 both
 // supported by the batch endpoint). Caller must NOT hold b.mu.
 func (b *bunnyCache) geoBatchFetch(ips []string) map[string]map[string]string {
-        geo := map[string]map[string]string{}
-        c := http.Client{Timeout: 12 * time.Second}
-        for i := 0; i < len(ips); i += 100 {
-                chunk := ips[i:]
-                if len(chunk) > 100 {
-                        chunk = chunk[:100]
-                }
-                body, _ := json.Marshal(chunk)
-                resp, err := c.Post("http://ip-api.com/batch?fields=status,query,countryCode,city",
-                        "application/json", bytes.NewReader(body))
-                if err != nil {
-                        continue
-                }
-                rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-                resp.Body.Close()
-                var rows []struct {
-                        Status      string `json:"status"`
-                        Query       string `json:"query"`
-                        CountryCode string `json:"countryCode"`
-                        City        string `json:"city"`
-                }
-                if json.Unmarshal(rb, &rows) == nil {
-                        for _, r := range rows {
-                                if r.Status == "success" {
-                                        geo[r.Query] = map[string]string{"cc": r.CountryCode, "city": r.City}
-                                }
-                        }
-                }
-        }
-        return geo
+	geo := map[string]map[string]string{}
+	c := http.Client{Timeout: 12 * time.Second}
+	for i := 0; i < len(ips); i += 100 {
+		chunk := ips[i:]
+		if len(chunk) > 100 {
+			chunk = chunk[:100]
+		}
+		body, _ := json.Marshal(chunk)
+		resp, err := c.Post("http://ip-api.com/batch?fields=status,query,countryCode,city",
+			"application/json", bytes.NewReader(body))
+		if err != nil {
+			continue
+		}
+		rb, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		var rows []struct {
+			Status      string `json:"status"`
+			Query       string `json:"query"`
+			CountryCode string `json:"countryCode"`
+			City        string `json:"city"`
+		}
+		if json.Unmarshal(rb, &rows) == nil {
+			for _, r := range rows {
+				if r.Status == "success" {
+					geo[r.Query] = map[string]string{"cc": r.CountryCode, "city": r.City}
+				}
+			}
+		}
+	}
+	return geo
 }
 
 // verifyEdge does a full TLS handshake (chain + hostname) + one HTTP request.
 func verifyEdge(ip, domain string, timeout time.Duration) bool {
-        d := net.Dialer{Timeout: timeout}
-        raw, err := d.Dial("tcp", net.JoinHostPort(ip, "443"))
-        if err != nil {
-                return false
-        }
-        tlsConn := tls.Client(raw, &tls.Config{ServerName: domain, MinVersion: tls.VersionTLS12})
-        if err := tlsConn.SetDeadline(time.Now().Add(timeout)); err != nil {
-                raw.Close()
-                return false
-        }
-        if err := tlsConn.Handshake(); err != nil {
-                raw.Close()
-                return false
-        }
-        defer tlsConn.Close()
-        req := "GET / HTTP/1.1\r\nHost: " + domain + "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
-        if _, err := tlsConn.Write([]byte(req)); err != nil {
-                return false
-        }
-        buf := make([]byte, 128)
-        n, _ := tlsConn.Read(buf)
-        line := string(buf[:n])
-        if !strings.HasPrefix(line, "HTTP/") {
-                return false
-        }
-        parts := strings.SplitN(line, " ", 3)
-        if len(parts) < 2 {
-                return false
-        }
-        var code int
-        fmt.Sscanf(parts[1], "%d", &code)
-        return code >= 100 && code < 500
+	d := net.Dialer{Timeout: timeout}
+	raw, err := d.Dial("tcp", net.JoinHostPort(ip, "443"))
+	if err != nil {
+		return false
+	}
+	tlsConn := tls.Client(raw, &tls.Config{ServerName: domain, MinVersion: tls.VersionTLS12})
+	if err := tlsConn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		raw.Close()
+		return false
+	}
+	if err := tlsConn.Handshake(); err != nil {
+		raw.Close()
+		return false
+	}
+	defer tlsConn.Close()
+	req := "GET / HTTP/1.1\r\nHost: " + domain + "\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+	if _, err := tlsConn.Write([]byte(req)); err != nil {
+		return false
+	}
+	buf := make([]byte, 128)
+	n, _ := tlsConn.Read(buf)
+	line := string(buf[:n])
+	if !strings.HasPrefix(line, "HTTP/") {
+		return false
+	}
+	parts := strings.SplitN(line, " ", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	var code int
+	fmt.Sscanf(parts[1], "%d", &code)
+	return code >= 100 && code < 500
 }
 
 // bunnyEdgesFor: returns CDN edges that provably serve this domain, selected
@@ -396,143 +396,143 @@ func verifyEdge(ip, domain string, timeout time.Duration) bool {
 // instead of the IPv4 list; the browser-side RTT sweep then tells whether the
 // user's mobile network actually has IPv6 to that edge.
 func bunnyEdgesFor(domain, family string) (edges []string, geo map[string]map[string]string, cached bool) {
-        domain = strings.TrimSpace(strings.Split(domain, ":")[0])
-        if family != "6" {
-                family = "4"
-        }
-        if domain == "" || isIPLiteral(domain) || !hostRe.MatchString(domain) {
-                return nil, nil, false
-        }
-        bunny.mu.Lock()
-        if family == "6" {
-                if len(bunny.ok6) > 0 && bunny.dom == domain && time.Since(bunny.ver6T) < 6*time.Hour {
-                        edges := append([]string(nil), bunny.ok6...)
-                        geo := bunny.geo6
-                        bunny.mu.Unlock()
-                        return edges, geo, true
-                }
-        } else {
-                if len(bunny.ok) > 0 && bunny.dom == domain && time.Since(bunny.verT) < 6*time.Hour {
-                        edges := append([]string(nil), bunny.ok...)
-                        geo := bunny.geo
-                        bunny.mu.Unlock()
-                        return edges, geo, true
-                }
-        }
-        bunny.dom = domain
-        bunny.mu.Unlock()
+	domain = strings.TrimSpace(strings.Split(domain, ":")[0])
+	if family != "6" {
+		family = "4"
+	}
+	if domain == "" || isIPLiteral(domain) || !hostRe.MatchString(domain) {
+		return nil, nil, false
+	}
+	bunny.mu.Lock()
+	if family == "6" {
+		if len(bunny.ok6) > 0 && bunny.dom == domain && time.Since(bunny.ver6T) < 6*time.Hour {
+			edges := append([]string(nil), bunny.ok6...)
+			geo := bunny.geo6
+			bunny.mu.Unlock()
+			return edges, geo, true
+		}
+	} else {
+		if len(bunny.ok) > 0 && bunny.dom == domain && time.Since(bunny.verT) < 6*time.Hour {
+			edges := append([]string(nil), bunny.ok...)
+			geo := bunny.geo
+			bunny.mu.Unlock()
+			return edges, geo, true
+		}
+	}
+	bunny.dom = domain
+	bunny.mu.Unlock()
 
-        var ips []string
-        var geoAll map[string]map[string]string
-        if family == "6" {
-                ips = bunny.ipList6()
-        } else {
-                ips = bunny.ipList()
-        }
-        if len(ips) == 0 {
-                return nil, nil, false
-        }
+	var ips []string
+	var geoAll map[string]map[string]string
+	if family == "6" {
+		ips = bunny.ipList6()
+	} else {
+		ips = bunny.ipList()
+	}
+	if len(ips) == 0 {
+		return nil, nil, false
+	}
 
-        // 1) geo-tag every bunny edge once (ip-api batch, 6h cache — v6 capable).
-        if family == "6" {
-                geoAll = bunny.geoBatch6(ips)
-        } else {
-                geoAll = bunny.geoBatch(ips)
-        }
+	// 1) geo-tag every bunny edge once (ip-api batch, 6h cache — v6 capable).
+	if family == "6" {
+		geoAll = bunny.geoBatch6(ips)
+	} else {
+		geoAll = bunny.geoBatch(ips)
+	}
 
-        // 2) tiered, per-country quota — near-Iran regions first.
-        budget := 130
-        if family == "6" {
-                budget = 96
-        }
-        shortlist := pickEdgesByRegion(ips, geoAll, budget)
-        if len(shortlist) == 0 {
-                shortlist = ips
-        }
+	// 2) tiered, per-country quota — near-Iran regions first.
+	budget := 130
+	if family == "6" {
+		budget = 96
+	}
+	shortlist := pickEdgesByRegion(ips, geoAll, budget)
+	if len(shortlist) == 0 {
+		shortlist = ips
+	}
 
-        // 3) Rust prober: TCP + TLS ClientHello with our SNI (is the edge
-        //    actually serving this hostname?).
-        targets := make([]ProbeTarget, len(shortlist))
-        for i, ip := range shortlist {
-                targets[i] = ProbeTarget{IP: ip, Port: 443, SNI: domain}
-        }
-        res := runDeepProbe(targets, 2500)
-        var alive []string
-        for _, r := range res {
-                if r.OK {
-                        alive = append(alive, r.IP)
-                }
-        }
-        if len(alive) > 100 {
-                alive = alive[:100]
-        }
+	// 3) Rust prober: TCP + TLS ClientHello with our SNI (is the edge
+	//    actually serving this hostname?).
+	targets := make([]ProbeTarget, len(shortlist))
+	for i, ip := range shortlist {
+		targets[i] = ProbeTarget{IP: ip, Port: 443, SNI: domain}
+	}
+	res := runDeepProbe(targets, 2500)
+	var alive []string
+	for _, r := range res {
+		if r.OK {
+			alive = append(alive, r.IP)
+		}
+	}
+	if len(alive) > 100 {
+		alive = alive[:100]
+	}
 
-        // 4) Full chain+hostname verification (Go crypto/tls) on the survivors.
-        var verified []string
-        sem := make(chan struct{}, 16)
-        var wg sync.WaitGroup
-        var mu sync.Mutex
-        rank := map[string]int{} // keep tier order (near-Iran first) in the reply
-        for i, ip := range alive {
-                rank[ip] = i
-        }
-        for _, ip := range alive {
-                wg.Add(1)
-                go func(ip string) {
-                        defer wg.Done()
-                        sem <- struct{}{}
-                        defer func() { <-sem }()
-                        if verifyEdge(ip, domain, 4*time.Second) {
-                                mu.Lock()
-                                verified = append(verified, ip)
-                                mu.Unlock()
-                        }
-                }(ip)
-        }
-        wg.Wait()
-        sort2d := func(a []string) { // insertion-stable by pre-assigned rank
-                for i := 1; i < len(a); i++ {
-                        for j := i; j > 0 && rank[a[j-1]] > rank[a[j]]; j-- {
-                                a[j-1], a[j] = a[j], a[j-1]
-                        }
-                }
-        }
-        sort2d(verified)
+	// 4) Full chain+hostname verification (Go crypto/tls) on the survivors.
+	var verified []string
+	sem := make(chan struct{}, 16)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	rank := map[string]int{} // keep tier order (near-Iran first) in the reply
+	for i, ip := range alive {
+		rank[ip] = i
+	}
+	for _, ip := range alive {
+		wg.Add(1)
+		go func(ip string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if verifyEdge(ip, domain, 4*time.Second) {
+				mu.Lock()
+				verified = append(verified, ip)
+				mu.Unlock()
+			}
+		}(ip)
+	}
+	wg.Wait()
+	sort2d := func(a []string) { // insertion-stable by pre-assigned rank
+		for i := 1; i < len(a); i++ {
+			for j := i; j > 0 && rank[a[j-1]] > rank[a[j]]; j-- {
+				a[j-1], a[j] = a[j], a[j-1]
+			}
+		}
+	}
+	sort2d(verified)
 
-        // v6 fallback: many container hosts (incl. Lucity) have NO IPv6
-        // egress, so server-side probing can never reach the v6 edges. The
-        // user's browser is the real v6 client — hand it the geo-balanced
-        // shortlist unverified; the browser-side RTT sweep discards dead
-        // edges before anything is applied.
-        if family == "6" && len(verified) == 0 {
-                verified = append([]string(nil), shortlist...)
-                if len(verified) > 96 {
-                        verified = verified[:96]
-                }
-        }
+	// v6 fallback: many container hosts (incl. Lucity) have NO IPv6
+	// egress, so server-side probing can never reach the v6 edges. The
+	// user's browser is the real v6 client — hand it the geo-balanced
+	// shortlist unverified; the browser-side RTT sweep discards dead
+	// edges before anything is applied.
+	if family == "6" && len(verified) == 0 {
+		verified = append([]string(nil), shortlist...)
+		if len(verified) > 96 {
+			verified = verified[:96]
+		}
+	}
 
-        bunny.mu.Lock()
-        if family == "6" {
-                geo = bunny.geo6
-                bunny.ok6 = verified
-                bunny.dom = domain
-                bunny.ver6T = time.Now()
-        } else {
-                geo = bunny.geo
-                bunny.ok = verified
-                bunny.dom = domain
-                bunny.verT = time.Now()
-        }
-        bunny.mu.Unlock()
-        return verified, geo, false
+	bunny.mu.Lock()
+	if family == "6" {
+		geo = bunny.geo6
+		bunny.ok6 = verified
+		bunny.dom = domain
+		bunny.ver6T = time.Now()
+	} else {
+		geo = bunny.geo
+		bunny.ok = verified
+		bunny.dom = domain
+		bunny.verT = time.Now()
+	}
+	bunny.mu.Unlock()
+	return verified, geo, false
 }
 
 // edgeRegionTiers: country → max edges, nearest-to-Iran first.
 var edgeRegionTiers = []map[string]int{
-        {"TR": 14, "AZ": 12, "GE": 12, "AM": 10, "IQ": 10, "AE": 10, "RO": 12, "BG": 10},                                        // tier 1 — Iran's neighbourhood
-        {"QA": 6, "BH": 6, "OM": 6, "KW": 6, "SA": 6, "GR": 8, "CY": 6, "RS": 6, "MK": 4, "AL": 4, "BA": 4, "MD": 6, "UA": 6}, // tier 2
-        {"HU": 5, "AT": 5, "SK": 5, "SI": 5, "HR": 5, "CZ": 5, "PL": 6, "DE": 10, "NL": 6, "CH": 5, "IT": 5, "FR": 4},          // tier 3
-        {"SE": 3, "NO": 3, "DK": 3, "FI": 3, "LT": 3, "LV": 3, "EE": 3, "BE": 3, "LU": 2, "GB": 3, "IE": 2, "ES": 3, "PT": 2}, // tier 4 — fallback breadth
+	{"TR": 14, "AZ": 12, "GE": 12, "AM": 10, "IQ": 10, "AE": 10, "RO": 12, "BG": 10},                                      // tier 1 — Iran's neighbourhood
+	{"QA": 6, "BH": 6, "OM": 6, "KW": 6, "SA": 6, "GR": 8, "CY": 6, "RS": 6, "MK": 4, "AL": 4, "BA": 4, "MD": 6, "UA": 6}, // tier 2
+	{"HU": 5, "AT": 5, "SK": 5, "SI": 5, "HR": 5, "CZ": 5, "PL": 6, "DE": 10, "NL": 6, "CH": 5, "IT": 5, "FR": 4},         // tier 3
+	{"SE": 3, "NO": 3, "DK": 3, "FI": 3, "LT": 3, "LV": 3, "EE": 3, "BE": 3, "LU": 2, "GB": 3, "IE": 2, "ES": 3, "PT": 2}, // tier 4 — fallback breadth
 }
 
 // pickEdgesByRegion builds a shortlist balanced ACROSS tiers (v3.18).
@@ -544,132 +544,132 @@ var edgeRegionTiers = []map[string]int{
 // (tier1 → tier2 → tier3 → tier4 …) so the first autoScanTargets probes
 // cover every region and the IR-TLS gate — not geography — picks winners.
 func pickEdgesByRegion(ips []string, geo map[string]map[string]string, total int) []string {
-        if len(geo) == 0 || total <= 0 {
-                return nil
-        }
-        var tiers [][]string
-        for _, tier := range edgeRegionTiers {
-                used := map[string]int{}
-                var list []string
-                for _, ip := range ips {
-                        g, ok := geo[ip]
-                        if !ok {
-                                continue
-                        }
-                        cc := g["cc"]
-                        cap, has := tier[cc]
-                        if !has || used[cc] >= cap {
-                                continue
-                        }
-                        used[cc]++
-                        list = append(list, ip)
-                }
-                tiers = append(tiers, list)
-        }
-        var out []string
-        seen := map[string]bool{}
-        for round := 0; len(out) < total; round++ {
-                progressed := false
-                for ti := range tiers {
-                        if round >= len(tiers[ti]) {
-                                continue
-                        }
-                        ip := tiers[ti][round]
-                        if seen[ip] {
-                                continue
-                        }
-                        seen[ip] = true
-                        out = append(out, ip)
-                        progressed = true
-                        if len(out) >= total {
-                                return out
-                        }
-                }
-                if !progressed {
-                        break
-                }
-        }
-        return out
+	if len(geo) == 0 || total <= 0 {
+		return nil
+	}
+	var tiers [][]string
+	for _, tier := range edgeRegionTiers {
+		used := map[string]int{}
+		var list []string
+		for _, ip := range ips {
+			g, ok := geo[ip]
+			if !ok {
+				continue
+			}
+			cc := g["cc"]
+			cap, has := tier[cc]
+			if !has || used[cc] >= cap {
+				continue
+			}
+			used[cc]++
+			list = append(list, ip)
+		}
+		tiers = append(tiers, list)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for round := 0; len(out) < total; round++ {
+		progressed := false
+		for ti := range tiers {
+			if round >= len(tiers[ti]) {
+				continue
+			}
+			ip := tiers[ti][round]
+			if seen[ip] {
+				continue
+			}
+			seen[ip] = true
+			out = append(out, ip)
+			progressed = true
+			if len(out) >= total {
+				return out
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return out
 }
 
 // ─────────── client-side ISP detection (/panel/api/whoami) ───────────
 
 type whoamiCacheEntry struct {
-        op      string
-        label   string
-        cc      string
-        city    string
-        lat, lon float64
-        expires time.Time
+	op       string
+	label    string
+	cc       string
+	city     string
+	lat, lon float64
+	expires  time.Time
 }
 
 var (
-        whoamiMu    sync.Mutex
-        whoamiCache = map[string]*whoamiCacheEntry{}
+	whoamiMu    sync.Mutex
+	whoamiCache = map[string]*whoamiCacheEntry{}
 )
 
 var operatorASNPatterns = []struct {
-        key, match string
+	key, match string
 }{
-        {"irancell", "irancell"},
-        {"mci", "mobile communication company"},
-        {"mci", "mci"},
-        {"rightel", "rightel"},
-        {"shatel", "shatel"},
-        {"mobinnet", "mobinnet"},
-        {"mobinnet", "mobin"},
-        {"parsonline", "pars online"},
-        {"parsonline", "parsonline"},
-        {"asiatek", "asiatech"},
-        {"asiatek", "asia tech"},
-        {"tci", "telecommunication infrastructure"},
-        {"tci", "tci"},
-        {"mokhaberat", "mokhaberat"},
+	{"irancell", "irancell"},
+	{"mci", "mobile communication company"},
+	{"mci", "mci"},
+	{"rightel", "rightel"},
+	{"shatel", "shatel"},
+	{"mobinnet", "mobinnet"},
+	{"mobinnet", "mobin"},
+	{"parsonline", "pars online"},
+	{"parsonline", "parsonline"},
+	{"asiatek", "asiatech"},
+	{"asiatek", "asia tech"},
+	{"tci", "telecommunication infrastructure"},
+	{"tci", "tci"},
+	{"mokhaberat", "mokhaberat"},
 }
 
 func lookupWhoami(ip string) *whoamiCacheEntry {
-        whoamiMu.Lock()
-        if e, ok := whoamiCache[ip]; ok && time.Now().Before(e.expires) {
-                whoamiMu.Unlock()
-                return e
-        }
-        whoamiMu.Unlock()
+	whoamiMu.Lock()
+	if e, ok := whoamiCache[ip]; ok && time.Now().Before(e.expires) {
+		whoamiMu.Unlock()
+		return e
+	}
+	whoamiMu.Unlock()
 
-        c := http.Client{Timeout: 5 * time.Second}
-        url := "http://ip-api.com/json/" + ip + "?fields=status,query,countryCode,city,lat,lon,as,isp"
-        resp, err := c.Get(url)
-        if err != nil {
-                return nil
-        }
-        defer resp.Body.Close()
-        b, _ := io.ReadAll(io.LimitReader(resp.Body, 16384))
-        var d struct {
-                Status      string  `json:"status"`
-                Query       string  `json:"query"`
-                CountryCode string  `json:"countryCode"`
-                City        string  `json:"city"`
-                Lat         float64 `json:"lat"`
-                Lon         float64 `json:"lon"`
-                AS          string  `json:"as"`
-                ISP         string  `json:"isp"`
-        }
-        if json.Unmarshal(b, &d) != nil || d.Status != "success" {
-                return nil
-        }
-        e := &whoamiCacheEntry{op: "auto", label: "خودکار", cc: d.CountryCode, city: d.City,
-                lat: d.Lat, lon: d.Lon, expires: time.Now().Add(time.Hour)}
-        as := strings.ToLower(d.AS + " " + d.ISP)
-        for _, p := range operatorASNPatterns {
-                if strings.Contains(as, p.match) {
-                        e.op = p.key
-                        if prof, ok := operatorProfiles[p.key]; ok {
-                                e.label = prof.Label
-                        }
-                        break
-                }
-        }
-        whoamiMu.Lock()
-        whoamiCache[ip] = e
-        whoamiMu.Unlock()
-        return e
+	c := http.Client{Timeout: 5 * time.Second}
+	url := "http://ip-api.com/json/" + ip + "?fields=status,query,countryCode,city,lat,lon,as,isp"
+	resp, err := c.Get(url)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 16384))
+	var d struct {
+		Status      string  `json:"status"`
+		Query       string  `json:"query"`
+		CountryCode string  `json:"countryCode"`
+		City        string  `json:"city"`
+		Lat         float64 `json:"lat"`
+		Lon         float64 `json:"lon"`
+		AS          string  `json:"as"`
+		ISP         string  `json:"isp"`
+	}
+	if json.Unmarshal(b, &d) != nil || d.Status != "success" {
+		return nil
+	}
+	e := &whoamiCacheEntry{op: "auto", label: "خودکار", cc: d.CountryCode, city: d.City,
+		lat: d.Lat, lon: d.Lon, expires: time.Now().Add(time.Hour)}
+	as := strings.ToLower(d.AS + " " + d.ISP)
+	for _, p := range operatorASNPatterns {
+		if strings.Contains(as, p.match) {
+			e.op = p.key
+			if prof, ok := operatorProfiles[p.key]; ok {
+				e.label = prof.Label
+			}
+			break
+		}
+	}
+	whoamiMu.Lock()
+	whoamiCache[ip] = e
+	whoamiMu.Unlock()
+	return e
 }
