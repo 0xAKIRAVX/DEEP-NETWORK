@@ -132,8 +132,12 @@ func localDirectAddr(lm LocalModeState, host string) string {
         if dip := strings.TrimSpace(lm.DirectIP); dip != "" && isIPLiteral(dip) && validAddress(dip) {
                 return strings.Trim(dip, "[]")
         }
-        if a := stateAddress(host); isIPLiteral(a) {
-                return a
+        // v3.22: skip the manual primary when the probes measure it TLS-dead
+        // from Iran — 🛡️ would otherwise point at a guaranteed -1 address.
+        if !primaryIRDead() {
+                if a := stateAddress(host); isIPLiteral(a) {
+                        return a
+                }
         }
         stateMu.RLock()
         var top string

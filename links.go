@@ -688,21 +688,70 @@ func faCity(city, cc string) string {
 // flag, superscript rank — medals retired); the edge set is FAMILY-DIVERSE
 // (max 2 per /16) so one dead partner can never take the whole variant
 // section down, and the blocklist matches whole families.
+// primaryIRDead reports whether the manual primary address is MEASURED
+// TLS-dead from Iranian vantage points (v3.22).
+func primaryIRDead() bool {
+        stateMu.RLock()
+        defer stateMu.RUnlock()
+        return state.PrimaryIR == 2
+}
+
+// effectivePrimary is the address the primary group actually rides: the
+// manual state.Address while it is alive-or-unmeasured from Iran; when the
+// probes measure it TLS-dead (v3.22: the 2026-10-25 wave shipped 16 dead
+// rows through an ungated dead Frankfurt), the best IR-verified edge takes
+// over for THIS build — the admin's setting is never rewritten, and the
+// primary auto-returns the next scan that measures it alive again.
+func effectivePrimary() string {
+        stateMu.RLock()
+        addr := strings.TrimSpace(state.Address)
+        edges := state.TopEdges
+        dead := state.PrimaryIR == 2
+        stateMu.RUnlock()
+        if !dead || addr == "" {
+                return addr
+        }
+        for _, e := range edges {
+                if e.IRTLS == 1 && !edgeBlockedState(e.IP) {
+                        return e.IP
+                }
+        }
+        return addr // no alive edge either — keep the manual address as last resort
+}
+
 func buildLinks(c *Client, host string) []Link {
         stateMu.RLock()
         addr := state.Address
         multi := state.MultiEdge && len(state.TopEdges) > 0
         edges := append([]*EdgeScore(nil), state.TopEdges...)
         domainIR := state.DomainIR
+        primaryDead := state.PrimaryIR == 2
         stateMu.RUnlock()
         if addr == "" {
                 addr = host
+        }
+        // v3.22 PRIMARY IR GATE: a TLS-dead primary would ship its whole group
+        // + every 🎭 front variant + 🛡️ as guaranteed -1 rows. Demote to the
+        // best IR-alive edge (state.Address itself stays untouched).
+        if primaryDead && multi {
+                for _, e := range edges {
+                        if e.IRTLS == 1 && !edgeBlockedState(e.IP) {
+                                addr = e.IP
+                                break
+                        }
+                }
         }
         // v3.21 geo token for the primary: its scan city when known.
         pCity, pCC := geoCityFor(addr)
         primaryGeo := geoToken(pCity, pCC, 1, "", "")
         if !multi || host == "" {
                 out := buildLinksAddr(c, addr, host, primaryGeo, true)
+                seen := map[string]bool{}
+                for _, l := range out {
+                        seen[l.URL] = true
+                }
+                // v3.22: the ORIGIN family (gated on DomainIR==1) — see below.
+                out = appendOriginGroup(c, host, out, seen, domainIR)
                 out = appendFrontAlts(c, addr, host, out)
                 return appendLocalLinks(c, host, out)
         }
@@ -759,6 +808,10 @@ func buildLinks(c *Client, host string) []Link {
         // individual front domains over time (b-cdn.net died 2026-10 and every
         // config went -1); with one variant per alternate front, an ISP-level
         // SNI block can no longer kill every link at once.
+        // v3.22: the ORIGIN family rides before the fronts — when a CDN-range
+        // block wave kills every bunny edge at once (measured 2026-10-25:
+        // Frankfurt + origin dead while Kyiv lived), this is the escape hatch.
+        out = appendOriginGroup(c, host, out, seen, domainIR)
         out = appendFrontAlts(c, addr, host, out)
         return appendLocalLinks(c, host, out)
 }
@@ -813,6 +866,100 @@ func appendLocalLinks(c *Client, host string, out []Link) []Link {
                         seen[l.URL] = true
                         out = append(out, l)
                 }
+        }
+        return out
+}
+
+// ─────────── v3.22: the ORIGIN group ───────────
+// The 2026-10-25 block wave measured the Frankfurt bunny edge AND the origin
+// ingress TLS-dead from every Iranian node while Kyiv lived — a CDN-range
+// block can kill every edge row of the subscription at once. The ORIGIN
+// (bunnyinfra hosting range — a different IP family from every bunny CDN
+// edge) is the escape hatch when it is alive. Gated on DomainIR==1: the
+// domain check from the IR nodes (check-host https://<domain>/) resolves and
+// TLS-dials exactly these ingress IPs, so an alive domain means an alive
+// origin family. SNI + Host ride the panel DOMAIN (the origin serves that
+// cert); the ADDRESS is the resolved origin IP — the domain is DNS-poisoned
+// inside Iran, so clients must never resolve it themselves. This is also the
+// ONLY place XHTTP rides (v3.21.2: bunny's h2 edge stalls XHTTP tails).
+func appendOriginGroup(c *Client, host string, out []Link, seen map[string]bool, domainIR int) []Link {
+        if seen == nil {
+                seen = map[string]bool{}
+        }
+        if host == "" || isIPLiteral(host) || domainIR == 2 {
+                return out // domain measured dead from Iran — the whole family would be -1 rows
+        }
+        o := originFor(host)
+        if o.ip == "" || edgeBlockedState(o.ip) {
+                return out
+        }
+        allowed := userProtocols(c)
+        anyAllowed := allowed["vless-ws"] || allowed["vless-hu"] || allowed["vmess-ws"] ||
+                allowed["trojan-ws"] || allowed["vless-xhttp"]
+        if !anyAllowed {
+                return out
+        }
+        t := tuningGet()
+        fp := t.FP
+        if fp == "" {
+                fp = "chrome"
+        }
+        alpnOv := strings.TrimSpace(t.ALPN)
+        stateMu.RLock()
+        fmtStr := state.CfgFmt
+        if fmtStr == "" {
+                fmtStr = defaultCfgFmt
+        }
+        stateMu.RUnlock()
+        geoX := geoToken(o.city, o.cc, 0, "⚡", "ORIGIN")
+        nm := func(label, proto, net_ string) string {
+                return fmtName(fmtStr, c, shortLabel(label), proto, net_, "TLS", host, geoX)
+        }
+        cid := c.ID
+        uriAddr := bracketV6(o.ip)
+        add := func(key, label, u string) {
+                if seen[u] {
+                        return
+                }
+                seen[u] = true
+                out = append(out, Link{key, label, u})
+        }
+        tlsParam := "security=tls&sni=" + pyQuote(host) + "&fp=" + pyQuote(fp)
+        if allowed["vless-ws"] {
+                n1 := nm("VLESS-WS", "VLESS", "WS")
+                add("vless-ws", "VLESS · WS · origin",
+                        fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                cid, uriAddr, tlsParam, pyQuote(alpnForNet("ws", alpnOv)), pyQuote(host),
+                                pyQuote(wsPath()+"?ed=2048"), pyQuote(n1)))
+        }
+        if allowed["vless-hu"] {
+                n3 := nm("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade")
+                add("vless-hu", "VLESS · HTTPUpgrade · origin",
+                        fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
+                                cid, uriAddr, tlsParam, pyQuote(alpnForNet("httpupgrade", alpnOv)), pyQuote(host),
+                                pyQuote(huPath()), pyQuote(n3)))
+        }
+        if allowed["vmess-ws"] {
+                n4 := nm("VMess-WS", "VMess", "WS")
+                vm := map[string]any{"v": "2", "ps": n4, "add": o.ip, "port": "443", "id": cid, "aid": "0",
+                        "scy": "auto", "net": "ws", "type": "none", "host": host, "path": vmessPath() + "?ed=2048",
+                        "tls": "tls", "sni": host, "alpn": alpnForNet("ws", alpnOv), "fp": fp}
+                b, _ := json.Marshal(vm)
+                add("vmess-ws", "VMess · WS · origin", "vmess://"+base64.StdEncoding.EncodeToString(b))
+        }
+        if allowed["trojan-ws"] {
+                n5 := nm("Trojan-WS", "Trojan", "WS")
+                add("trojan-ws", "Trojan · WS · origin",
+                        fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
+                                cid, uriAddr, pyQuote(host), pyQuote(fp), pyQuote(alpnForNet("ws", alpnOv)),
+                                pyQuote(host), pyQuote(trojanPath()+"?ed=2048"), pyQuote(n5)))
+        }
+        if allowed["vless-xhttp"] {
+                n2 := nm("VLESS-XHTTP", "VLESS", "XHTTP")
+                add("vless-xhttp", "VLESS · XHTTP · origin",
+                        fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
+                                cid, uriAddr, pyQuote(host), pyQuote(fp), pyQuote(alpnForNet("xhttp", alpnOv)), pyQuote(host),
+                                pyQuote(xhttpPath()), pyQuote(n2)))
         }
         return out
 }
@@ -897,21 +1044,10 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
                                 cid, uriAddr, pyQuote(tlsName), pyQuote(fp), pyQuote(alpnForNet("ws", alpnOv)),
                                 pyQuote(sniHost), pyQuote(trojanPath()+"?ed=2048"), pyQuote(n5)))
         }
-        // v3.21.2: the direct-origin XHTTP row — primary group only, LAST.
-        // SNI and the HTTP host are the panel domain itself (the origin
-        // serves that cert); the address is the resolved origin IP (the
-        // domain is DNS-poisoned in Iran — see originFor). No front applies
-        // here: bunny's edge is what breaks this transport.
-        if primary && allowed["vless-xhttp"] {
-                if o := originFor(host); o.ip != "" {
-                        geoX := geoToken(o.city, o.cc, 0, "\U0001F6E1\uFE0F", "GERMANY")
-                        n2 := fmtName(fmtStr, c, shortLabel("VLESS-XHTTP"), "VLESS", "XHTTP", "TLS", host, geoX)
-                        addLink("vless-xhttp", "VLESS · XHTTP (direct)",
-                                fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
-                                        cid, o.ip, pyQuote(host), pyQuote(fp), pyQuote(alpnForNet("xhttp", alpnOv)), pyQuote(host),
-                                        pyQuote(xhttpPath()), pyQuote(n2)))
-                }
-        }
+        // v3.21.2→v3.22: XHTTP no longer rides ANY edge/front group — bunny's
+        // h2 layer stalls its stream tails (95-97% forever, "pings but never
+        // loads"). It now lives ONLY in the ORIGIN group (appendOriginGroup),
+        // gated on the domain being alive from Iran.
         if primary && tcpReady() && allowed["vless-reality"] {
                 n6 := nm("VLESS-Reality-TCP", "VLESS", "TCP", "Reality", orStr(tcpHost(), addr))
                 addLink("vless-reality", "VLESS · Reality (TCP Proxy)",
@@ -972,11 +1108,17 @@ func linkDisplayName(l Link) string {
 func clientConfigJSON(c *Client, host, profile string) map[string]any {
         stateMu.RLock()
         addr := state.Address
+        domainIR := state.DomainIR
+        sni := state.RealitySNI
+        stateMu.RUnlock()
         if addr == "" {
                 addr = host
         }
-        sni := state.RealitySNI
-        stateMu.RUnlock()
+        // v3.22: same primary IR gate as the sub — a TLS-dead primary must not
+        // lead the fallback order either.
+        if e := effectivePrimary(); e != "" {
+                addr = e
+        }
         t := tuningGet()
         switch {
         case profile == "fast":
@@ -1081,28 +1223,72 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
                         "mux":            muxPayload(!t.MuxOff)})
                 order = append(order, tag)
         }
-        // v3.21.2: XHTTP direct-to-origin, LAST in the fallback order (see
-        // the originFor note) — bunny's h2 edge stalls XHTTP stream tails.
-        if allowed["vless-xhttp"] {
+        // v3.22: the ORIGIN family (gated on DomainIR==1, same as the sub) —
+        // WS + HTTPUpgrade straight to the origin ingress: the CDN-range
+        // block escape hatch. Then XHTTP (v3.21.2) LAST.
+        if domainIR != 2 && host != "" && !isIPLiteral(host) {
                 if o := originFor(host); o.ip != "" {
-                        tag := tagFor("alt-vless-xhttp")
-                        xtls := map[string]any{"serverName": host, "fingerprint": fp,
-                                "alpn": strings.Split(alpnForNet("xhttp", alpnOv), ","), "allowInsecure": false}
-                        if cs != "" {
-                                xtls["cipherSuites"] = cs
+                        oStream := func(net_, path string) map[string]any {
+                                tls := map[string]any{"serverName": host, "fingerprint": fp,
+                                        "alpn": strings.Split(alpnForNet(net_, alpnOv), ","), "allowInsecure": false}
+                                if cs != "" {
+                                        tls["cipherSuites"] = cs
+                                }
+                                sock := map[string]any{"tcpNoDelay": true, "tcpFastOpen": true,
+                                        "tcpKeepAliveIdle": 300, "tcpKeepAliveInterval": 15}
+                                for k, v := range fm {
+                                        sock[k] = v
+                                }
+                                st := map[string]any{"network": net_, "security": "tls", "tlsSettings": tls, "sockopt": sock}
+                                switch net_ {
+                                case "ws":
+                                        st["wsSettings"] = map[string]any{"path": path + "?ed=2048", "headers": map[string]any{"Host": host}}
+                                case "httpupgrade":
+                                        st["httpupgradeSettings"] = map[string]any{"path": path, "host": host}
+                                default:
+                                        st["xhttpSettings"] = map[string]any{"path": path, "mode": "packet-up", "host": host}
+                                }
+                                return st
                         }
-                        xsock := map[string]any{"tcpNoDelay": true, "tcpFastOpen": true,
-                                "tcpKeepAliveIdle": 300, "tcpKeepAliveInterval": 15}
-                        for k, v := range fm {
-                                xsock[k] = v
+                        oVless := func(tag, net_, path string) map[string]any {
+                                return map[string]any{"tag": tag, "protocol": "vless",
+                                        "settings": map[string]any{"vnext": []map[string]any{{
+                                                "address": o.ip, "port": 443,
+                                                "users": []map[string]any{{"id": cid, "encryption": "none", "flow": "", "level": 0}}}}},
+                                        "streamSettings": oStream(net_, path), "mux": muxPayload(false)}
                         }
-                        xstream := map[string]any{"network": "xhttp", "security": "tls", "tlsSettings": xtls, "sockopt": xsock,
-                                "xhttpSettings": map[string]any{"path": xhttpPath(), "mode": "packet-up", "host": host}}
-                        outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "vless",
-                                "settings": map[string]any{"vnext": []map[string]any{{"address": o.ip, "port": 443,
-                                        "users": []map[string]any{{"id": cid, "encryption": "none", "flow": "", "level": 0}}}}},
-                                "streamSettings": xstream, "mux": muxPayload(false)})
-                        order = append(order, tag)
+                        if allowed["vless-ws"] {
+                                tag := tagFor("origin-vless-ws")
+                                outbounds = append(outbounds, oVless(tag, "ws", wsPath()))
+                                order = append(order, tag)
+                        }
+                        if allowed["vless-hu"] {
+                                tag := tagFor("origin-vless-hu")
+                                outbounds = append(outbounds, oVless(tag, "httpupgrade", huPath()))
+                                order = append(order, tag)
+                        }
+                        // v3.21.2: XHTTP direct-to-origin, LAST in the fallback
+                        // order — bunny's h2 edge stalls XHTTP stream tails.
+                        if allowed["vless-xhttp"] {
+                                tag := tagFor("alt-vless-xhttp")
+                                xtls := map[string]any{"serverName": host, "fingerprint": fp,
+                                        "alpn": strings.Split(alpnForNet("xhttp", alpnOv), ","), "allowInsecure": false}
+                                if cs != "" {
+                                        xtls["cipherSuites"] = cs
+                                }
+                                xsock := map[string]any{"tcpNoDelay": true, "tcpFastOpen": true,
+                                        "tcpKeepAliveIdle": 300, "tcpKeepAliveInterval": 15}
+                                for k, v := range fm {
+                                        xsock[k] = v
+                                }
+                                xstream := map[string]any{"network": "xhttp", "security": "tls", "tlsSettings": xtls, "sockopt": xsock,
+                                        "xhttpSettings": map[string]any{"path": xhttpPath(), "mode": "packet-up", "host": host}}
+                                outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "vless",
+                                        "settings": map[string]any{"vnext": []map[string]any{{"address": o.ip, "port": 443,
+                                                "users": []map[string]any{{"id": cid, "encryption": "none", "flow": "", "level": 0}}}}},
+                                        "streamSettings": xstream, "mux": muxPayload(false)})
+                                order = append(order, tag)
+                        }
                 }
         }
         if len(outbounds) == 0 {

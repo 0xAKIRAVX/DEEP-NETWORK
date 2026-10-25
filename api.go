@@ -489,6 +489,7 @@ func statePayload(r *http.Request) map[string]any {
                 "tuning":    tuningSanitize(state.Tuning),
                 "tcp_ready": tcpReady(),
                 "top_edges": state.TopEdges, "multi_edge": state.MultiEdge,
+                "primary_ir": state.PrimaryIR, "primary_ir_at": state.PrimaryIRAt,
                 "edge_block": append([]string(nil), state.EdgeBlock...),
                 "local_mode": lmSan,
                 "auto_scan": asSum,

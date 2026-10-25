@@ -223,6 +223,31 @@ func irGateEdges(healthy []*EdgeScore, maxProbe int) []*EdgeScore {
         return append(verified, rest...)
 }
 
+// irProbePrimary runs the SAME Iran-TLS gate over the primary address
+// (state.Address). Called every scan cycle. Verdict convention matches
+// DomainIR (0 unknown / 1 alive / 2 dead) so buildLinks can demote without
+// touching the admin's manual setting.
+func irProbePrimary() {
+        stateMu.RLock()
+        addr := strings.TrimSpace(state.Address)
+        stateMu.RUnlock()
+        if addr == "" || !isIPLiteral(addr) {
+                return // domain-form primary rides the 🌐/DomainIR gate instead
+        }
+        v := irProbeTLS(addr) // 1 alive / 0 dead / -1 probe unavailable
+        if v < 0 {
+                return
+        }
+        ir := 1
+        if v == 0 {
+                ir = 2
+        }
+        stateMu.Lock()
+        state.PrimaryIR, state.PrimaryIRAt = ir, time.Now().Unix()
+        saveStateLocked()
+        stateMu.Unlock()
+}
+
 // applyAutoEdges is the pure state-transition of an auto-scan (unit-testable):
 // returns the new primary address. A manually-set address survives untouched.
 func applyAutoEdges(st *State, healthy []*EdgeScore, now time.Time) string {
@@ -278,6 +303,10 @@ func autoScanOnce() (bool, string) {
                 }(i, ip)
         }
         wg.Wait()
+
+        // v3.22: gate the PRIMARY address too — before any early return, so the
+        // verdict is always fresh even when the edge scan finds nothing.
+        irProbePrimary()
 
         var healthy []*EdgeScore
         for i := range results {

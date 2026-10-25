@@ -135,6 +135,13 @@ type State struct {
         FrontIRAt     int64  `json:"front_ir_at,omitempty"`
         FrontPicks    []FrontPick `json:"front_picks,omitempty"`     // v3.17: proven front candidates + IR verdicts (🎭 variants)
         FrontPicksAt  int64  `json:"front_picks_at,omitempty"`      // when the picks were last evaluated
+        // v3.22: the PRIMARY address gets the same Iran-TLS gate as the edges.
+        // The 2026-10-25 wave: the Frankfurt primary was TLS-dead from every
+        // IR node while Kyiv lived — 16 of 22 sub rows rode it (primary group
+        // + every 🎭 front + 🛡️), all -1, and no gate existed to notice.
+        // 0 unknown, 1 alive, 2 dead (buildLinks demotes, never rewrites).
+        PrimaryIR   int   `json:"primary_ir,omitempty"`
+        PrimaryIRAt int64 `json:"primary_ir_at,omitempty"`
         // Telegram bot / Mini App (v3.4)
         TGToken      string     `json:"tg_token,omitempty"`
         TGAdminID    string     `json:"tg_admin_id,omitempty"`
