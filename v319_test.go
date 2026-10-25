@@ -129,20 +129,48 @@ func TestLocalDirectSkipsBlockedEdges(t *testing.T) {
         }
 }
 
-// XHTTP must be the FIRST link of every address set — v2rayNG keeps the
-// first/lowest config active, and packet-up XHTTP is the transport Iranian
-// DPI does not throttle like long-lived WS flows.
-func TestSubXHTTPFirst(t *testing.T) {
+// v3.21.2: WS must be the FIRST link of the primary set — v2rayNG keeps
+// the first/lowest config active, and through the bunny edges WS is the
+// measured-best transport (sustained 50MB COMPLETE at ~2MB/s). XHTTP rides
+// LAST and DIRECT to the origin ingress: through bunny's h2 layer it stalls
+// at 95-97% of every chunked transfer (2026-10-25 live incident — "config
+// pings but nothing loads"), so it must never be the row a user taps first.
+func TestSubWSFirstXHTTPLastDirect(t *testing.T) {
         v319Setup(t)
+        injectOrigin(t, "deep-network-development-w4a86.lucity.app", "84.17.37.214", "Frankfurt", "DE")
         links := buildLinks(lmTestClient(), "deep-network-development-w4a86.lucity.app")
         if len(links) == 0 {
                 t.Fatal("no links rendered")
         }
-        if !strings.Contains(links[0].URL, "type=xhttp") {
-                t.Errorf("first link must be XHTTP (packet-up), got %s", first80(links[0].URL))
+        if !strings.Contains(links[0].URL, "type=ws") {
+                t.Errorf("first link must be WS, got %s", first80(links[0].URL))
         }
-        if !strings.Contains(links[0].URL, "mode=packet-up") {
-                t.Errorf("XHTTP must ride packet-up mode, got %s", first80(links[0].URL))
+        // exactly one XHTTP row in the whole sub, direct to the origin
+        sawX, xIdx := 0, -1
+        for i, l := range links {
+                if strings.Contains(l.URL, "type=xhttp") {
+                        sawX++
+                        xIdx = i
+                }
+        }
+        if sawX != 1 {
+                t.Fatalf("want exactly 1 direct XHTTP row, saw %d", sawX)
+        }
+        x := links[xIdx].URL
+        if !strings.Contains(x, "@84.17.37.214:443") {
+                t.Errorf("XHTTP must dial the origin IP, got %s", first80(x))
+        }
+        if !strings.Contains(x, "mode=packet-up") {
+                t.Errorf("XHTTP must ride packet-up mode, got %s", first80(x))
+        }
+        if !strings.Contains(x, "sni=deep-network-development-w4a86.lucity.app") {
+                t.Errorf("XHTTP SNI must be the panel domain (origin cert), got %s", first80(x))
+        }
+        if !strings.Contains(x, "host=deep-network-development-w4a86.lucity.app") {
+                t.Errorf("XHTTP host header must be the panel domain, got %s", first80(x))
+        }
+        if xIdx < 3 {
+                t.Errorf("XHTTP must ride LAST in the primary group, got index %d", xIdx)
         }
 }
 

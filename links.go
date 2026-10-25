@@ -4,11 +4,14 @@ import (
         "encoding/base64"
         "encoding/json"
         "fmt"
+        "io"
         "net"
+        "net/http"
         "net/url"
         "regexp"
         "strconv"
         "strings"
+        "sync"
         "time"
 )
 
@@ -485,6 +488,88 @@ func frontShort(base string) string {
         return b
 }
 
+// ─────────── v3.21.2: XHTTP direct-to-origin ───────────
+// Measured live (2026-10-25): every XHTTP link routed through a bunny edge
+// stalled at 95-97% of ANY chunked download and never completed — bunny's h2
+// layer holds the tail of long GET streams, so pages hang forever while the
+// tiny generate_204 ping still passes. That is exactly the "configs ping
+// but nothing loads" report. WS / HTTPUpgrade complete at 1.5-2MB/s through
+// the same edges, and XHTTP straight to the Lucity origin ingress completes
+// 2.7MB in 2.4s — so XHTTP now rides the ORIGIN (never bunny), demoted to the
+// LAST row of the group, one row per subscription (primary only).
+
+type originEntry struct {
+        ip        string
+        city, cc  string
+        at        time.Time
+}
+
+var (
+        originMu    sync.Mutex
+        originCache = map[string]originEntry{}
+)
+
+// originFor resolves the panel's public host to its origin ingress IPv4
+// (plus geo, best-effort), cached 6h (10m for failures). The ADDRESS rides
+// the link as the resolved IP, not the domain: the panel domain is
+// DNS-poisoned inside Iran — clients that resolve it locally would dial a
+// fake IP. A TCP dial to the real IP with SNI carried in TLS needs no DNS.
+func originFor(host string) originEntry {
+        host = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(host), ".")))
+        if host == "" || isIPLiteral(host) || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+                return originEntry{}
+        }
+        originMu.Lock()
+        if e, ok := originCache[host]; ok {
+                if e.ip != "" && time.Since(e.at) < 6*time.Hour {
+                        originMu.Unlock()
+                        return e
+                }
+                if e.ip == "" && time.Since(e.at) < 10*time.Minute {
+                        originMu.Unlock()
+                        return e
+                }
+        }
+        originMu.Unlock()
+        var e originEntry
+        if addrs, err := net.LookupIP(host); err == nil {
+                for _, a := range addrs {
+                        if v4 := a.To4(); v4 != nil {
+                                e.ip = v4.String()
+                                break
+                        }
+                }
+        }
+        if e.ip != "" {
+                e.city, e.cc = geoSingle(e.ip)
+        }
+        e.at = time.Now()
+        originMu.Lock()
+        originCache[host] = e
+        originMu.Unlock()
+        return e
+}
+
+// geoSingle is a one-shot ip-api lookup for the origin label (best-effort).
+func geoSingle(ip string) (city, cc string) {
+        c := http.Client{Timeout: 4 * time.Second}
+        resp, err := c.Get("http://ip-api.com/json/" + ip + "?fields=status,countryCode,city")
+        if err != nil {
+                return "", ""
+        }
+        defer resp.Body.Close()
+        b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+        var d struct {
+                Status      string `json:"status"`
+                CountryCode string `json:"countryCode"`
+                City        string `json:"city"`
+        }
+        if json.Unmarshal(b, &d) == nil && d.Status == "success" {
+                return d.City, d.CountryCode
+        }
+        return "", ""
+}
+
 func customLink(ib *Inbound, c *Client, addr, fmtStr, host string) string {
         cid, proto, net_, sec := c.ID, ib.Protocol, ib.Network, ib.Security
         city, cc := geoCityFor(addr)
@@ -776,21 +861,13 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
         addLink := func(key, label, url string) {
                 links = append(links, Link{key, label, url})
         }
-        // v3.19: XHTTP rides FIRST. Measured live (26.10): the chain itself is
-        // fast (warm requests ~200ms + 1.3MB/s through the tunnel from a
-        // far-away vantage), so the "connects but opens nothing" reports are
-        // Iranian DPI throttling of long-lived bidirectional WS flows.
-        // XHTTP packet-up splits the stream into ordinary chunked POST
-        // requests — the pattern the DPI does not flag. v2rayNG picks the
-        // FIRST config when testing, so the pattern-resistant transport
-        // becomes the one users actually get.
-        if allowed["vless-xhttp"] {
-                n2 := nm("VLESS-XHTTP", "VLESS", "XHTTP", "TLS", addr)
-                addLink("vless-xhttp", "VLESS · XHTTP",
-                        fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
-                                cid, uriAddr, tlsParam, pyQuote(alpnForNet("xhttp", alpnOv)), pyQuote(sniHost),
-                                pyQuote(xhttpPath()), pyQuote(n2)))
-        }
+        // v3.21.2 order: WS first — v2rayNG picks the first config when
+        // testing, and through the bunny edges WS is the measured-best
+        // transport (50MB sustained, COMPLETE, ~2MB/s; HTTPUpgrade ≈1.5MB/s).
+        // XHTTP is emitted LAST and only in the primary group, pointing
+        // straight at the origin ingress (see the v3.21.2 note above
+        // originFor) — through bunny's h2 layer it stalls at 95-97% of
+        // every chunked transfer and reads as "connects but loads nothing".
         if allowed["vless-ws"] {
                 n1 := nm("VLESS-WS", "VLESS", "WS", "TLS", addr)
                 addLink("vless-ws", "VLESS · WebSocket",
@@ -819,6 +896,21 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
                         fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
                                 cid, uriAddr, pyQuote(tlsName), pyQuote(fp), pyQuote(alpnForNet("ws", alpnOv)),
                                 pyQuote(sniHost), pyQuote(trojanPath()+"?ed=2048"), pyQuote(n5)))
+        }
+        // v3.21.2: the direct-origin XHTTP row — primary group only, LAST.
+        // SNI and the HTTP host are the panel domain itself (the origin
+        // serves that cert); the address is the resolved origin IP (the
+        // domain is DNS-poisoned in Iran — see originFor). No front applies
+        // here: bunny's edge is what breaks this transport.
+        if primary && allowed["vless-xhttp"] {
+                if o := originFor(host); o.ip != "" {
+                        geoX := geoToken(o.city, o.cc, 0, "\U0001F6E1\uFE0F", "GERMANY")
+                        n2 := fmtName(fmtStr, c, shortLabel("VLESS-XHTTP"), "VLESS", "XHTTP", "TLS", host, geoX)
+                        addLink("vless-xhttp", "VLESS · XHTTP (direct)",
+                                fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&sni=%s&fp=%s&alpn=%s&type=xhttp&host=%s&path=%s&mode=packet-up#%s",
+                                        cid, o.ip, pyQuote(host), pyQuote(fp), pyQuote(alpnForNet("xhttp", alpnOv)), pyQuote(host),
+                                        pyQuote(xhttpPath()), pyQuote(n2)))
+                }
         }
         if primary && tcpReady() && allowed["vless-reality"] {
                 n6 := nm("VLESS-Reality-TCP", "VLESS", "TCP", "Reality", orStr(tcpHost(), addr))
@@ -972,11 +1064,6 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
                 outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("httpupgrade", huPath(), []string{"http/1.1"}), !t.MuxOff))
                 order = append(order, tag)
         }
-        if allowed["vless-xhttp"] {
-                tag := tagFor("alt-vless-xhttp")
-                outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("xhttp", xhttpPath(), []string{"h2", "http/1.1"}), false))
-                order = append(order, tag)
-        }
         if allowed["vmess-ws"] {
                 tag := tagFor("alt-vmess-ws")
                 outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "vmess",
@@ -993,6 +1080,30 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
                         "streamSettings": tlsStream("ws", trojanPath(), []string{"http/1.1"}),
                         "mux":            muxPayload(!t.MuxOff)})
                 order = append(order, tag)
+        }
+        // v3.21.2: XHTTP direct-to-origin, LAST in the fallback order (see
+        // the originFor note) — bunny's h2 edge stalls XHTTP stream tails.
+        if allowed["vless-xhttp"] {
+                if o := originFor(host); o.ip != "" {
+                        tag := tagFor("alt-vless-xhttp")
+                        xtls := map[string]any{"serverName": host, "fingerprint": fp,
+                                "alpn": strings.Split(alpnForNet("xhttp", alpnOv), ","), "allowInsecure": false}
+                        if cs != "" {
+                                xtls["cipherSuites"] = cs
+                        }
+                        xsock := map[string]any{"tcpNoDelay": true, "tcpFastOpen": true,
+                                "tcpKeepAliveIdle": 300, "tcpKeepAliveInterval": 15}
+                        for k, v := range fm {
+                                xsock[k] = v
+                        }
+                        xstream := map[string]any{"network": "xhttp", "security": "tls", "tlsSettings": xtls, "sockopt": xsock,
+                                "xhttpSettings": map[string]any{"path": xhttpPath(), "mode": "packet-up", "host": host}}
+                        outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "vless",
+                                "settings": map[string]any{"vnext": []map[string]any{{"address": o.ip, "port": 443,
+                                        "users": []map[string]any{{"id": cid, "encryption": "none", "flow": "", "level": 0}}}}},
+                                "streamSettings": xstream, "mux": muxPayload(false)})
+                        order = append(order, tag)
+                }
         }
         if len(outbounds) == 0 {
                 return map[string]any{"error": "هیچ پروتکلی برای این کاربر فعال نیست"}

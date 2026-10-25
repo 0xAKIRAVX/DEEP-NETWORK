@@ -13,6 +13,7 @@ package main
 
 import (
         "bufio"
+        "crypto/tls"
         "encoding/json"
         "fmt"
         "io"
@@ -20,6 +21,7 @@ import (
         "os"
         "os/exec"
         "path/filepath"
+        "strconv"
         "strings"
         "sync"
         "time"
@@ -41,6 +43,11 @@ func doctorClientConfig(c *Client, key, addr, domain string, socksPort int) (map
         if tlsName == "" || isIPLiteral(tlsName) {
                 return nil, fmt.Errorf("no TLS name for %s", key)
         }
+        // v3.21.2: XHTTP rides the origin ingress, not the edge — bunny's h2
+        // layer stalls its stream tails (see originFor). Same for the fetch
+        // target below: the doctor now verifies REAL completion, and only
+        // the direct path can prove XHTTP end-to-end.
+        dialAddr := addr
         tls := map[string]any{"serverName": tlsName, "fingerprint": "chrome", "allowInsecure": false}
         stream := map[string]any{"network": "", "security": "tls", "tlsSettings": tls}
         switch key {
@@ -54,8 +61,14 @@ func doctorClientConfig(c *Client, key, addr, domain string, socksPort int) (map
                 stream["httpupgradeSettings"] = map[string]any{"path": huPath(), "host": sniHost}
                 tls["alpn"] = []string{"http/1.1"}
         case "vless-xhttp":
+                o := originFor(domain)
+                if o.ip == "" {
+                        return nil, fmt.Errorf("origin unresolved for %s", domain)
+                }
+                dialAddr = o.ip
                 stream["network"] = "xhttp"
-                stream["xhttpSettings"] = map[string]any{"path": xhttpPath(), "mode": "packet-up", "host": sniHost}
+                stream["xhttpSettings"] = map[string]any{"path": xhttpPath(), "mode": "packet-up", "host": domain}
+                tls["serverName"] = domain
                 tls["alpn"] = []string{"h2", "http/1.1"}
         case "vmess-ws":
                 stream["network"] = "ws"
@@ -75,7 +88,7 @@ func doctorClientConfig(c *Client, key, addr, domain string, socksPort int) (map
         case "vless-ws", "vless-hu", "vless-xhttp":
                 outbound = map[string]any{"tag": "proxy", "protocol": "vless",
                         "settings": map[string]any{"vnext": []map[string]any{{
-                                "address": addr, "port": 443,
+                                "address": dialAddr, "port": 443,
                                 "users": []map[string]any{{"id": c.ID, "encryption": "none"}}}}},
                         "streamSettings": stream}
         case "vmess-ws":
@@ -99,7 +112,7 @@ func doctorClientConfig(c *Client, key, addr, domain string, socksPort int) (map
 }
 
 // socksDial performs a minimal SOCKS5 CONNECT (greeting → CONNECT host:port).
-func socksDial(port int, host string) (net.Conn, error) {
+func socksDial(port int, host string, dstPort int) (net.Conn, error) {
         conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 5*time.Second)
         if err != nil {
                 return nil, err
@@ -120,7 +133,7 @@ func socksDial(port int, host string) (net.Conn, error) {
         }
         hb := []byte{0x05, 0x01, 0x00, 0x03, byte(len(host))}
         hb = append(hb, []byte(host)...)
-        hb = append(hb, byte(80>>8), byte(80))
+        hb = append(hb, byte(dstPort>>8), byte(dstPort))
         if _, err := conn.Write(hb); err != nil {
                 conn.Close()
                 return nil, err
@@ -204,7 +217,7 @@ func doctorOne(c *Client, key, addr, domain string) DocRes {
         var conn net.Conn
         var derr error
         for try := 0; try < 4; try++ {
-                conn, derr = socksDial(socksPort, "www.gstatic.com")
+                conn, derr = socksDial(socksPort, domain, 443)
                 if derr == nil {
                         break
                 }
@@ -215,22 +228,66 @@ func doctorOne(c *Client, key, addr, domain string) DocRes {
                 return res
         }
         defer conn.Close()
+        // v3.21.2: completion-based verdict. The old HEAD /generate_204 only
+        // proved the tunnel could carry a header line — the 2026-10-25
+        // incident (XHTTP through bunny's h2 layer) handshook fine while
+        // every chunked page stalled at ~96% forever: "config pings but
+        // nothing loads". The doctor now pulls a real CHUNKED payload (the
+        // panel's own speedblob in chunked mode) through the exact user
+        // tunnel and requires the FULL body plus clean EOF.
+        tconn := tls.Client(conn, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
+        _ = tconn.SetDeadline(time.Now().Add(25 * time.Second))
+        if err := tconn.Handshake(); err != nil {
+                res.Err = "tls: " + err.Error()
+                return res
+        }
         t0 := time.Now()
-        if _, err := conn.Write([]byte("HEAD /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nUser-Agent: dn-doctor\r\nConnection: close\r\n\r\n")); err != nil {
+        req := "GET /panel/api/speedblob?n=96&chunked=1 HTTP/1.1\r\nHost: " + domain +
+                "\r\nUser-Agent: dn-doctor\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+        if _, err := tconn.Write([]byte(req)); err != nil {
                 res.Err = "http write: " + err.Error()
                 return res
         }
-        line, err := bufio.NewReader(conn).ReadString('\n')
+        rdr := bufio.NewReader(tconn)
+        line, err := rdr.ReadString('\n')
         if err != nil {
                 res.Err = "http read: " + err.Error()
                 return res
         }
         res.MS = time.Since(t0).Milliseconds()
-        if strings.Contains(line, " 204") {
-                res.OK = true
-        } else {
+        if !strings.Contains(line, " 200") {
                 res.Err = "status: " + strings.TrimSpace(line)
+                return res
         }
+        for {
+                h, err := rdr.ReadString('\n')
+                if err != nil {
+                        res.Err = "headers: " + err.Error()
+                        return res
+                }
+                if strings.TrimSpace(h) == "" {
+                        break
+                }
+        }
+        want := int64(96 * 1024)
+        var got int64
+        buf := make([]byte, 32*1024)
+        for {
+                n, err := rdr.Read(buf)
+                got += int64(n)
+                if err == io.EOF {
+                        break
+                }
+                if err != nil {
+                        res.Err = "body: " + err.Error()
+                        return res
+                }
+        }
+        if got < want {
+                res.Err = "short body: " + strconv.FormatInt(got, 10) + "/" + strconv.FormatInt(want, 10)
+                return res
+        }
+        res.OK = true
         return res
 }
 

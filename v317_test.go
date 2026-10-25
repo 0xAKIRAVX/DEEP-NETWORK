@@ -145,7 +145,10 @@ func TestSubCarriesAlternateFronts(t *testing.T) {
         if sawBlocked != 0 {
                 t.Fatalf("IR-blocked front must not ride along as a variant, saw %d links", sawBlocked)
         }
-        if sawPrimary < 3 {
+        // v3.21.2: the primary WS + HU rows carry the front (XHTTP moved to
+        // its own direct-origin row with the panel domain as SNI — tested
+        // in v319_test.go TestSubWSFirstXHTTPLastDirect).
+        if sawPrimary < 2 {
                 t.Fatalf("primary vless links must carry the active front SNI, saw %d", sawPrimary)
         }
 }

@@ -128,9 +128,11 @@ func TestDoctorClientConfigShape(t *testing.T) {
         state.FrontSNI, state.FrontRand = "b-cdn.net", true
         stateMu.Unlock()
         defer func() { stateMu.Lock(); state.FrontSNI, state.FrontRand = "", false; stateMu.Unlock() }()
+        domain := "deep-network-development-w4a86.lucity.app"
+        injectOrigin(t, domain, "84.17.37.214", "Frankfurt", "DE")
 
         for _, key := range doctorKeys {
-                cfg, err := doctorClientConfig(c, key, "185.102.217.65", "deep-network-development-w4a86.lucity.app", 27123)
+                cfg, err := doctorClientConfig(c, key, "185.102.217.65", domain, 27123)
                 if err != nil {
                         t.Fatalf("%s: %v", key, err)
                 }
@@ -141,7 +143,19 @@ func TestDoctorClientConfigShape(t *testing.T) {
                 stream, _ := obs[0]["streamSettings"].(map[string]any)
                 tls, _ := stream["tlsSettings"].(map[string]any)
                 sni, _ := tls["serverName"].(string)
-                if !strings.HasSuffix(sni, ".b-cdn.net") {
+                // v3.21.2: every edge transport keeps the front SNI, except
+                // XHTTP — it now dials the origin directly with the panel
+                // domain as SNI (bunny's h2 layer stalls its stream tails).
+                if key == "vless-xhttp" {
+                        if sni != domain {
+                                t.Errorf("xhttp doctor SNI = %q, want origin domain %q", sni, domain)
+                        }
+                        vs, _ := obs[0]["settings"].(map[string]any)
+                        vn, _ := vs["vnext"].([]map[string]any)
+                        if len(vn) == 1 && vn[0]["address"] != "84.17.37.214" {
+                                t.Errorf("xhttp doctor must dial the origin IP, got %v", vn[0]["address"])
+                        }
+                } else if !strings.HasSuffix(sni, ".b-cdn.net") {
                         t.Errorf("%s: doctor SNI = %q, want front", key, sni)
                 }
                 if v, ok := tls["allowInsecure"]; ok && v == true {
