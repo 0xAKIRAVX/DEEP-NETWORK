@@ -444,6 +444,11 @@ func loadState() {
 	if _, ok := rawKeys["sweep_on"]; !ok {
 		st.SweepOn = true
 	}
+	// v3.23.1: fresh deploys start scanning immediately — the minute sweep
+	// needs the edge pool populated (existing state files keep their choice).
+	if _, ok := rawKeys["auto_scan"]; !ok {
+		st.AutoScan = true
+	}
 	if pm := envInt("SWEEP_PING_MS", 0); pm > 0 {
 		st.SweepPingMs = pm
 	}
