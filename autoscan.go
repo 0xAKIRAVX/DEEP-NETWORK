@@ -31,6 +31,7 @@ import (
 const (
 	autoScanTargets = 24 // probe head of the geo-balanced shortlist
 	autoScanKeep    = 5
+	autoScanPool    = 12 // v3.23: keep up to 12 in TopEdges (shipping still uses the top 5) — the minute sweep's promotion source
 	autoScanMinKBps = 15 // edge must actually move bytes to qualify
 )
 
@@ -352,8 +353,8 @@ func autoScanOnce() (bool, string) {
 		}
 		return true, msg
 	}
-	if len(healthy) > autoScanKeep {
-		healthy = healthy[:autoScanKeep]
+	if len(healthy) > autoScanPool {
+		healthy = healthy[:autoScanPool]
 	}
 
 	// v3.18: IR-TLS gate — an edge that cannot complete a TLS handshake
@@ -494,6 +495,8 @@ func autoScanSummary() map[string]any {
 		"last_run":    autoScanLastAt(),
 		"auto_addr":   autoAddrNow(),
 		"every_hours": hours,
+		// v3.23: the per-minute health pass over the edge pool.
+		"sweep": sweepSummary(),
 		"front": map[string]any{
 			"active": frontHost != "",
 			"host":   frontHost,

@@ -142,6 +142,15 @@ type State struct {
 	// 0 unknown, 1 alive, 2 dead (buildLinks demotes, never rewrites).
 	PrimaryIR   int   `json:"primary_ir,omitempty"`
 	PrimaryIRAt int64 `json:"primary_ir_at,omitempty"`
+	// v3.23: minute sweep — per-minute health pass over the edge pool:
+	// dead (TLS-fail = the operation behind a -1) and slow (> SweepPingMs)
+	// edges are pruned & replaced so every subscription fetch is fresh.
+	SweepOn       bool  `json:"sweep_on,omitempty"`
+	SweepAt       int64 `json:"sweep_at,omitempty"`
+	SweepPingMs   int   `json:"sweep_ping_ms,omitempty"`  // threshold, default 180
+	SweepChecked  int   `json:"sweep_checked,omitempty"`  // cumulative edge probes
+	SweepDropped  int   `json:"sweep_dropped,omitempty"`  // cumulative dead+slow prunes
+	SweepPromoted int   `json:"sweep_promoted,omitempty"` // cumulative promotions
 	// Telegram bot / Mini App (v3.4)
 	TGToken      string     `json:"tg_token,omitempty"`
 	TGAdminID    string     `json:"tg_admin_id,omitempty"`
@@ -429,6 +438,17 @@ func loadState() {
 	st.PassIsAuto = st.PassIsAuto || os.Getenv("ADMIN_PASSWORD") == ""
 	if _, ok := rawKeys["random_sni"]; !ok {
 		st.RandomSNI = true
+	}
+	// v3.23: minute sweep defaults ON; SWEEP_PING_MS env pins the threshold
+	// across ephemeral redeploys (state resets without a volume).
+	if _, ok := rawKeys["sweep_on"]; !ok {
+		st.SweepOn = true
+	}
+	if pm := envInt("SWEEP_PING_MS", 0); pm > 0 {
+		st.SweepPingMs = pm
+	}
+	if st.SweepPingMs < 50 || st.SweepPingMs > 2000 {
+		st.SweepPingMs = 180
 	}
 	if _, ok := rawKeys["pass_is_auto"]; !ok {
 		st.PassIsAuto = os.Getenv("ADMIN_PASSWORD") == ""

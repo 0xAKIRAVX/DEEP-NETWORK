@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.22.0"
+const Version = "3.23.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -154,6 +154,10 @@ func bootReport() {
 	if autoScanOn {
 		logf("  auto-scan : ON — panel scans & applies 0-loss edges every %dh + doctor self-test", hours)
 	}
+	if sweepEnabled() {
+		logf("  minute-sweep: ON — every %ds: dead (TLS-fail) and >%dms edges pruned & replaced, auto address self-heals",
+			int(sweepEvery().Seconds()), sweepPingMs())
+	}
 	if lm := localModeGet(); lm.Enabled {
 		logf("  local-mode : kit ON — survival variants ride every subscription")
 		if lm.RelayHost != "" {
@@ -235,6 +239,7 @@ func main() {
 	go usageLoop()
 	go serverGeo()
 	go autoScanLoop()   // v3.14: scan & apply best edges automatically
+	go sweepLoop()      // v3.23: per-minute health pass — prune dead/slow edges, keep the sub fresh
 	go frontWatchLoop() // v3.17: re-check the active SNI front from Iran every 15 min, self-heal
 	go lockWatchdog()   // v3.16: a frozen state lock dumps stacks + self-restarts
 
