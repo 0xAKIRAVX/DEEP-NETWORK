@@ -195,51 +195,6 @@
     $('#eye').addEventListener('click', () => {
       const i = $('#f-pass'); i.type = i.type === 'password' ? 'text' : 'password';
     });
-    $('#lc-cam').addEventListener('click', () => {
-      // avatar upload needs a session; check quietly and open the picker if logged in
-      fetch('/panel/api/ping').then(r => { if (r.ok) pickAvatar(); else toast('برای تغییر عکس پروفایل اول وارد شوید'); })
-        .catch(() => toast('ارتباط با سرور برقرار نیست', 'err'));
-    });
-    $('#forgot').addEventListener('click', () => modal(`<h3>رمز عبور <button>✕</button></h3>
-      <p style="font-size:12.5px;color:#bbb;line-height:2">
-      اگر رمز را خودتان تنظیم نکرده‌اید، پنل آن را هنگام استقرار <b>خودکار ساخته</b> و در <b>لاگ‌های دیپلوی Lucity</b> چاپ کرده است.<br>
-      متغیر محیطی <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> را در تنظیمات سرویس تنظیم کنید تا رمز دلخواه شما باشد. رمز جدید در پنل هم قابل تغییر است (تنظیمات ← مدیریت).</p>`));
-    $('#btn-quick').addEventListener('click', async () => {
-      try {
-        const st = await api('state');
-        const main = st.clients.find(c => c.main) || st.clients[0];
-        if (!main) return toast('کاربری پیدا نشد', 'err');
-        await copy(main.sub_url, 'لینک اشتراک سریع کپی شد — در کلاینت وارد (Import from clipboard) کنید ✓');
-      } catch (ex) { toast(ex.message, 'err'); }
-    });
-    $('#btn-secure').addEventListener('click', async () => {
-      try {
-        const st = await api('state');
-        const main = st.clients.find(c => c.main) || st.clients[0];
-        // v3.6 FIX: was ?profile=fast — forced fragmentation OFF, the opposite
-        // of "اتصال امن". No profile → serves the CURRENT saved tuning
-        // (fragmentation/anti-DPI exactly as configured in Settings).
-        location.href = '/panel/api/client/' + main.id;
-      } catch (ex) { toast(ex.message, 'err'); }
-    });
-    $$('.lc-ico').forEach(b => b.addEventListener('click', async () => {
-      const act = b.dataset.act;
-      if (act === 'globe') {
-        modal(`<h3>درباره DEEP NETWORK <button>✕</button></h3>
-        <p style="font-size:12.5px;color:#bbb;line-height:2.1">نسخه <b>v${VER}</b> — بازنویسی کامل با <b>Go + Rust</b>.<br>
-        هسته پروکسی: Xray-core · پنل: Go · اسکنر پینگ: Rust<br>
-        SNI تصادفی ضد فیلتر، پروفایل‌های اپراتور ایران، فرگمنت TLS و کانفیگ بهینه برای هر اپراتور.</p>`);
-      } else if (act === 'help') {
-        modal(`<h3>راهنما <button>✕</button></h3>
-        <p style="font-size:12.5px;color:#bbb;line-height:2">
-        ۱) با نام کاربری و رمز وارد شوید (رمز در لاگ دیپلوی است اگر خودتان تنظیم نکرده‌اید).<br>
-        ۲) از بخش «کاربران» لینک اشتراک هر کاربر را کپی یا QR آن را بگیرید.<br>
-        ۳) در v2rayNG / Hiddify از طریق Import from clipboard اضافه کنید.<br>
-        ۴) اگر اتصال برقرار نشد یا قطع و وصل شد: از «بهینه‌ساز و اسکنر» دکمه <b>«بهینه‌سازی خودکار برای شبکه من»</b> را بزنید — بهترین IP و تنظیمات اپراتور شما خودکار اعمال می‌شود، بعد اشتراک را در کلاینت به‌روزرسانی کنید.</p>`);
-      } else if (act === 'settings') {
-        toast('اول وارد شوید تا تنظیمات باز شود');
-      }
-    }));
   }
 
   // ─────────── view rendering ───────────
@@ -414,6 +369,26 @@
       const tcpReady = st.settings.tcp_ready;
       cp.textContent = tcpReady && protos['vless-reality'] ? 'Reality' : protos['vless-xhttp'] ? 'XHTTP' : protos['vless-ws'] ? 'VLESS-WS' : 'VLESS';
     }
+    // v3.25: hero network badge — REAL endpoint instead of a static string
+    // (VPS: Reality + xhttp/grpc rows; CDN: protocol summary).
+    const hn = $('#hero-net');
+    if (hn) {
+      if (st.settings.vps_mode) {
+        const protos = st.settings.protocols || {};
+        const rows = [];
+        if (st.settings.tcp_ready && protos['vless-reality']) rows.push('Reality');
+        if (protos['vless-reality-xhttp']) rows.push('XHTTP');
+        if (protos['vless-grpc']) rows.push('gRPC');
+        hn.textContent = rows.length ? 'VLESS · ' + rows.join(' · ') : 'VLESS';
+        hn.dir = 'ltr';
+      } else {
+        hn.textContent = 'VLESS · XHTTP · WS';
+        hn.dir = 'ltr';
+      }
+    }
+    // v3.25: VPS deploys hide the CDN-only menu items (scanner / شبکه ملی)
+    const vps = !!st.settings.vps_mode;
+    $$('[data-vps="hide"]').forEach(el => { el.hidden = vps; });
     // v3.11: sidebar «شبکه ملی» badge — ON while the survival kit is enabled.
     const lmBadge = $('#sb-lm-on');
     if (lmBadge) lmBadge.hidden = !(st.settings.local_mode && st.settings.local_mode.enabled);
@@ -717,6 +692,10 @@
       const st = S.state; if (!st) return '<p>در حال بارگذاری…</p>';
       const s = st.settings, ops = s.operators || {}, t = s.tuning || {};
       const cps = st.cipher_presets || {}, fps = st.fps || [];
+      // v3.25: CDN-only controls (edge blocklist, random SNI, Telegram webhook)
+      // are dead weight on a self-hosted VPS — hidden there.
+      const vps = !!s.vps_mode;
+      const cdnOnly = html => vps ? '' : html;
       return `<section class="info-sec" style="margin-top:20px;max-width:720px">
       <h3>تنظیمات</h3>
       <h4 style="margin:16px 0 8px;font-size:12.5px;color:#cfcfcf">مدیریت</h4>
@@ -734,11 +713,11 @@
       <label class="field"><input id="se-sni" value="${esc(s.reality_sni || '')}" placeholder="SNI برای Reality"></label>
       </div>
       <label class="field" style="margin:10px 0"><input id="se-fmt" value="${esc(s.cfg_fmt || '')}" placeholder="⟦ {user} • {proto} • {net} • {geo} ⟧ (پیش‌فرض)"></label>
-      <label class="field" style="margin:10px 0"><input id="se-edgeblock" style="direction:ltr;font-family:var(--mono)" value="${esc((s.edge_block || []).join(', '))}" placeholder="حذف لبه‌ها (IP با کاما) — کانفیگ‌های -1 شما"></label>
+      ${cdnOnly(`<label class="field" style="margin:10px 0"><input id="se-edgeblock" style="direction:ltr;font-family:var(--mono)" value="${esc((s.edge_block || []).join(', '))}" placeholder="حذف لبه‌ها (IP با کاما) — کانفیگ‌های -1 شما"></label>
       <p style="font-size:11px;color:#8d8d8d;margin:6px 2px 0;line-height:1.9">🗑 <b>حذف لبه‌ها:</b> اگر کانفیگی با برچسب یک شهر (مثل استکهلم) در کلاینت شما <b>منفی یک (-1)</b> می‌دهد ولی برای اسکنر سالم است، IP آن لبه را اینجا وارد کنید — دیگر هیچ‌وقت در اشتراک نمی‌آید. جعبه‌ابزار دقیق: در v2rayNG روی کانفیگ بزنید تا IP را ببینید.</p>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-randsni" ${s.random_sni ? 'checked' : ''}><span class="cbx"></span>SNI تصادفی ضد فیلتر (فقط *.lucity.app)</label>
+      <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-randsni" ${s.random_sni ? 'checked' : ''}><span class="cbx"></span>SNI تصادفی ضد فیلتر (فقط *.lucity.app)</label>`)}
 
-      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">ربات تلگرام — اجرای پنل داخل تلگرام</h4>
+      ${cdnOnly(`<h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">ربات تلگرام — اجرای پنل داخل تلگرام</h4>
       <p style="font-size:11px;color:#8d8d8d;margin-bottom:10px;line-height:2">در تلگرام به <b>@BotFather</b> بفرستید <code style="font-family:var(--mono)">/newbot</code>، اسم و یوزرنیم بدهید و <b>توکن</b> را کپی کنید. شناسه عددی خود را هم از <b>@userinfobot</b> بگیرید. بعد از «اتصال ربات»، دکمه منوی ربات و دستور <code style="font-family:var(--mono)">/start</code> خودکار ساخته می‌شوند و پنل مستقیم داخل تلگرام باز می‌شود — بدون نیاز به رمز.</p>
       <div class="row2">
       <label class="field"><input id="se-tg-token" type="password" placeholder="توکن ربات (123456789:AAF...)" autocomplete="off"></label>
@@ -748,7 +727,7 @@
         <button class="btn" id="tg-connect">اتصال ربات</button>
         <button class="btn" id="tg-disconnect" style="display:none">قطع اتصال</button>
       </div>
-      <p id="tg-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
+      <p id="tg-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>`)}
 
       <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">پروتکل‌ها</h4>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">
@@ -808,6 +787,23 @@
       </section>`;
     },
     support() {
+      // v3.25: VPS deploys get self-hosted help (systemd/env), CDN keeps the
+      // Lucity text — the old single text was wrong for one of the two.
+      const vps = !!(S.state && S.state.settings && S.state.settings.vps_mode);
+      if (vps) {
+        return `<section class="info-sec" style="margin-top:20px;max-width:680px">
+      <h3>پشتیبانی — سرور اختصاصی شما</h3>
+      <ul class="kv" style="margin-top:12px">
+      <li><span>رمز و تنظیمات</span><b style="direction:ltr;font-family:var(--mono)">/etc/deep-network.env</b></li>
+      <li><span>وضعیت سرویس</span><b style="direction:ltr;font-family:var(--mono)">systemctl status deep-network</b></li>
+      <li><span>لاگ زنده</span><b style="direction:ltr;font-family:var(--mono)">journalctl -u deep-network -f</b></li>
+      <li><span>نمایش رمز و QR</span><b style="direction:ltr;font-family:var(--mono)">/opt/deep-network/out --banner</b></li>
+      <li><span>عیب‌یابی</span><b style="direction:ltr;font-family:var(--mono)">bash diagnose.sh [--fix]</b></li>
+      <li><span>ری‌استارت</span><b style="direction:ltr;font-family:var(--mono)">systemctl restart deep-network</b></li>
+      </ul>
+      <p style="font-size:11.5px;color:#8d8d8d;margin-top:12px;line-height:2">پورت‌های لازم در فایروال ابری (پنل ارائه‌دهنده VPS): پنل <b>80</b> · تونل Reality <b>8443</b> (یا 443) · بدل‌ها <b>2053</b> · XHTTP <b>2087</b> · gRPC <b>2095</b>. اگر IP از اپراتور شما فیلتر باشد هیچ کانفیگی کار نمی‌کند — از ارائه‌دهنده IP تمیز بگیرید.</p>
+      </section>`;
+      }
       return `<section class="info-sec" style="margin-top:20px;max-width:640px">
       <h3>پشتیبانی</h3>
       <p style="font-size:12.5px;color:#bbb;line-height:2.2;margin-top:8px">
@@ -1407,9 +1403,11 @@
       // guard: when state hasn't arrived yet the view renders a placeholder that
       // has none of these elements — bail and let viewStale re-render + re-bind
       // once stateLoop delivers data (was: rare "textContent of null" race).
-      if (!$('#tg-status') || !$('#se-save')) return;
-      // ── Telegram bot section (v3.4) ──
+      // v3.25: #tg-status is CDN-only — VPS deploys must still bind the rest.
+      if (!$('#se-save')) return;
+      // ── Telegram bot section (v3.4, CDN-only: webhooks need HTTPS) ──
       const stEl = $('#tg-status'), connBtn = $('#tg-connect'), discBtn = $('#tg-disconnect');
+      if (stEl && connBtn && discBtn) {
       const paintTg = () => {
         const tg = (S.state && S.state.settings && S.state.settings.telegram) || {};
         if (tg.connected) {
@@ -1441,6 +1439,7 @@
           await stateLoop(); renderView('settings');
         } catch (ex) { toast(ex.message, 'err'); }
       });
+      }
 
       // ── FinalMask & Cipher Suites section (v3.6) ──
       // guard: when state hasn't arrived yet the view renders a placeholder —
@@ -1501,7 +1500,7 @@
           const payload = {
             user: $('#se-user').value, address: $('#se-address').value,
             reality_sni: $('#se-sni').value, cfg_fmt: $('#se-fmt').value,
-            random_sni: $('#se-randsni').checked, protocols,
+            random_sni: $('#se-randsni') ? $('#se-randsni').checked : undefined, protocols,
             tuning: tune,
           };
           if ($('#se-sni-ov') && $('#se-sni-ov').value.trim() !== '') payload.sni_override = $('#se-sni-ov').value.trim();
@@ -1654,7 +1653,6 @@
       $('#sidebar').classList.remove('open');
       $('#sb-backdrop').classList.remove('show');
     });
-    $('#hero-close').addEventListener('click', () => { $('#hero').style.display = 'none'; });
     $('#view-all').addEventListener('click', () => renderView('users'));
     $('#hd-avatar-wrap').addEventListener('click', pickAvatar);
     $('#hd-avatar-wrap').addEventListener('keydown', e => { if (e.key === 'Enter') pickAvatar(); });
@@ -1683,12 +1681,8 @@
         if (hit) { renderView('users'); }
       }, 300);
     });
-    // live FPS display (real)
-    FX.onFps = f => {
-      const a = $('#fps-chip'), b = $('#si-fps');
-      if (a) a.textContent = f;
-      if (b) b.textContent = f + ' fps';
-    };
+    // v3.25: FPS chip removed (useless) — the FX manager still uses the
+    // measured FPS internally for adaptive quality, nothing to paint.
   }
 
   // ─────────── operator auto-detect (real) ───────────

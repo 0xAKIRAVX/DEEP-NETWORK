@@ -13,46 +13,30 @@
 </head>
 <body>
 
-<!-- ══════════════════════ LOGIN VIEW ══════════════════════ -->
+<!-- ══════════════════════ LOGIN VIEW (v3.25 — clean redesign) ══════════════════════ -->
 <div id="login" class="view">
 
-  <!-- cinematic background stack -->
+  <!-- aurora background -->
   <div class="lbg">
     <canvas id="fx-login"></canvas>
-    <img class="lbg-ribbon" src="/panel/assets/img/ribbon.png" alt="" draggable="false">
-    <img class="lbg-planet" src="/panel/assets/img/planet.png" alt="" draggable="false">
-    <img class="lbg-mountains" src="/panel/assets/img/mountains.png" alt="" draggable="false">
-    <div class="lbg-glow"></div>
-    <div class="reticle reticle-c"></div>
-    <div class="reticle reticle-r"></div>
-    <div class="lbg-vignette"></div>
-    <div class="edge-text edge-tl" aria-hidden="true"><span>FAST</span><span>SECURE</span><span>ANONYMOUS</span><i>+</i></div>
-    <div class="edge-text edge-tr" aria-hidden="true"><span>NO BORDERS</span><span>JUST</span><span>FREEDOM</span></div>
-    <div class="edge-text edge-br" aria-hidden="true"><span>PRIVATE</span><span>SECURE</span><span>GLOBAL</span><i>◇</i></div>
-    <div class="edge-text edge-left" aria-hidden="true"><span>DEEP NETWORK ◇ ＋</span></div>
-    <div class="lbg-footer" aria-hidden="true"><em>v__PANEL_VER__</em><b>DEEP NETWORK</b></div>
+    <div class="lbg-aurora lbg-a1" aria-hidden="true"></div>
+    <div class="lbg-aurora lbg-a2" aria-hidden="true"></div>
+    <div class="lbg-aurora lbg-a3" aria-hidden="true"></div>
+    <div class="lbg-grid" aria-hidden="true"></div>
+    <div class="lbg-vignette" aria-hidden="true"></div>
   </div>
 
   <!-- the login card -->
   <main class="login-card" role="main">
-    <div class="lc-chrome">
-      <img class="lc-logo" src="/panel/assets/img/wolf-128.png" alt="DEEP NETWORK">
-      <div class="lc-win" aria-hidden="true"><b>−</b><b>▢</b><b>✕</b></div>
-    </div>
+    <div class="lc-aura" aria-hidden="true"></div>
 
-    <div class="lc-avatar-wrap">
-      <svg class="lc-ring" viewBox="0 0 120 120" aria-hidden="true">
-        <circle cx="60" cy="60" r="57" />
-        <circle cx="60" cy="60" r="57" class="spin-ccw" stroke-dasharray="8 5" />
-      </svg>
-      <img class="lc-avatar" id="lc-avatar" data-avatar src="/panel/avatar.png" alt="">
-      <button class="lc-cam" id="lc-cam" type="button" title="تغییر تصویر پروفایل" aria-label="تغییر تصویر پروفایل">
-        <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
-      </button>
+    <div class="lc-head">
+      <span class="lc-halo" aria-hidden="true"></span>
+      <img class="lc-logo" src="/panel/assets/img/wolf-128.png" alt="DEEP NETWORK">
     </div>
 
     <h1 class="lc-title">DEEP NETWORK</h1>
-    <p class="lc-sub">YOUR CONNECTION . YOUR FREEDOM</p>
+    <p class="lc-sub">اتصال امن · پرسرعت · بدون مرز</p>
 
     <form id="login-form" autocomplete="off" novalidate>
       <label class="field">
@@ -69,32 +53,14 @@
 
       <div class="lc-row">
         <label class="remember"><input type="checkbox" id="f-remember" checked><span class="cbx"></span>من را به خاطر بسپار</label>
-        <button type="button" class="forgot" id="forgot">رمز عبور را فراموش کرده‌اید؟</button>
       </div>
 
       <p class="lc-error" id="login-error" hidden></p>
 
-      <button class="lc-submit" type="submit"><span aria-hidden="true">→</span> ورود</button>
+      <button class="lc-submit" type="submit"><span>ورود به پنل</span><i class="lc-arrow" aria-hidden="true">←</i></button>
     </form>
 
-    <div class="lc-divider" aria-hidden="true"><i>◇</i></div>
-
-    <div class="lc-actions">
-      <button type="button" class="lc-alt" id="btn-quick">
-        <svg viewBox="0 0 24 24"><path d="M13 2 5 13.5h5L11 22l8-11.5h-5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-        اتصال سریع
-      </button>
-      <button type="button" class="lc-alt" id="btn-secure">
-        <svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        اتصال امن
-      </button>
-    </div>
-
-    <div class="lc-icons" aria-label="ابزارها">
-      <button type="button" class="lc-ico" data-act="settings" title="تنظیمات"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v2.4M12 18.1v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M3.5 12h2.4M18.1 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-      <button type="button" class="lc-ico" data-act="globe" title="درباره"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 12h17M12 3.5c2.6 2.3 3.9 5.1 3.9 8.5s-1.3 6.2-3.9 8.5c-2.6-2.3-3.9-5.1-3.9-8.5S9.4 5.8 12 3.5z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
-      <button type="button" class="lc-ico" data-act="help" title="راهنما"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.6v.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="16.6" r=".9" fill="currentColor"/></svg></button>
-    </div>
+    <div class="lc-foot" aria-hidden="true"><i></i><b>DEEP NETWORK</b><span>v__PANEL_VER__</span><i></i></div>
   </main>
 </div>
 
@@ -148,8 +114,8 @@
       <button data-view="online"><svg viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.5-7 4.5 14 3-10 1.5 3h3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>آنلاین‌ها</span><em class="cnt live" id="sb-online-count">0</em></button>
       <button data-view="create"><svg viewBox="0 0 24 24"><circle cx="10" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 19c.9-3 2.9-4.4 5.5-4.4 1 0 2 .2 2.8.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17.5 14v6M14.5 17h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>ساخت کاربر</span></button>
       <button data-view="subs"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>اشتراک‌ها</span></button>
-      <button data-view="scanner"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>بهینه‌ساز و اسکنر</span></button>
-      <button data-view="localmode"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 12.8c1.2-1.7 2.4-1.7 3.5 0s2.3 1.7 3.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>شبکه ملی</span><em class="cnt live" id="sb-lm-on" hidden>ON</em></button>
+      <button data-view="scanner" data-vps="hide"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>بهینه‌ساز و اسکنر</span></button>
+      <button data-view="localmode" data-vps="hide"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 12.8c1.2-1.7 2.4-1.7 3.5 0s2.3 1.7 3.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>شبکه ملی</span><em class="cnt live" id="sb-lm-on" hidden>ON</em></button>
       <button data-view="stats"><svg viewBox="0 0 24 24"><path d="M4 20V9M10 20V4M16 20v-8M22 20H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>آمار</span></button>
       <button data-view="tools"><svg viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0-5.4 5L4 16.6V20h3.4l5.1-5.1a4 4 0 0 0 5-5.4l-2.6 2.6-2.9-2.9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>ابزارها</span></button>
       <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v2.4M12 18.1v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M3.5 12h2.4M18.1 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>تنظیمات</span></button>
@@ -175,15 +141,13 @@
       <div class="hero-shade"></div>
       <div class="hero-top">
         <span class="badge badge-ok"><i class="dot"></i>اتصال موفق</span>
-        <span class="badge">VLESS • Clean IP : 443</span>
+        <span class="badge" id="hero-net">DEEP NETWORK</span>
       </div>
       <h2>ایران، همیشه آزاد</h2>
       <p>شبکه‌ای پرسرعت و پایدار</p>
       <div class="hero-chips">
         <span class="chip"><svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>v__PANEL_VER__</span>
-        <span class="chip"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v13M16 5v13M3.5 9.5h17M3.5 14h17" stroke="currentColor" stroke-width="1.2"/></svg><b id="fps-chip">60</b>FPS</span>
-        <span class="chip" id="chip-proto"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span id="chip-proto-label">XHTTP</span></span>
-        <button class="chip-close" id="hero-close" aria-label="بستن">✕</button>
+        <span class="chip" id="chip-proto"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span id="chip-proto-label">Reality</span></span>
       </div>
     </section>
 
@@ -254,7 +218,6 @@
           <li><span>موقعیت سرور</span><b id="si-loc">—</b></li>
           <li><span>سیستم عامل</span><b id="si-os">—</b></li>
           <li><span>مدت روشن بودن سرور</span><b id="si-uptime">—</b></li>
-          <li><span>نرخ فریم (دستگاه شما)</span><b id="si-fps">— fps</b></li>
           <li><span>نسخه</span><b>v__PANEL_VER__</b></li>
         </ul>
       </div>
