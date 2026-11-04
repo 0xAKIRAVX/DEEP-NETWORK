@@ -108,6 +108,86 @@ func vpsRealityPort() int {
 // vpsTCPReady — like tcpReady() but with the VPS fallbacks baked in.
 func vpsTCPReady() bool { return vpsRealityAddr() != "" && realityPub != "" }
 
+// portAvailable probes whether a TCP port is free to listen on — used to
+// decide whether the extra Reality-SNI inbounds can ride (a bind failure
+// inside xray would kill EVERY tunnel, so extras are skipped when taken).
+func portAvailable(port int) bool {
+	ln, err := net.Listen("tcp", ":"+itoa(port))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
+// realityVariant — one Reality inbound: SNI on the wire + the port it rides.
+type realityVariant struct {
+	label string
+	sni   string
+	port  int
+}
+
+// realityTagFor builds a unique xray inbound tag per port (stats routing).
+func realityTagFor(port int) string {
+	if port == tcpAppPort() {
+		return "vless-reality"
+	}
+	return "vless-reality-" + itoa(port)
+}
+
+// realityVariantsCached — computed ONCE at boot (before xray spawns and
+// binds the ports) and reused for the xray config and every sub request:
+// probing later would see our own listener and drop the variants.
+var realityVariantsCached []realityVariant
+
+func computeRealityVariants(primaryPort int) []realityVariant {
+	if realityVariantsCached != nil {
+		return realityVariantsCached
+	}
+	realityVariantsCached = buildRealityVariants(primaryPort)
+	return realityVariantsCached
+}
+
+// realityVariants is the VPS Reality trio: the primary SNI on the primary
+// port, plus two alternates on extra ports — three different TLS
+// fingerprints on the wire, so an ISP that chokes one SNI pattern leaves
+// the other rows alive (microsoft / bing / cloudflare). A taken port or a
+// duplicate SNI silently drops that variant (never risks the primary).
+func realityVariants(primaryPort int) []realityVariant {
+	if realityVariantsCached != nil {
+		return realityVariantsCached
+	}
+	return buildRealityVariants(primaryPort)
+}
+
+func buildRealityVariants(primaryPort int) []realityVariant {
+	stateMu.RLock()
+	primary := state.RealitySNI
+	stateMu.RUnlock()
+	if primary == "" {
+		primary = "www.microsoft.com"
+	}
+	out := []realityVariant{{label: "VLESS-Reality-TCP", sni: primary, port: primaryPort}}
+	add := func(label, sni string, port int) {
+		if sni == "" || sni == primary || port <= 0 || port == primaryPort {
+			return
+		}
+		if !portAvailable(port) {
+			logf("reality variant %s skipped - port %d busy", sni, port)
+			return
+		}
+		for _, v := range out {
+			if v.sni == sni || v.port == port {
+				return
+			}
+		}
+		out = append(out, realityVariant{label: label, sni: sni, port: port})
+	}
+	add("VLESS-Reality-Bing", envStr("REALITY_SNI2", "www.bing.com"), envInt("REALITY_PORT2", 8443))
+	add("VLESS-Reality-Cloudflare", envStr("REALITY_SNI3", "www.cloudflare.com"), envInt("REALITY_PORT3", 2053))
+	return out
+}
+
 // subURLScheme: the scheme subscription/panel URLs must carry.
 func subURLScheme() string {
 	if vpsMode() {
@@ -182,7 +262,6 @@ func buildVpsLinks(c *Client, host string) []Link {
 		fp = "chrome"
 	}
 	stateMu.RLock()
-	sni := state.RealitySNI
 	fmtStr := state.CfgFmt
 	if fmtStr == "" {
 		fmtStr = defaultCfgFmt
@@ -195,13 +274,21 @@ func buildVpsLinks(c *Client, host string) []Link {
 	}
 	var out []Link
 
-	// 1) Reality — first row, the one v2rayNG auto-tests first.
+	// 1) Reality TRIO — first rows, the ones v2rayNG auto-tests first:
+	//    primary SNI on the primary port + bing/cloudflare alternates on
+	//    extra ports (v3.24: operator SNI-diversity, see realityVariants).
 	if vpsTCPReady() && allowed["vless-reality"] {
-		n6 := nm("VLESS-Reality-TCP", "VLESS", "TCP", "Reality", orStr(addr, host))
-		out = append(out, Link{"vless-reality", "VLESS · Reality (بدون دامنه)",
-			fmt.Sprintf("vless://%s@%s:%d?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=%s&pbk=%s&sid=%s&spx=%%2F&type=tcp&headerType=none#%s",
-				cid, uriAddr, vpsRealityPort(), pyQuote(sni), pyQuote(fp), pyQuote(realityPub),
-				pyQuote(realitySID), pyQuote(n6))})
+		for _, rv := range realityVariants(vpsRealityPort()) {
+			n6 := nm(rv.label, "VLESS", "TCP", "Reality", orStr(addr, host))
+			key := "vless-reality"
+			if rv.port != vpsRealityPort() {
+				key = "vless-reality-" + itoa(rv.port)
+			}
+			out = append(out, Link{key, "VLESS · Reality · " + rv.sni,
+				fmt.Sprintf("vless://%s@%s:%d?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=%s&pbk=%s&sid=%s&spx=%%2F&type=tcp&headerType=none#%s",
+					cid, uriAddr, rv.port, pyQuote(rv.sni), pyQuote(fp), pyQuote(realityPub),
+					pyQuote(realitySID), pyQuote(n6))})
+		}
 	}
 
 	// 2) plain-ws fallbacks on the panel port (no TLS on a bare VPS).
