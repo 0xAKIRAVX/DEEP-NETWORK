@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.23.0"
+const Version = "3.24.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -98,45 +98,14 @@ func usageLoop() {
 // ─────────── boot report (zero-variable deployment) ───────────
 
 func bootReport() {
-	stateMu.RLock()
-	user := state.AdminUser
-	isAuto := state.PassIsAuto
-	pw := state.AdminPass
-	clients := append([]*Client(nil), state.Clients...)
-	stateMu.RUnlock()
-	dom := strings.TrimSpace(osGetenv("DOMAIN"))
-	line := strings.Repeat("─", 62)
-	logf("%s", line)
-	logf("DEEP NETWORK %s is up  (Go + Rust edition)", Version)
-	if dom != "" {
-		logf("  panel     : https://%s/panel", dom)
-	} else {
-		logf("  panel     : https://<your-domain>/panel")
-	}
-	logf("  username  : %s", user)
-	if isAuto {
-		logf("  password  : %s", pw)
-		logf("               ↳ auto-generated (no ADMIN_PASSWORD variable was set);")
-		logf("                 change it any time in Settings, or find it here again.")
-	}
-	disp := dom
-	if disp == "" {
-		disp = "<your-domain>"
-	}
-	for i, c := range clients {
-		if i >= 5 {
-			logf("  sub        : ... and %d more (see panel)", len(clients)-5)
-			break
-		}
-		logf("  sub [%s]: https://%s/sub/%s", firstN(c.Name, 18), disp, subToken(c.ID))
-	}
-	if dom != "" {
-		logf("  DOMAIN     : %s - all links/subs are generated on this host.", dom)
-	}
+	// v3.24: identity (URL / credentials / sub / tunnel) moved into the
+	// terminal banner — the old lines here always claimed https://DOMAIN
+	// which is wrong on a bare-IP VPS (plain http://IP:PORT).
+	printBanner(false)
 	stateMu.RLock()
 	front := state.FrontSNI
 	hours := state.AutoScanHours
-	autoScanOn := state.AutoScan // v3.16: read under the lock (was a stray unlocked read)
+	autoScanOn := state.AutoScan
 	stateMu.RUnlock()
 	if hours < 1 || hours > 24 {
 		hours = 1
@@ -147,9 +116,11 @@ func bootReport() {
 	} else {
 		logf("  SNI front  : pending first scan (bunny shared-cert front, proven before use)")
 	}
-	logf("  anti-SNI   : random-subdomain SNI is ON for *.lucity.app links")
-	logf("               (Settings can disable it); sub-130ms ping: IP Scanner ->")
-	logf("               scan CDN edges, apply the nearest (Turkey/Azerbaijan/Iraq).")
+	if dom := strings.TrimSpace(osGetenv("DOMAIN")); dom != "" && !isIPLiteral(dom) {
+		logf("  anti-SNI   : random-subdomain SNI is ON for *.lucity.app links")
+		logf("               (Settings can disable it); sub-130ms ping: IP Scanner ->")
+		logf("               scan CDN edges, apply the nearest (Turkey/Azerbaijan/Iraq).")
+	}
 	logf("  watchdog   : ON — a frozen state lock dumps stacks and self-restarts")
 	if autoScanOn {
 		logf("  auto-scan : ON — panel scans & applies 0-loss edges every %dh + doctor self-test", hours)
@@ -184,7 +155,6 @@ func bootReport() {
 		orStr(tcpPublicPort(), "-"), tcpStat)
 	logf("  engine    : xray=%s deep-probe=%s", orStr(b2s(ensureXray() != ""), "missing"),
 		orStr(b2s(deepProbeBin() != ""), "missing (Go fallback active)"))
-	logf("%s", line)
 }
 
 func b2s(b bool) string {
@@ -221,6 +191,21 @@ func httpClientGet(u string) (*http.Response, error) {
 // ─────────── main ───────────
 
 func main() {
+	// v3.24: --banner re-prints the terminal banner (logo + credentials +
+	// sub URL + QR) without starting anything. --version prints the version.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--banner", "-b", "banner":
+			loadState()
+			initReality()
+			printBanner(true)
+			os.Exit(0)
+		case "--version", "-v", "version":
+			fmt.Printf("deep-network %s\n", Version)
+			os.Exit(0)
+		}
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 
@@ -254,12 +239,11 @@ func main() {
 
 	// v3.3: pre-warm the CDN edge list in the background so the first
 	// scanner click in the panel is instant instead of a ~20s cold scan.
+	// v3.24 bugfix: the fallback used a dead hardcoded dev domain (rotated
+	// away in v3.23) — now: no DOMAIN, no pre-warm.
 	go func() {
 		time.Sleep(15 * time.Second)
 		dom := strings.TrimSpace(osGetenv("DOMAIN"))
-		if dom == "" {
-			dom = "deep-network-development-w4a86.lucity.app"
-		}
 		if dom != "" && !isIPLiteral(dom) {
 			logf("pre-warming CDN edge cache for %s (v4+v6) …", dom)
 			bunnyEdgesFor(dom, "4")
