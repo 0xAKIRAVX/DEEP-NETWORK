@@ -303,8 +303,108 @@ func freeLocalPort(lo, hi int) (int, error) {
 	return 0, fmt.Errorf("no free port")
 }
 
+// doctorRealityConfig builds the loopback client config for the Reality
+// self-test (extracted so unit tests can prove it mirrors the shipped link).
+func doctorRealityConfig(c *Client, socksPort int) map[string]any {
+	return map[string]any{
+		"log":      map[string]any{"loglevel": "warning"},
+		"inbounds": []map[string]any{{"tag": "socks", "listen": "127.0.0.1", "port": socksPort, "protocol": "socks", "settings": map[string]any{"udp": false}}},
+		"outbounds": []map[string]any{{"tag": "proxy", "protocol": "vless",
+			"settings": map[string]any{"vnext": []map[string]any{{
+				"address": "127.0.0.1", "port": tcpAppPort(),
+				"users": []map[string]any{{"id": c.ID, "encryption": "none", "flow": "xtls-rprx-vision"}}}}},
+			"streamSettings": map[string]any{"network": "tcp", "security": "reality",
+				"realitySettings": map[string]any{"serverName": realitySNI(), "fingerprint": "chrome",
+					"publicKey": realityPub, "shortId": realitySID, "spiderX": "/"}}}},
+	}
+}
+
+// doctorReality (v3.25) proves the Reality tunnel end-to-end from the VPS
+// itself: it imports the EXACT link a phone would receive (same pbk / sid /
+// sni / flow / port) into a REAL xray client pointed at the loopback tunnel
+// port and pulls a 204 through it. This catches every config-side failure —
+// key mismatch, bad SNI, unreachable dest, broken xray — i.e. everything
+// except the network path between Iran and the VPS (cloud firewall / filtered
+// IP), which check-host.net and diagnose.sh cover from outside.
+func doctorReality(c *Client) DocRes {
+	res := DocRes{Edge: "loopback"}
+	if !tcpReady() || realityPub == "" {
+		res.Err = "reality not configured (TCP_HOST/TCP_PORT)"
+		return res
+	}
+	socksPort, err := freeLocalPort(21000, 29000)
+	if err != nil {
+		res.Err = "port: " + err.Error()
+		return res
+	}
+	cfg := doctorRealityConfig(c, socksPort)
+	confPath := filepath.Join(os.TempDir(), "dn-doc-reality.json")
+	b, _ := json.Marshal(cfg)
+	if os.WriteFile(confPath, b, 0o600) != nil {
+		res.Err = "write conf"
+		return res
+	}
+	defer os.Remove(confPath)
+	bin := ensureXray()
+	if bin == "" {
+		res.Err = "xray binary missing"
+		return res
+	}
+	cmd := exec.Command(bin, "run", "-c", confPath)
+	if err := cmd.Start(); err != nil {
+		res.Err = "spawn: " + err.Error()
+		return res
+	}
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	defer func() {
+		_ = cmd.Process.Kill()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+	}()
+	time.Sleep(900 * time.Millisecond)
+	var conn net.Conn
+	var derr error
+	for try := 0; try < 4; try++ {
+		conn, derr = socksDial(socksPort, "www.gstatic.com", 80)
+		if derr == nil {
+			break
+		}
+		time.Sleep(700 * time.Millisecond)
+	}
+	if derr != nil {
+		res.Err = "socks: " + derr.Error()
+		return res
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
+	t0 := time.Now()
+	req := "GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nUser-Agent: dn-doctor\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		res.Err = "http write: " + err.Error()
+		return res
+	}
+	rdr := bufio.NewReader(conn)
+	line, err := rdr.ReadString('\n')
+	if err != nil {
+		res.Err = "http read: " + err.Error()
+		return res
+	}
+	res.MS = time.Since(t0).Milliseconds()
+	if !strings.Contains(line, " 204") {
+		res.Err = "status: " + strings.TrimSpace(line)
+		return res
+	}
+	res.OK = true
+	return res
+}
+
 // doctorRun tests every enabled transport through one address (best edge when
 // available) and stores the verdicts. Runs after each auto-scan + on demand.
+// v3.25: the Reality self-test runs in EVERY mode — a bare-IP VPS ships no
+// CDN transports at all, so without it the doctor never ran there.
 func doctorRun() bool {
 	doctorMu.Lock()
 	if doctorRunning {
@@ -316,9 +416,6 @@ func doctorRun() bool {
 	defer func() { doctorMu.Lock(); doctorRunning = false; doctorMu.Unlock() }()
 
 	domain := autoScanDomain()
-	if domain == "" {
-		return false
-	}
 	stateMu.RLock()
 	addr := ""
 	if len(state.TopEdges) > 0 {
@@ -328,28 +425,46 @@ func doctorRun() bool {
 	}
 	clients := append([]*Client(nil), activeClientsLocked()...)
 	stateMu.RUnlock()
-	if addr == "" || len(clients) == 0 {
+	if len(clients) == 0 {
 		return false
 	}
 	results := map[string]DocRes{}
-	for _, key := range doctorKeys {
-		if !protoEnabled(key) {
-			continue
-		}
-		// pick the first user that actually has this transport enabled —
-		// probing with a UUID the server doesn't know would false-alarm.
+	// v3.25: Reality self-test — always, in every mode (VPS included).
+	if protoEnabled("vless-reality") {
 		var client *Client
 		for _, c := range clients {
-			if userProtocols(c)[key] {
+			if userProtocols(c)["vless-reality"] {
 				client = c
 				break
 			}
 		}
-		if client == nil {
-			results[key] = DocRes{OK: false, Edge: addr, Err: "no user with this transport enabled"}
-			continue
+		if client != nil {
+			results["vless-reality"] = doctorReality(client)
 		}
-		results[key] = doctorOne(client, key, addr, domain)
+	}
+	if domain != "" && addr != "" {
+		for _, key := range doctorKeys {
+			if !protoEnabled(key) {
+				continue
+			}
+			// pick the first user that actually has this transport enabled —
+			// probing with a UUID the server doesn't know would false-alarm.
+			var client *Client
+			for _, c := range clients {
+				if userProtocols(c)[key] {
+					client = c
+					break
+				}
+			}
+			if client == nil {
+				results[key] = DocRes{OK: false, Edge: addr, Err: "no user with this transport enabled"}
+				continue
+			}
+			results[key] = doctorOne(client, key, addr, domain)
+		}
+	}
+	if len(results) == 0 {
+		return false
 	}
 	stateMu.Lock()
 	state.Doctor = results

@@ -184,6 +184,26 @@ func isIPLiteral(s string) bool {
 	return net.ParseIP(s) != nil
 }
 
+// isPrivateOrLocalIP (v3.25) reports whether s is a loopback / private /
+// CGNAT / link-local address — i.e. NOT a publicly reachable VPS address.
+// The bare-IP gate deliberately ignores these: local & test setups
+// (httptest, docker without DOMAIN) keep the legacy full link list; only a
+// real public-IP deployment (DOMAIN=1.2.3.4 on a VPS) switches to the
+// Reality-only subscription.
+func isPrivateOrLocalIP(s string) bool {
+	ip := net.ParseIP(strings.Trim(strings.TrimSpace(s), "[]"))
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return true // CGNAT 100.64.0.0/10
+	}
+	return false
+}
+
 func sniFor(addr, host string) string {
 	stateMu.RLock()
 	ov := strings.TrimSpace(state.SNIOverride)
@@ -239,6 +259,36 @@ func tcpPublicPort() string {
 		return s
 	}
 	return osGetenv("RAILWAY_TCP_PROXY_PORT")
+}
+
+// realityAltSNIs returns alternate Reality camouflage SNIs (v3.25). All are
+// TLS1.3+h2 big-site fronts that are reachable from typical VPS egress and
+// not on Iranian blocklists; the primary (admin's choice / default
+// www.microsoft.com) is excluded. They ride BOTH the server (serverNames
+// array — every one is a valid client SNI against the same inbound) and the
+// subscription (one variant link each, bare-IP mode only).
+func realityAltSNIs(primary string) []string {
+	all := []string{"www.bing.com", "www.cloudflare.com", "www.samsung.com"}
+	var out []string
+	for _, s := range all {
+		if s != strings.ToLower(strings.TrimSpace(primary)) {
+			out = append(out, s)
+		}
+		if len(out) >= 2 {
+			break
+		}
+	}
+	return out
+}
+
+// sniShortLabel renders an SNI host as a short config-name token:
+// "www.bing.com" → "BING".
+func sniShortLabel(sni string) string {
+	s := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(sni), "www.")))
+	if i := strings.IndexByte(s, '.'); i > 0 {
+		s = s[:i]
+	}
+	return strings.ToUpper(s)
 }
 
 // fmtName renders the admin's config-name template with a safe fallback.
@@ -985,6 +1035,14 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
 		fmtStr = defaultCfgFmt
 	}
 	stateMu.RUnlock()
+	// v3.25 BARE-IP GATE: on a VPS without a domain (host is the raw PUBLIC
+	// IP) the CDN transports are structurally dead — their links always say
+	// port 443 + security=tls because a TLS-terminating CDN is supposed to
+	// sit in front. On a bare IP nothing serves TLS on 443, so every CDN
+	// row would ship as a guaranteed -1 in v2rayNG (the exact bug report:
+	// «کانفیگ‌ها منفی یک میدن»). Gate them out; Reality is the product on a
+	// VPS. Loopback/private hosts keep the legacy list (local/test setups).
+	bareIP := host != "" && isIPLiteral(host) && !isPrivateOrLocalIP(host)
 	nm := func(label, proto, net_, sec, server string) string {
 		return fmtName(fmtStr, c, shortLabel(label), proto, net_, sec, server, geo)
 	}
@@ -1015,21 +1073,21 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
 	// straight at the origin ingress (see the v3.21.2 note above
 	// originFor) — through bunny's h2 layer it stalls at 95-97% of
 	// every chunked transfer and reads as "connects but loads nothing".
-	if allowed["vless-ws"] {
+	if !bareIP && allowed["vless-ws"] {
 		n1 := nm("VLESS-WS", "VLESS", "WS", "TLS", addr)
 		addLink("vless-ws", "VLESS · WebSocket",
 			fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=ws&host=%s&path=%s#%s",
 				cid, uriAddr, tlsParam, pyQuote(alpnForNet("ws", alpnOv)), pyQuote(sniHost),
 				pyQuote(wsPath()+"?ed=2048"), pyQuote(n1)))
 	}
-	if allowed["vless-hu"] {
+	if !bareIP && allowed["vless-hu"] {
 		n3 := nm("VLESS-HTTPUpgrade", "VLESS", "HTTPUpgrade", "TLS", addr)
 		addLink("vless-hu", "VLESS · HTTPUpgrade",
 			fmt.Sprintf("vless://%s@%s:443?encryption=none&%s&alpn=%s&type=httpupgrade&host=%s&path=%s#%s",
 				cid, uriAddr, tlsParam, pyQuote(alpnForNet("httpupgrade", alpnOv)), pyQuote(sniHost),
 				pyQuote(huPath()), pyQuote(n3)))
 	}
-	if allowed["vmess-ws"] {
+	if !bareIP && allowed["vmess-ws"] {
 		n4 := nm("VMess-WS", "VMess", "WS", "TLS", addr)
 		vm := map[string]any{"v": "2", "ps": n4, "add": addr, "port": "443", "id": cid, "aid": "0",
 			"scy": "auto", "net": "ws", "type": "none", "host": sniHost, "path": vmessPath() + "?ed=2048",
@@ -1037,7 +1095,7 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
 		b, _ := json.Marshal(vm)
 		addLink("vmess-ws", "VMess · WebSocket", "vmess://"+base64.StdEncoding.EncodeToString(b))
 	}
-	if allowed["trojan-ws"] {
+	if !bareIP && allowed["trojan-ws"] {
 		n5 := nm("Trojan-WS", "Trojan", "WS", "TLS", addr)
 		addLink("trojan-ws", "Trojan · WebSocket",
 			fmt.Sprintf("trojan://%s@%s:443?security=tls&sni=%s&fp=%s&alpn=%s&type=ws&host=%s&path=%s#%s",
@@ -1054,6 +1112,23 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
 			fmt.Sprintf("vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=%s&pbk=%s&sid=%s&spx=%%2F&type=tcp&headerType=none#%s",
 				cid, tcpHost(), tcpPublicPort(), pyQuote(sni), pyQuote(fp), pyQuote(realityPub),
 				pyQuote(realitySID), pyQuote(n6)))
+		// v3.25 SNI VARIANTS (bare-IP VPS only): one extra link per
+		// alternate camouflage SNI, all valid against the same inbound
+		// (serverNames carries them all — see buildXrayConfig). When an
+		// ISP throttles one SNI pattern, v2rayNG still has working rows
+		// to test instead of a single -1 entry with no fallback.
+		if bareIP {
+			vi := 0
+			for _, alt := range realityAltSNIs(sni) {
+				vi++
+				nA := fmtName(fmtStr, c, "REALITY-SNI", "VLESS", "TCP", "REALITY",
+					orStr(tcpHost(), addr), sniShortLabel(alt))
+				addLink("vless-reality-alt"+itoa(vi), "VLESS · Reality · SNI "+alt,
+					fmt.Sprintf("vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=%s&pbk=%s&sid=%s&spx=%%2F&type=tcp&headerType=none#%s",
+						cid, tcpHost(), tcpPublicPort(), pyQuote(alt), pyQuote(fp), pyQuote(realityPub),
+						pyQuote(realitySID), pyQuote(nA)))
+			}
+		}
 	}
 	stateMu.RLock()
 	var customs []*Inbound
@@ -1068,6 +1143,9 @@ func buildLinksAddrSNI(c *Client, addr, host, geo string, primary bool, sniOverr
 	for _, ib := range customs {
 		if ib.Security == "reality" && realityPub == "" {
 			continue
+		}
+		if bareIP && ib.Security != "reality" {
+			continue // v3.25: non-Reality customs ride TLS-on-443 — dead on a bare IP
 		}
 		lbl := fmt.Sprintf("%s · %s · %s · %s", ib.Name, strings.ToUpper(ib.Protocol), ib.Network, ib.Security)
 		addLink(ib.Tag, lbl, customLink(ib, c, addr, fmtStr, host))
@@ -1143,6 +1221,9 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
 	fm := finalMask(t)
 	allowed := userProtocols(c)
 	cid := c.ID
+	// v3.25: same bare-IP gate as the link list — on a VPS the CDN
+	// outbounds (port 443 + TLS) are guaranteed-dead fallback rows.
+	bareIP := host != "" && isIPLiteral(host) && !isPrivateOrLocalIP(host)
 
 	tlsStream := func(net_, path string, alpn []string) map[string]any {
 		alpn = strings.Split(alpnForNet(net_, alpnOv), ",")
@@ -1196,17 +1277,17 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
 			"mux": map[string]any{"enabled": false, "concurrency": -1}})
 		order = append(order, "proxy")
 	}
-	if allowed["vless-ws"] {
+	if !bareIP && allowed["vless-ws"] {
 		tag := tagFor("alt-vless-ws")
 		outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("ws", wsPath(), []string{"http/1.1"}), !t.MuxOff))
 		order = append(order, tag)
 	}
-	if allowed["vless-hu"] {
+	if !bareIP && allowed["vless-hu"] {
 		tag := tagFor("alt-vless-hu")
 		outbounds = append(outbounds, vlessOut(tag, 443, tlsStream("httpupgrade", huPath(), []string{"http/1.1"}), !t.MuxOff))
 		order = append(order, tag)
 	}
-	if allowed["vmess-ws"] {
+	if !bareIP && allowed["vmess-ws"] {
 		tag := tagFor("alt-vmess-ws")
 		outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "vmess",
 			"settings": map[string]any{"vnext": []map[string]any{{"address": addr, "port": 443,
@@ -1215,7 +1296,7 @@ func clientConfigJSON(c *Client, host, profile string) map[string]any {
 			"mux":            muxPayload(!t.MuxOff)})
 		order = append(order, tag)
 	}
-	if allowed["trojan-ws"] {
+	if !bareIP && allowed["trojan-ws"] {
 		tag := tagFor("alt-trojan-ws")
 		outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "trojan",
 			"settings":       map[string]any{"servers": []map[string]any{{"address": addr, "port": 443, "password": cid, "level": 0}}},

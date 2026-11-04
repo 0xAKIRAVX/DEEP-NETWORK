@@ -19,7 +19,7 @@ import (
 // Single static binary: panel UI + API + subscriptions + tunnel proxy
 // (nginx eliminated; xray-core supervised as a child process).
 
-const Version = "3.24.0"
+const Version = "3.25.0"
 
 // ─────────── Reality keys (x25519 derived from SECRET) ───────────
 
@@ -227,6 +227,20 @@ func main() {
 	go sweepLoop()      // v3.23: per-minute health pass — prune dead/slow edges, keep the sub fresh
 	go frontWatchLoop() // v3.17: re-check the active SNI front from Iran every 15 min, self-heal
 	go lockWatchdog()   // v3.16: a frozen state lock dumps stacks + self-restarts
+	// v3.25: periodic self-test. On a bare-IP VPS there is no autoscan and
+	// no sweep material (no CDN edges), so without this loop the doctor
+	// would never prove the Reality tunnel — the one transport the VPS
+	// ships. Verdict lands in state.Doctor + the log ("doctor: …").
+	go func() {
+		time.Sleep(25 * time.Second)
+		for {
+			if doctorRun() {
+				time.Sleep(15 * time.Minute)
+			} else {
+				time.Sleep(5 * time.Minute)
+			}
+		}
+	}()
 
 	// v3.5: Telegram install bot (optional — activated by INSTALL_BOT_TOKEN).
 	// Deploys new DEEP NETWORK panels on requesters' own Lucity accounts.

@@ -168,13 +168,22 @@ func buildXrayConfig() map[string]any {
 			u["flow"] = "xtls-rprx-vision"
 			users = append(users, u)
 		}
+		// v3.25: serverNames carries the primary SNI PLUS the alternate
+		// camouflage SNIs — every one is a valid client SNI against
+		// this inbound (the sub ships one variant link per alternate;
+		// an ISP throttling one SNI pattern can no longer kill the
+		// whole tunnel). dest stays the primary camouflage target.
+		sniNames := []string{sni}
+		for _, alt := range realityAltSNIs(sni) {
+			sniNames = append(sniNames, alt)
+		}
 		inbounds = append(inbounds, map[string]any{
 			"tag": "vless-reality", "listen": "0.0.0.0", "port": tcpAppPort(), "protocol": "vless",
 			"settings": map[string]any{"clients": users, "decryption": "none"},
 			"streamSettings": map[string]any{
 				"network": "tcp", "security": "reality",
 				"realitySettings": map[string]any{
-					"show": false, "dest": sni + ":443", "xver": 0, "serverNames": []string{sni},
+					"show": false, "dest": sni + ":443", "xver": 0, "serverNames": sniNames,
 					"privateKey": realityPriv, "shortIds": []string{realitySID},
 				},
 			},
