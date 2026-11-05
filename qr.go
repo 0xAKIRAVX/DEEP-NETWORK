@@ -530,3 +530,45 @@ func qrSVG(data string) (string, error) {
 	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" shape-rendering="crispEdges" width="%d" height="%d"><rect width="%d" height="%d" fill="#ffffff"/><g fill="#0b0e16">%s</g></svg>`,
 		sizePx, sizePx, sizePx*12, sizePx*12, sizePx, sizePx, body), nil
 }
+
+// qrASCII renders a scannable QR as terminal text (half-block chars, two
+// rows per character line) — used by --banner so the subscription can be
+// scanned straight off the SSH terminal.
+func qrASCII(data string, scale int) (string, error) {
+	enc, err := qrEncode(data)
+	if err != nil {
+		return "", err
+	}
+	mat := qrMatrix(enc.v, enc.level, enc.cws)
+	n := len(mat)
+	quiet := 2
+	size := n + 2*quiet
+	// build boolean grid with quiet zone
+	grid := make([][]bool, size)
+	for r := 0; r < size; r++ {
+		grid[r] = make([]bool, size)
+		for c := 0; c < size; c++ {
+			if r >= quiet && r < quiet+n && c >= quiet && c < quiet+n {
+				grid[r][c] = mat[r-quiet][c-quiet]
+			}
+		}
+	}
+	var b strings.Builder
+	for r := 0; r < size; r += 2 {
+		for c := 0; c < size; c++ {
+			top, bot := grid[r][c], r+1 < size && grid[r+1][c]
+			switch {
+			case top && bot:
+				b.WriteString("█")
+			case top:
+				b.WriteString("▀")
+			case bot:
+				b.WriteString("▄")
+			default:
+				b.WriteString(" ")
+			}
+		}
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}

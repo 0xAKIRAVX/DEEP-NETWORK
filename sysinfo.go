@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,13 +17,9 @@ import (
 
 var (
 	startTime = time.Now()
-	cores     = quotaCores() // container CPU quota (not the host's 8+ cores)
+	cores     = quotaCores()
 )
 
-// quotaCores returns the cgroup v2 cpu.max quota rounded up to whole cores,
-// falling back to the visible host core count when no quota is set. On Lucity
-// (Kubernetes) the container usually gets a small fraction of the node —
-// reporting the node's core count was misleading.
 func quotaCores() int {
 	mx := strings.Fields(readFileTrim("/sys/fs/cgroup/cpu.max"))
 	if len(mx) == 2 {
@@ -89,10 +84,6 @@ func kvFile(p string) map[string]int64 {
 }
 
 func memInfo() (used, total int, percent float64) {
-	// NOTE(v3.4 bug fix): /proc/meminfo lines look like "MemTotal:  264013812 kB"
-	// — strings.Fields yields THREE fields because of the colon ("MemTotal:").
-	// The old len(f)==2 check never matched, so hostTotal stayed 0 → the panel
-	// reported "0 MB total / 0%" RAM forever (the "fake RAM" bug).
 	memLine := func(key string) int64 {
 		for _, line := range strings.Split(readFileTrim("/proc/meminfo"), "\n") {
 			if strings.HasPrefix(line, key) {
@@ -147,9 +138,6 @@ func memInfo() (used, total int, percent float64) {
 	return
 }
 
-// diskRoot points at the user's persistent volume (/data on Lucity) —
-// statfs("/") used to report the whole node disk (137GB), which is not what
-// the user actually has. Falls back to / when the data dir is unavailable.
 var diskRoot = dataDir()
 
 func diskInfo() (used, total float64, percent float64) {
@@ -301,7 +289,7 @@ func samplerLoop() {
 	}
 }
 
-// ─────────── server geo (real public-IP location, cached 24h) ───────────
+// ─────────── server geo (public-IP location, cached 24h) ───────────
 
 type Geo struct {
 	IP      string  `json:"ip"`
@@ -349,6 +337,98 @@ func serverGeo() *Geo {
 	}
 	return geoVal
 }
+
+func serverGeoCached() *Geo {
+	geoMu.Lock()
+	defer geoMu.Unlock()
+	return geoVal
+}
+
+func serverGeoPayload() map[string]any {
+	if g := serverGeo(); g != nil {
+		return map[string]any{"ip": g.IP, "country": g.Country, "cc": g.CC, "city": g.City, "lat": g.Lat, "lon": g.Lon}
+	}
+	return nil
+}
+
+// ─────────── visitor ISP detection (/panel/api/whoami) ───────────
+
+type whoamiCacheEntry struct {
+	op      string
+	label   string
+	cc      string
+	city    string
+	lat, lon float64
+	expires time.Time
+}
+
+var (
+	whoamiMu    sync.Mutex
+	whoamiCache = map[string]*whoamiCacheEntry{}
+)
+
+var operatorASNPatterns = []struct{ key, match, label string }{
+	{"irancell", "irancell", "ایرانسل"},
+	{"mci", "mobile communication company", "همراه اول"},
+	{"mci", "mci", "همراه اول"},
+	{"rightel", "rightel", "رایتل"},
+	{"shatel", "shatel", "شاتل"},
+	{"mobinnet", "mobinnet", "مبین‌نت"},
+	{"mobinnet", "mobin", "مبین‌نت"},
+	{"parsonline", "pars online", "پارس‌آنلاین"},
+	{"parsonline", "parsonline", "پارس‌آنلاین"},
+	{"asiatek", "asiatech", "آسیاتک"},
+	{"tci", "telecommunication infrastructure", "مخابرات"},
+	{"tci", "tci", "مخابرات"},
+	{"mokhaberat", "mokhaberat", "مخابرات"},
+}
+
+func lookupWhoami(ip string) *whoamiCacheEntry {
+	whoamiMu.Lock()
+	if e, ok := whoamiCache[ip]; ok && time.Now().Before(e.expires) {
+		whoamiMu.Unlock()
+		return e
+	}
+	whoamiMu.Unlock()
+
+	c := http.Client{Timeout: 5 * time.Second}
+	u := "http://ip-api.com/json/" + ip + "?fields=status,query,countryCode,city,lat,lon,as,isp"
+	resp, err := c.Get(u)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 16384))
+	var d struct {
+		Status      string  `json:"status"`
+		Query       string  `json:"query"`
+		CountryCode string  `json:"countryCode"`
+		City        string  `json:"city"`
+		Lat         float64 `json:"lat"`
+		Lon         float64 `json:"lon"`
+		AS          string  `json:"as"`
+		ISP         string  `json:"isp"`
+	}
+	if json.Unmarshal(b, &d) != nil || d.Status != "success" {
+		return nil
+	}
+	e := &whoamiCacheEntry{op: "auto", label: "اینترنت", cc: d.CountryCode, city: d.City,
+		lat: d.Lat, lon: d.Lon, expires: time.Now().Add(time.Hour)}
+	as := strings.ToLower(d.AS + " " + d.ISP)
+	for _, p := range operatorASNPatterns {
+		if strings.Contains(as, p.match) {
+			e.op = p.key
+			e.label = p.label
+			break
+		}
+	}
+	whoamiMu.Lock()
+	whoamiCache[ip] = e
+	whoamiMu.Unlock()
+	return e
+}
+
+// ─────────── traffic snapshots + stats payload ───────────
 
 func trafficSnapshot() {
 	day := time.Now().Unix() / 86400
@@ -433,9 +513,6 @@ func statsPayload() map[string]any {
 	rxT, txT := sampler.rxTot, sampler.txTot
 	sampler.mu.RUnlock()
 	diskU, diskT, diskP := diskInfo()
-	// v3.6: "t" carries the REAL per-sample timestamps — the client chart
-	// engine anchors each point to its true time (sampler jitter tolerant
-	// + enables smooth 60fps time-scroll instead of index spacing).
 	hm := map[string][]float64{"cpu": {}, "mem": {}, "rx": {}, "tx": {}, "t": {}}
 	for _, p := range hist {
 		hm["cpu"] = append(hm["cpu"], p.CPU)
@@ -451,26 +528,29 @@ func statsPayload() map[string]any {
 			clients++
 		}
 	}
+	var totalUp, totalDown int64
+	for _, c := range state.Clients {
+		totalUp += c.Up
+		totalDown += c.Down
+	}
 	stateMu.RUnlock()
 	return map[string]any{
 		"t": latest.T, "cpu": latest.CPU, "mem": latest.Mem, "rx": latest.RX, "tx": latest.TX,
 		"mem_used": memU, "mem_total": memT, "rx_total": rxT, "tx_total": txT,
+		"total_up": totalUp, "total_down": totalDown,
 		"disk":   map[string]any{"used": diskU, "total": diskT, "percent": diskP},
 		"uptime": int64(time.Since(startTime).Seconds()),
 		"cores":  cores, "os": osInfo(), "cpu_model": cpuModel(),
 		"version": Version, "traffic30": traffic30d(), "geo": serverGeo(),
-		"online": onlineTunnels(), "clients": clients,
-		"online_users": onlineCount(),
-		"hist":         map[string][]float64{"cpu": hm["cpu"], "mem": hm["mem"], "rx": hm["rx"], "tx": hm["tx"], "t": hm["t"]},
-		"interval":     1.0,
+		"clients": clients, "online_users": onlineCount(),
+		"hist":    map[string][]float64{"cpu": hm["cpu"], "mem": hm["mem"], "rx": hm["rx"], "tx": hm["tx"], "t": hm["t"]},
+		"interval": 1.0,
 	}
 }
 
 func healthPayload() map[string]any {
 	t0 := time.Now()
 	if xrayRunning() {
-		// v3.10 FIX: this used the destructive -reset read, so every health
-		// probe silently discarded uncounted user traffic. Peek instead.
 		statsReadMu.Lock()
 		xrayStatsPeek()
 		statsReadMu.Unlock()
@@ -495,15 +575,9 @@ func writeJSON(path string, v any) {
 
 func osGetenv(k string) string { return os.Getenv(k) }
 
-func sortStrings(s []string) { sort.Strings(s) }
-
 // ─────────── statfs (disk usage) ───────────
 
 type statfsT = syscall.Statfs_t
-
-func statfsRoot() (*statfsT, error) {
-	return statfsPath("/")
-}
 
 func statfsPath(p string) (*statfsT, error) {
 	var st syscall.Statfs_t

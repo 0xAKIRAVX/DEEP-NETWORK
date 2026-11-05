@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
-   DEEP NETWORK — app logic (v__PANEL_VER__)
-   Real data only: stats polling, browser RTT ping, operator detect
+   DEEP NETWORK — app logic (v__PANEL_VER__, VPS edition)
+   First-run wizard · login · dashboard · users · subs · tools
    ═══════════════════════════════════════════════════════════ */
 'use strict';
 (function () {
@@ -8,23 +8,8 @@
   const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
   const VER = '__PANEL_VER__';
 
-  const S = { view: 'dashboard', state: null, stats: null, whoami: null, timers: [], fx: {} };
+  const S = { view: 'dashboard', state: null, stats: null, whoami: null, timers: [], fx: {}, subUser: null, ready: false };
   window.APP = S;
-
-  // ─────────── FinalMask & Cipher Suites — UI label maps ───────────
-  const fpLabels = {
-    chrome: 'اثر انگشت Chrome (پیش‌فرض — بهترین سازگاری)', firefox: 'اثر انگشت Firefox',
-    safari: 'اثر انگشت Safari', ios: 'اثر انگشت iOS (آیفون)', android: 'اثر انگشت Android (موبایل)',
-    edge: 'اثر انگشت Edge', random: 'تصادفی در هر اتصال', randomized: 'تصادفی پیوسته',
-  };
-  const alpnLabels = {
-    '': 'خودکار (بهترین برای هر پروتکل)', 'http/1.1': 'HTTP/1.1 (سبک — WebSocket)',
-    'h2': 'HTTP/2', 'h2,http/1.1': 'HTTP/2 + HTTP/1.1 (XHTTP)', 'http/1.1,h2': 'HTTP/1.1 + HTTP/2',
-  };
-  const cipherLabels = {
-    TLS13: 'TLS 1.3 کامل — امن و سریع', TLS13_FAST: 'TLS 1.3 سریع — فقط AES-128',
-    TLS12_AES: 'TLS 1.2 — AES-GCM', TLS12_CHACHA: 'TLS 1.2 — ChaCha20 (بهتر برای موبایل)',
-  };
 
   // ─────────── tiny helpers ───────────
   async function api(path, body, method) {
@@ -32,7 +17,7 @@
     if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
     const r = await fetch('/panel/api/' + path, opt);
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401 && path !== 'login') { showLogin(); throw new Error(j.error || 'unauthorized'); }
+    if (r.status === 401 && path !== 'login' && path !== 'setup' && path !== 'whoami' && S.ready) { showLogin(); stopLoops(); throw new Error(j.error || 'unauthorized'); }
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
     return j;
   }
@@ -41,14 +26,13 @@
     const t = $('#toast'); t.textContent = msg; t.className = 'toast show ' + (cls || '');
     clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2600);
   }
-  // v3.6: adaptive units — tiny values no longer render as "0.0 GB"/"0.0 MB/s"
   function fmtGB(b) {
     if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
     if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
     if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
     return Math.max(0, Math.round(b)) + ' B';
   }
-  function fmtRate(bps) { // bytes/second with adaptive unit
+  function fmtRate(bps) {
     if (bps >= 1073741824) return (bps / 1073741824).toFixed(2) + ' GB/s';
     if (bps >= 1048576) return (bps / 1048576).toFixed(1) + ' MB/s';
     if (bps >= 1024) return (bps / 1024).toFixed(1) + ' KB/s';
@@ -60,7 +44,6 @@
     if (s < 86400) return Math.floor(s / 3600) + ' ساعت';
     return Math.floor(s / 86400) + ' روز';
   }
-  // v3.10: online-monitor helpers — session duration / relative & clock time
   function fmtDur(s) {
     s = Math.max(0, Math.floor(s));
     if (s < 60) return s + ' ثانیه';
@@ -77,10 +60,6 @@
     if (s < 86400) return Math.floor(s / 3600) + ' ساعت پیش';
     return Math.floor(s / 86400) + ' روز پیش';
   }
-  function clockTime(unix) {
-    try { return new Date(unix * 1000).toLocaleTimeString('fa-IR-u-nu-latn', { hour: '2-digit', minute: '2-digit' }); }
-    catch { return new Date(unix * 1000).toTimeString().slice(0, 5); }
-  }
   async function copy(text, msg) {
     try { await navigator.clipboard.writeText(text); toast(msg || 'کپی شد ✓', 'ok'); }
     catch { toast('کپی ممکن نشد', 'err'); }
@@ -96,1556 +75,180 @@
     $$('.modal h3 button', root).forEach(b => b.addEventListener('click', () => root.innerHTML = ''));
     return root;
   }
+  function closeModal() { $('#modal-root').innerHTML = ''; }
 
-  // ─────────── Telegram Mini App integration (v3.4) ───────────
-  // The SDK is bundled locally (/panel/tg-webapp.js) — telegram.org is
-  // filtered in Iran and a remote <script> would hang the whole panel inside
-  // the Mini App. Outside Telegram the SDK is inert.
-  function tgEnv() {
-    const w = window.Telegram && window.Telegram.WebApp;
-    if (!w || !w.initData) return null;
-    return w;
-  }
-  function tgInit() {
-    const tg = window.Telegram && window.Telegram.WebApp;
-    if (!tg) return;
-    try { tg.ready(); } catch { }
-    try { tg.expand(); } catch { }
-    try { if (tg.setHeaderColor) tg.setHeaderColor('#050505'); } catch { }
-    try { if (tg.setBackgroundColor) tg.setBackgroundColor('#000000'); } catch { }
-    // stable viewport height for iOS/Android webviews (100vh jumps around)
-    try {
-      if (tg.viewportStableHeight) {
-        document.documentElement.style.setProperty('--tgvh', tg.viewportStableHeight + 'px');
-      }
-      if (tg.onEvent) tg.onEvent('viewportChanged', ev => {
-        if (ev && ev.isStateStable && tg.viewportStableHeight)
-          document.documentElement.style.setProperty('--tgvh', tg.viewportStableHeight + 'px');
-      });
-    } catch { }
-  }
-
-  // ─────────── login view ───────────
-  function showLogin() {
-    stopTimers();
-    $('#dash').hidden = true;
-    $('#login').hidden = false;
-    setDashFX(false); // stop ALL dashboard canvases (not just the starfield)
-    if (S.fx.dash) { try { S.fx.dash.stop(); } catch { } S.fx.dash = null; } // stop hidden canvas → real FPS
+  // ─────────── FX mount ───────────
+  function mountLoginFX() {
     if (!S.fx.login) S.fx.login = FX.starField($('#fx-login'), { stars: 100, drift: 7 });
+    if ($('#fx-setup') && !S.fx.setup) S.fx.setup = FX.starField($('#fx-setup'), { stars: 100, drift: 7 });
   }
-  function showDash() {
-    $('#login').hidden = true;
-    $('#dash').hidden = false;
-    if (S.fx.login) { try { S.fx.login.stop(); } catch { } S.fx.login = null; }
+  function mountDashFX() {
     if (!S.fx.dash) S.fx.dash = FX.starField($('#fx-dash'), { stars: 70, drift: 5 });
-    renderView('dashboard');
-    startLoops();
-    detectOperator();
   }
-
-  // ─────────── profile picture upload ───────────
-  let avatarV = 0;
-  function bustAvatars() {
-    avatarV = Date.now();
-    const u = '/panel/avatar.png?v=' + avatarV;
-    $$('img[data-avatar]').forEach(im => im.src = u);
-    const hd = $('#hd-avatar-img'); if (hd) hd.src = u;
+  function mountDashCanvases() {
+    if (!S.fx.wave) S.fx.wave = FX.wave('#wave');
+    if (!S.fx.spark) S.fx.spark = FX.spark('#spark');
+    if (!S.fx.globeInst) { S.fx.globeInst = FX.globe('#globe'); applyGlobeNodes(); }
   }
-  function pickAvatar() {
-    const i = document.createElement('input');
-    i.type = 'file'; i.accept = 'image/png,image/jpeg,image/gif,image/webp';
-    i.addEventListener('change', async () => {
-      const f = i.files && i.files[0];
-      if (!f) return;
-      if (f.size > 8 * 1024 * 1024) return toast('حجم تصویر بیش از ۸ مگابایت است', 'err');
-      try {
-        const fd = new FormData(); fd.append('file', f);
-        const r = await fetch('/panel/api/avatar', { method: 'POST', body: fd });
-        const j = await r.json().catch(() => ({}));
-        if (r.status === 401) return toast('برای تغییر عکس پروفایل اول وارد شوید', 'err');
-        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-        bustAvatars();
-        toast('تصویر پروفایل ذخیره شد ✓', 'ok');
-      } catch (ex) { toast(ex.message, 'err'); }
-    });
-    i.click();
-  }
-
-  async function doLogin(e) {
-    e.preventDefault();
-    const err = $('#login-error'), btn = $('.lc-submit');
-    err.hidden = true; btn.disabled = true;
-    try {
-      const user = $('#f-user').value.trim();
-      await api('login', { user, pass: $('#f-pass').value });
-      if ($('#f-remember').checked) localStorage.setItem('dn-user', user);
-      else localStorage.removeItem('dn-user');
-      const hd = $('#hd-user-name'); if (hd) hd.textContent = user || 'admin'; // was always static "admin"
-      toast('خوش آمدید ✓', 'ok');
-      showDash();
-    } catch (ex) { err.textContent = ex.message; err.hidden = false; }
-    btn.disabled = false;
-  }
-
-  function initLogin() {
-    const saved = localStorage.getItem('dn-user');
-    if (saved) $('#f-user').value = saved;
-    $('#login-form').addEventListener('submit', doLogin);
-    $('#eye').addEventListener('click', () => {
-      const i = $('#f-pass'); i.type = i.type === 'password' ? 'text' : 'password';
-    });
-    $('#lc-cam').addEventListener('click', () => {
-      // avatar upload needs a session; check quietly and open the picker if logged in
-      fetch('/panel/api/ping').then(r => { if (r.ok) pickAvatar(); else toast('برای تغییر عکس پروفایل اول وارد شوید'); })
-        .catch(() => toast('ارتباط با سرور برقرار نیست', 'err'));
-    });
-    $('#forgot').addEventListener('click', () => modal(`<h3>رمز عبور <button>✕</button></h3>
-      <p style="font-size:12.5px;color:#bbb;line-height:2">
-      اگر رمز را خودتان تنظیم نکرده‌اید، پنل آن را هنگام استقرار <b>خودکار ساخته</b> و در <b>لاگ‌های دیپلوی Lucity</b> چاپ کرده است.<br>
-      متغیر محیطی <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> را در تنظیمات سرویس تنظیم کنید تا رمز دلخواه شما باشد. رمز جدید در پنل هم قابل تغییر است (تنظیمات ← مدیریت).</p>`));
-    $('#btn-quick').addEventListener('click', async () => {
-      try {
-        const st = await api('state');
-        const main = st.clients.find(c => c.main) || st.clients[0];
-        if (!main) return toast('کاربری پیدا نشد', 'err');
-        await copy(main.sub_url, 'لینک اشتراک سریع کپی شد — در کلاینت وارد (Import from clipboard) کنید ✓');
-      } catch (ex) { toast(ex.message, 'err'); }
-    });
-    $('#btn-secure').addEventListener('click', async () => {
-      try {
-        const st = await api('state');
-        const main = st.clients.find(c => c.main) || st.clients[0];
-        // v3.6 FIX: was ?profile=fast — forced fragmentation OFF, the opposite
-        // of "اتصال امن". No profile → serves the CURRENT saved tuning
-        // (fragmentation/anti-DPI exactly as configured in Settings).
-        location.href = '/panel/api/client/' + main.id;
-      } catch (ex) { toast(ex.message, 'err'); }
-    });
-    $$('.lc-ico').forEach(b => b.addEventListener('click', async () => {
-      const act = b.dataset.act;
-      if (act === 'globe') {
-        modal(`<h3>درباره DEEP NETWORK <button>✕</button></h3>
-        <p style="font-size:12.5px;color:#bbb;line-height:2.1">نسخه <b>v${VER}</b> — بازنویسی کامل با <b>Go + Rust</b>.<br>
-        هسته پروکسی: Xray-core · پنل: Go · اسکنر پینگ: Rust<br>
-        SNI تصادفی ضد فیلتر، پروفایل‌های اپراتور ایران، فرگمنت TLS و کانفیگ بهینه برای هر اپراتور.</p>`);
-      } else if (act === 'help') {
-        modal(`<h3>راهنما <button>✕</button></h3>
-        <p style="font-size:12.5px;color:#bbb;line-height:2">
-        ۱) با نام کاربری و رمز وارد شوید (رمز در لاگ دیپلوی است اگر خودتان تنظیم نکرده‌اید).<br>
-        ۲) از بخش «کاربران» لینک اشتراک هر کاربر را کپی یا QR آن را بگیرید.<br>
-        ۳) در v2rayNG / Hiddify از طریق Import from clipboard اضافه کنید.<br>
-        ۴) اگر اتصال برقرار نشد یا قطع و وصل شد: از «بهینه‌ساز و اسکنر» دکمه <b>«بهینه‌سازی خودکار برای شبکه من»</b> را بزنید — بهترین IP و تنظیمات اپراتور شما خودکار اعمال می‌شود، بعد اشتراک را در کلاینت به‌روزرسانی کنید.</p>`);
-      } else if (act === 'settings') {
-        toast('اول وارد شوید تا تنظیمات باز شود');
-      }
-    }));
-  }
-
-  // ─────────── view rendering ───────────
-  // FIX: #view-host now lives INSIDE .ct (same margins as dashboard) and is
-  // properly hidden + cleared when returning to the dashboard. Before, it was
-  // appended at the end of #dash with no sidebar/header margin — view content
-  // rendered behind the fixed header → "menu items never load".
-  function setDashFX(on) {
-    for (const k of ['wave', 'spark', 'globeInst']) {
-      const fx = S.fx[k];
-      if (!fx) continue;
-      try { on ? (fx.resume ? fx.resume() : fx.start && fx.start()) : (fx.pause ? fx.pause() : fx.stop && fx.stop()); } catch { }
-    }
-  }
-  function renderView(v) {
-    S.view = v;
-    $$('#sb-nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-    const dashViews = $('#dash-views'), host = $('#view-host');
-    if (v === 'dashboard') {
-      history.replaceState(null, '', location.pathname); // location.hash='' scrolls & appends '#'
-      dashViews.hidden = false;
-      host.hidden = true; host.innerHTML = ''; // drop stale view DOM + listeners
-      if (!S.fx.wave) S.fx.wave = FX.wave('#wave');
-      if (!S.fx.spark) S.fx.spark = FX.spark('#spark');
-      if (!S.fx.globeInst) { S.fx.globeInst = FX.globe('#globe'); applyGlobeNodes(); }
-      setDashFX(true); // resume dashboard canvases
-    } else {
-      dashViews.hidden = true;
-      setDashFX(false); // pause hidden dashboard canvases → zero cost
-      host.hidden = false;
-      // v3.10: leaving the online view stops its 2s poller (nothing burns hidden)
-      if (v !== 'online') stopOnlineLoop();
-      // FIX(v3.3): views that need S.state used to render ONCE with empty data
-      // (state arrives a beat later on slow links) and never refresh → "menu
-      // items never load". Now we mark the view stale and re-render it the
-      // moment stateLoop delivers data.
-      const needsState = v === 'users' || v === 'subs' || v === 'settings' || v === 'localmode';
-      S.viewStale = needsState && !S.state;
-      try {
-        host.innerHTML = views[v] ? views[v]() : '<p>به‌زودی</p>';
-      } catch (err) {
-        host.innerHTML = '<section class="info-sec" style="margin-top:20px"><h3>خطا</h3><p style="font-size:12px;color:#f8b4b4">در نمایش این بخش مشکلی پیش آمد: ' + esc(err.message) + '</p></section>';
-      }
-      if (viewsInit[v]) { try { viewsInit[v](); } catch (err) { console.error(err); } }
-      window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
-    }
-  }
-
   function applyGlobeNodes() {
     const geo = S.stats && S.stats.geo;
     const user = S.whoami && S.whoami.lat != null ? S.whoami : null;
     if (FX.setGlobeNodes) FX.setGlobeNodes(geo, user);
   }
 
-  // ─────────── live stat loop (REAL data) ───────────
-  let pingHist = [];
-  async function statLoop() {
+  // ═══════════════ BOOT: setup → login → dash ═══════════════
+  async function boot() {
+    mountLoginFX();
+    // existing session? → straight to the dashboard
     try {
-      const st = await api('stats');
-      S.stats = st;
-      paintStats(st);
-    } catch { /* transient */ }
-  }
-  let pingEma = null; // v3.6: EMA display — the raw median jumps around every poll
-  async function pingLoop() {
-    const t0 = performance.now();
-    try { await api('ping'); } catch { return; }
-    const ms = Math.round(performance.now() - t0);
-    pingHist.push(ms); if (pingHist.length > 8) pingHist.shift();
-    const med = pingHist.slice().sort((a, b) => a - b)[Math.floor(pingHist.length / 2)];
-    pingEma = pingEma == null ? med : pingEma * .7 + med * .3;
-    const el = $('#g-ping'); if (el) el.textContent = Math.round(pingEma) + ' ms';
-    const st = $('#g-status');
-    if (st) st.textContent = pingEma < 130 ? 'عالی' : pingEma < 280 ? 'خوب' : 'متوسط';
-    FX.data.ping = med;
-  }
-
-  function paintStats(st) {
-    // v3.6: prefer the REAL per-sample timestamps from the server (sampler
-    // jitter no longer shifts points); fall back to index-based estimates.
-    const n = (st.hist && st.hist.rx) ? st.hist.rx.length : 0;
-    const ts = (st.hist && st.hist.t && st.hist.t.length === n)
-      ? st.hist.t : Array.from({ length: n }, (_, i) => (st.t || 0) - (n - 1 - i));
-    FX.data.serverT = st.t || (n ? ts[n - 1] : 0);
-    FX.data.hist = ts.map((t, i) => ({ t, rx: st.hist.rx[i], tx: st.hist.tx[i] }));
-    FX.data.rx = st.rx; FX.data.tx = st.tx;
-    const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
-    // live numbers — eased via FX.tweenNum so they GLIDE at full frame rate
-    FX.tweenNum($('#g-dl'), st.rx || 0, fmtRate);
-    FX.tweenNum($('#g-ul'), st.tx || 0, fmtRate);
-    FX.tweenNum($('#r-up'), st.tx || 0, fmtRate);
-    FX.tweenNum($('#r-down'), st.rx || 0, fmtRate);
-    set('#g-dl-tot', '(' + fmtGB(st.rx_total || 0) + ')');
-    set('#g-ul-tot', '(' + fmtGB(st.tx_total || 0) + ')');
-    set('#r-ram', st.mem_total >= 1024 ? (st.mem_used / 1024).toFixed(1) + ' / ' + (st.mem_total / 1024).toFixed(1) + ' GB' : st.mem_used + ' / ' + st.mem_total + ' MB');
-    set('#r-disk', (st.disk.used || 0).toFixed(0) + ' / ' + (st.disk.total || 0).toFixed(1) + ' GB');
-    set('#r-cpu-model', st.cpu_model || '—');
-    set('#si-os', st.os || '—');
-    set('#si-uptime', fmtUptime(st.uptime));
-    set('#si-loc', st.geo ? (st.geo.city ? st.geo.city + '، ' : '') + st.geo.country : '—');
-    set('#st-users', st.clients || 0);
-    { const ps = S.state && S.state.settings.protocols || {}; let n = 0;
-          for (const k of ['vless-ws','vless-xhttp','vless-hu','vmess-ws','trojan-ws']) if (ps[k]) n++;
-          set('#st-proto', n); }
-    set('#sb-users-count', st.clients || 0);
-    // v3.10: live online users — sidebar badge, dashboard chip, stats view
-    const onl = st.online_users || 0;
-    set('#sv-onl-users', onl);
-    { const sb = $('#sb-online-count'); if (sb) { sb.textContent = onl; sb.classList.toggle('none', !onl); } }
-    { const dl = $('#st-users-delta'); if (dl) dl.textContent = onl ? onl + ' آنلاین' : ''; }
-    ring('cpu', st.cpu || 0);
-    ring('ram', st.mem || 0);
-    ring('disk', st.disk.percent || 0);
-    applyGlobeNodes();
-    // v3.6: stats view updates IN PLACE (the old 5s full re-render flashed
-    // and reset scroll position every refresh)
-    const memStr = st.mem_total >= 1024 ? (st.mem_used / 1024).toFixed(1) + ' / ' + (st.mem_total / 1024).toFixed(1) + ' GB' : st.mem_used + ' / ' + st.mem_total + ' MB';
-    set('#sv-cpu', (st.cpu || 0).toFixed(1) + '%');
-    set('#sv-mem', memStr + ' (' + (Number(st.mem) || 0).toFixed(1) + '%)');
-    set('#sv-disk', (st.disk.used || 0).toFixed(0) + ' / ' + (st.disk.total || 0).toFixed(1) + ' GB');
-    set('#sv-dl', fmtGB(st.rx_total || 0));
-    set('#sv-ul', fmtGB(st.tx_total || 0));
-    set('#sv-t30', st.traffic30 && st.traffic30.bytes ? fmtGB(st.traffic30.bytes) : '—');
-    set('#sv-online', st.online || 0);
-    set('#sv-up', fmtUptime(st.uptime || 0));
-  }
-  function ring(name, pct) {
-    const el = $('.ring[data-ring="' + name + '"]'); if (!el) return;
-    FX.tweenNum($('b', el), pct, v => Math.round(v) + '%'); // number glides; arc has CSS transition
-    const C = 2 * Math.PI * 34;
-    const fg = $('circle.fg', el);
-    fg.style.strokeDashoffset = C * (1 - Math.min(pct, 100) / 100);
-  }
-
-  async function stateLoop() {
+      const st = await api('state');
+      S.state = st;
+      if (st.settings && st.settings.setup_required) { S.ready = true; showSetup(); }
+      else { S.ready = true; showDash(); }
+      try { S.whoami = await api('whoami'); } catch { }
+      return;
+    } catch { /* no session — decide via the public mode endpoint */ }
     try {
-      S.state = await api('state');
-      paintState(S.state);
-      // FIX(v3.3): if the current view was rendered before state existed,
-      // re-render it now (menus never loaded otherwise on slow connections).
-      if (S.viewStale && S.view !== 'dashboard') { S.viewStale = false; renderView(S.view); }
-    } catch { }
-  }
-  function paintState(st) {
-    // traffic total
-    let up = 0, down = 0;
-    for (const c of st.clients) { up += c.up || 0; down += c.down || 0; }
-    const tEl = $('#st-traffic'); if (tEl) tEl.textContent = fmtGB(up + down);
-    // v3.10: the old "+0" delta chip (delta-since-login) was meaningless —
-    // the dashboard "کاربران" card now shows the LIVE online count instead.
-    // users table (top 5) — online users are marked with a pulsing dot
-    const tbl = $('#users-table');
-    if (tbl) {
-      $$('.tr:not(.th)', tbl).forEach(r => r.remove());
-      for (const c of st.clients.slice(0, 5)) {
-        const row = document.createElement('div');
-        row.className = 'tr';
-        const statusCell = c.online
-          ? '<span class="u-status on"><i class="dot"></i>آنلاین · ' + fmtDur(c.online_dur || 0) + '</span>'
-          : '<span class="u-status ' + (c.status !== 'active' ? c.status : 'off') + '"><i class="dot"></i>' + (c.status === 'active' ? 'آفلاین' : c.status === 'quota' ? 'پایان حجم' : 'منقضی') + (c.status === 'active' && c.last_seen ? ' <small style="color:#777">· ' + relTime(c.last_seen) + '</small>' : '') + '</span>';
-        row.innerHTML = `<span class="u-name"><i class="u-ava">${esc(c.name[0] || '·').toUpperCase()}</i><b>${esc(c.name)}</b></span>
-          ${statusCell}
-          <span class="u-use">${fmtGB((c.up || 0) + (c.down || 0))}</span>
-          <span class="u-act"></span>`;
-        tbl.appendChild(row);
-      }
-    }
-    // protocol chip
-    const cp = $('#chip-proto-label');
-    if (cp) {
-      const protos = st.settings.protocols || {};
-      const tcpReady = st.settings.tcp_ready;
-      cp.textContent = tcpReady && protos['vless-reality'] ? 'Reality' : protos['vless-xhttp'] ? 'XHTTP' : protos['vless-ws'] ? 'VLESS-WS' : 'VLESS';
-    }
-    // v3.11: sidebar «شبکه ملی» badge — ON while the survival kit is enabled.
-    const lmBadge = $('#sb-lm-on');
-    if (lmBadge) lmBadge.hidden = !(st.settings.local_mode && st.settings.local_mode.enabled);
+      const m = await api('mode');
+      S.ready = true;
+      if (m.setup_required) showSetup(); else showLogin();
+    } catch { S.ready = true; showLogin(); }
+    try { S.whoami = await api('whoami'); } catch { }
   }
 
-  // ─────────── views ───────────
-  const views = {
-    users() {
-      const st = S.state || { clients: [] };
-      return `<section class="users-sec" style="margin-top:20px">
-      <div class="sec-title"><b>کاربران (${st.clients.length})</b>
-        <div style="display:flex;gap:8px">
-          <button class="mini-btn" id="add-user">+ کاربر جدید</button>
-          <button class="mini-btn" id="export-backup">پشتیبان‌گیری</button>
-        </div></div>
-      <div class="tbl" id="all-users">
-        <div class="tr th"><span>نام کاربری</span><span>وضعیت</span><span>حجم مصرف</span><span>عملیات</span></div>
-        ${st.clients.map(c => `<div class="tr" data-id="${c.id}">
-          <span class="u-name"><i class="u-ava">${esc(c.name[0] || '·').toUpperCase()}</i><b>${esc(c.name)}${c.main ? ' <small style="color:#777">(اصلی)</small>' : ''}</b></span>
-          ${c.online ? `<span class="u-status on"><i class="dot"></i>آنلاین · ${fmtDur(c.online_dur || 0)}</span>`
-            : c.status !== 'active' ? `<span class="u-status ${c.status}"><i class="dot"></i>${c.status === 'quota' ? 'پایان حجم' : 'منقضی'}</span>`
-            : `<span class="u-status off"><i class="dot"></i>آفلاین${c.last_seen ? ' <small style="color:#777">· ' + relTime(c.last_seen) + '</small>' : ''}</span>`}
-          <span class="u-use">${fmtGB((c.up || 0) + (c.down || 0))}</span>
-          <span class="u-act">
-            <button title="لینک اشتراک" data-act="sub"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
-            <button title="ویرایش" data-act="edit"><svg viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></button>
-            <button title="حذف" data-act="del" ${c.main ? 'disabled style="opacity:.3"' : ''}><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-7 0 1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          </span></div>`).join('')}
-      </div></section>`;
-    },
-    // v3.10: live online-users monitor — who is using the configs RIGHT NOW.
-    online() {
-      return `<section class="info-sec onl-sec" style="margin-top:20px">
-      <h3>کاربران آنلاین <span class="onl-pill" id="onl-count">در حال دریافت…</span></h3>
-      <p style="font-size:11.5px;color:#8d8d8d;margin:6px 0 12px;line-height:2">هر کاربری که در همین لحظه در حال استفاده از کانفیگ‌ها باشد، زنده (هر ۲ ثانیه) اینجا دیده می‌شود: مدت اتصال، سرعت لحظه‌ای و مصرف همین نشست. اگر ترافیک کاربری حدود ۹۰ ثانیه قطع بماند به فهرست «اخیراً آفلاین شده‌ها» با ساعت دقیق آفلاین‌شدن منتقل می‌شود. <b>وضعیت «بی‌تحرک»</b> یعنی اتصال هنوز باز است اما لحظه‌ای داده رد و بدل نشده.</p>
-      <div class="tbl" id="onl-users">
-        <div class="tr th"><span>کاربر</span><span>وضعیت</span><span>مدت اتصال</span><span>سرعت لحظه‌ای</span><span>مصرف این نشست</span></div>
-      </div>
-      <div class="onl-empty" id="onl-empty" hidden>در این لحظه هیچ کاربری آنلاین نیست</div>
-      </section>
-      <section class="info-sec onl-sec" style="margin-top:20px">
-      <h3>اخیراً آفلاین شده‌ها</h3>
-      <div class="tbl" id="off-users">
-        <div class="tr th"><span>کاربر</span><span>مدت استفاده</span><span>زمان آفلاین شدن</span><span>مصرف نشست</span></div>
-      </div>
-      <div class="onl-empty" id="off-empty" hidden>هنوز سابقه‌ای ثبت نشده است</div>
-      </section>`;
-    },
-    create() {
-      return `<section class="info-sec" style="margin-top:20px;max-width:560px">
-      <h3>ساخت کاربر جدید</h3>
-      <label class="field" style="margin:10px 0"><input id="nu-name" placeholder="نام کاربر (مثلاً ali-iphone)"></label>
-      <label class="field" style="margin:10px 0"><input id="nu-days" type="number" min="0" max="3650" placeholder="اعتبار (روز؛ خالی = نامحدود)"></label>
-      <label class="field" style="margin:10px 0"><input id="nu-quota" type="number" min="0" placeholder="حجم (گیگابایت؛ خالی = نامحدود)"></label>
-      <label class="field" style="margin:10px 0"><input id="nu-note" placeholder="یادداشت (اختیاری)"></label>
-      <div class="btns"><button class="btn primary" id="nu-go">ایجاد کاربر</button></div>
-      <p style="font-size:11px;color:#777;margin-top:10px">بعد از ایجاد، لینک اشتراک کاربر در بخش «کاربران» آماده است.</p>
-      </section>`;
-    },
-    subs() {
-      const st = S.state || { clients: [] };
-      return `<section class="info-sec" style="margin-top:20px">
-      <h3>اشتراک‌ها</h3>
-      <p style="font-size:11.5px;color:#8d8d8d;margin:6px 0 14px;line-height:2"><b>استاندارد:</b> فهرست لینک‌ها (base64) — برای افزودن به عنوان Subscription در v2rayNG / Hiddify. <b>JSON بهینه:</b> پیکربندی کامل Xray با سریع‌ترین تنظیمات (Mux + KeepAlive + پروفایل اپراتور) — لینک را در مرورگر باز کنید، متن JSON را کپی کنید و در v2rayNG از منوی + ← «Import config from clipboard» وارد کنید.</p>
-      ${st.clients.map(c => `<div style="padding:12px 0;border-bottom:1px dashed rgba(255,255,255,.08)">
-        <div style="display:flex;align-items:center;gap:10px">
-        <i class="u-ava">${esc(c.name[0] || '·').toUpperCase()}</i>
-        <b style="font-size:13px;flex:1">${esc(c.name)}</b></div>
-        <div style="margin-top:8px"><small style="font-size:10.5px;color:#8d8d8d">استاندارد (Subscription)</small>
-        <div class="linkbox" style="margin-top:4px"><span style="flex:1">${esc(c.sub_url)}</span>
-        <button data-copy="${esc(c.sub_url)}" title="کپی"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
-        <button data-qr="${esc(c.sub_url)}" title="QR"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h2v2h-2zm4 0h2v2h-2zm-4 4h2v2h-2zm4 0h2v2h-2z" fill="currentColor"/></svg></button></div></div>
-        <div style="margin-top:8px"><small style="font-size:10.5px;color:#7fb98a">JSON بهینه — پرسرعت‌ترین (Mux فعال)</small>
-        <div class="linkbox" style="margin-top:4px"><span style="flex:1">${esc(c.sub_url)}?fmt=xray</span>
-        <button data-copy="${esc(c.sub_url)}?fmt=xray" title="کپی لینک JSON"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
-        <button data-qr="${esc(c.sub_url)}?fmt=xray" title="QR لینک JSON"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h2v2h-2zm4 0h2v2h-2zm-4 4h2v2h-2zm4 0h2v2h-2z" fill="currentColor"/></svg></button></div></div>
-        </div>`).join('')}
-      </section>`;
-    },
-    scanner() {
-      const t = (S.state && S.state.settings.tuning) || {};
-      const curAddr = (S.state && S.state.settings.address) || '';
-      const as = (S.state && S.state.settings.auto_scan) || {};
-      const asEdges = (S.state && S.state.settings.top_edges) || [];
-      const front = as.front || {}, doctor = as.doctor || {}, ir = as.ir || {};
-      const docRes = doctor.results || {};
-      const docLabels = { 'vless-ws': 'VLESS·WS', 'vless-xhttp': 'VLESS·XHTTP', 'vless-hu': 'VLESS·HTTPUpgrade', 'vmess-ws': 'VMess·WS', 'trojan-ws': 'Trojan·WS' };
-      const docChips = Object.keys(docLabels).map(k => {
-        const r = docRes[k];
-        if (!r) return '';
-        return `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid ${r.ok ? 'rgba(127,185,138,.4)' : 'rgba(248,120,120,.45)'};border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono);color:${r.ok ? '#9fd8aa' : '#f0a0a0'}">${r.ok ? '✓' : '✗'} ${docLabels[k]}${r.ok && r.ms ? ' ' + r.ms + 'ms' : ''}</span>`;
-      }).join('');
-      const rel = as.last_run ? Math.max(0, Math.round((Date.now()/1000 - as.last_run))) : 0;
-      const relTxt = as.last_run ? (rel < 90 ? 'همین حالا' : rel < 5400 ? Math.round(rel/60)+' دقیقه پیش' : rel < 172800 ? Math.round(rel/3600)+' ساعت پیش' : new Date(as.last_run*1000).toLocaleDateString('fa-IR')) : 'هرگز';
-      const docRel = doctor.at ? Math.max(0, Math.round(Date.now()/1000 - doctor.at)) : 0;
-      const docRelTxt = doctor.at ? (docRel < 90 ? 'همین حالا' : docRel < 5400 ? Math.round(docRel/60)+' دقیقه پیش' : Math.round(docRel/3600)+' ساعت پیش') : 'هرگز';
-      const hours = as.every_hours || 1;
-      const nextTxt = as.enabled && as.next_in > 0 ? ' — اسکن بعدی: ' + (as.next_in < 5400 ? Math.max(1, Math.round(as.next_in/60)) + ' دقیقه دیگر' : Math.round(as.next_in/3600) + ' ساعت دیگر') : '';
-      const irBanner = (ir.domain === 2) ? `<div style="margin-top:10px;background:rgba(248,150,150,.07);border:1px solid rgba(248,150,150,.3);border-radius:10px;padding:9px 12px"><p style="font-size:11px;color:#eab8b8;line-height:1.9"><b>⚠️ دامنه پنل از ایران قابل دسترس نیست</b> (تست‌شده از ۶ نود ایرانی — DNS به آیپی‌های مسدود تبدیل می‌شود). کانفیگ‌های «🌐 DNS» در ایران کار نمی‌کنند؛ <b>کانفیگ‌های آی‌پی (🛡️ و 🥇🥈🥉) را استفاده کنید</b> — جلوی SNI آن‌ها دیگر دامنه پنل نیست.</p></div>` : '';
-      const frontIRTxt = front.ir === 1 ? ' · از ایران: <b style="color:#9fd8aa">✓ سالم</b>'
-        : front.ir === 2 ? ' · از ایران: <b style="color:#f0a0a0">✗ مسدود</b>' : '';
-      // v3.17: candidate chips — every proven front + its Iranian verdict; the
-      // non-active ones ride along in the subscription as 🎭 variants.
-      const frontPicks = front.picks || [];
-      const pickChips = frontPicks.map(p => {
-        const act = p.base === front.host;
-        const irB = p.ir === 1 ? '<b style="color:#9fd8aa">✓ از ایران</b>'
-          : p.ir === 2 ? '<b style="color:#f0a0a0">✗ از ایران</b>' : '<span style="color:#8d8d8d">؟ از ایران</span>';
-        return `<span dir="ltr" style="display:inline-flex;align-items:center;gap:6px;margin:3px 4px 0 0;padding:3px 9px;border:1px solid ${act ? 'rgba(127,185,138,.55)' : 'var(--line)'};background:${act ? 'rgba(127,185,138,.14)' : 'rgba(255,255,255,.03)'};border-radius:8px;font-size:10.5px;font-family:var(--mono);color:${act ? '#bfe9c8' : '#c9c9c9'}">${esc(p.base)}<span dir="rtl" style="font-family:inherit">${act ? '· فعال' : '· 🎭 در اشتراک'}</span><span dir="rtl" style="font-family:inherit">${irB}</span></span>`;
-      }).join('');
-      const picksRow = pickChips ? `<div style="margin-top:7px">${pickChips}</div><p style="font-size:10.5px;color:#8d8d8d;margin:5px 0 0;line-height:1.9">هر کاندیدای سالم از <b>۶ نود ایرانی</b> تست می‌شود؛ اولینِ سالم فعال می‌شود و بقیه به‌صورت واریانت <b>🎭</b> داخل اشتراک می‌آیند — اگر ISP یکی را فیلتر کند، بقیه کار می‌کنند. اگر جلوی فعال وسط روز فیلتر شود، پنل هر ۱۵ دقیقه چک می‌کند و خودش عوضش می‌کند.</p>` : '';
-      const frontBox = front.active
-        ? `<div style="margin-top:10px;background:rgba(127,185,138,.08);border:1px solid rgba(127,185,138,.35);border-radius:10px;padding:9px 12px"><p style="font-size:11px;color:#a9dcb4;line-height:1.9"><b>🎯 جلوی SNI فعال: <span dir="ltr" style="font-family:var(--mono)">${esc(front.host)}</span></b>${frontIRTxt} — SNI همه کانفیگ‌ها دیگر دامنه پنل نیست؛ با certificate معتبر bunny و بدون allowInsecure. دامنه پنل در ایران DNS-پویزن است و دست‌کاری handshake می‌شود — این جلو آن را از سیم کاملاً حذف می‌کند.</p>${picksRow}${front.ir === 2 ? '<p style="font-size:11px;color:#f0c0a0;line-height:1.9;margin-top:4px">⚠️ تست از نودهای ایرانی: این جلو SNI هم از ایران پاس نمی‌شود (احتمال فیلتر SNI توسط ISP) — پنل در اولین اسکن بعدی جلوی سالم را جایگزین می‌کند؛ دامنه جلوی سفارشی هم در کادر پایین قابل امتحان است.</p>' : ''}</div>`
-        : `<p style="font-size:11px;color:#c9b98a;margin-top:8px;line-height:1.9">🎯 جلوی SNI هنوز فعال نیست — بعد از اولین اسکن اثبات و فعال می‌شود. کاندیداها دامنه‌های واقعی bunny هستند (<span dir="ltr" style="font-family:var(--mono)">fonts.bunny.net</span>، <span dir="ltr" style="font-family:var(--mono)">bunnycdn.com</span>، <span dir="ltr" style="font-family:var(--mono)">dash.bunny.net</span>، <span dir="ltr" style="font-family:var(--mono)">docs.bunny.net</span>، <span dir="ltr" style="font-family:var(--mono)">bunny.net</span>، <span dir="ltr" style="font-family:var(--mono)">*.b-cdn.net</span>) — هر کدام که از ۶ نود ایرانی سالم باشد فعال می‌شود؛ مسیر با Host هدر رمزنگاری‌شده حفظ می‌شود.</p>`;
-      return `<section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
-      <h3>🤖 اسکن و جایگزاری خودکار <span style="font-size:10px;color:#7fb98a">${as.enabled ? 'فعال' : 'خاموش'}</span></h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">پنل <b>خودش</b> هر <b>${hours === 1 ? '۱ ساعت' : hours + ' ساعت'}</b> لبه‌ها را از <b>همه مناطق</b> می‌سنجد — پکت‌لاست ۰، پینگ پایین، سرعت واقعی — و فقط لبه‌هایی که <b>TLS واقعی از ۶ نود ایرانی پاس بدهند</b> در کانفیگ‌ها می‌روند؛ بقیه (که برای کاربر ایرانی منفی یک می‌دهند) <b>خودکار حذف می‌شوند</b>. آدرس دستی خودتان هرگز لمس نمی‌شود.</p>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:6px 2px"><input type="checkbox" id="as-on" ${as.enabled ? 'checked' : ''}><span class="cbx"></span><b>اسکن خودکار فعال باشد</b></label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
-        <label class="field sel" style="max-width:190px;margin:0"><select id="as-every">
-          <option value="1" ${hours === 1 ? 'selected' : ''}>هر ۱ ساعت (پیشنهادی)</option>
-          <option value="2" ${hours === 2 ? 'selected' : ''}>هر ۲ ساعت</option>
-          <option value="3" ${hours === 3 ? 'selected' : ''}>هر ۳ ساعت</option>
-          <option value="6" ${hours === 6 ? 'selected' : ''}>هر ۶ ساعت</option>
-          <option value="12" ${hours === 12 ? 'selected' : ''}>هر ۱۲ ساعت</option>
-          <option value="24" ${hours === 24 ? 'selected' : ''}>هر ۲۴ ساعت</option>
-        </select></label>
-        <button class="btn primary" id="as-run">🤖 اسکن و جایگزاری فوری</button>
-      </div>
-      <p id="as-status" style="font-size:11.5px;color:#8d8d8d;margin:10px 0 0;line-height:1.9">آخرین اسکن: <b>${relTxt}</b>${as.enabled ? nextTxt : ' — اسکن خودکار خاموش است'}</p>
-      <div id="as-edges">${asEdges.length ? asEdges.map(e => `<span style="display:inline-block;margin:3px 4px 0 0;padding:3px 9px;border:1px solid ${e.ir_tls === 1 ? 'rgba(127,185,138,.4)' : e.ir_tls_at > 0 && e.ir_tls !== 1 ? 'rgba(248,120,120,.45)' : 'var(--line)'};border-radius:8px;font-size:10.5px;direction:ltr;font-family:var(--mono)">${esc(e.ip)} · ${Math.round(e.med)}ms · ${Math.round(e.kbps||0)}KB/s${e.city ? ' · ' + esc(e.city) : ''}${e.ir_tls === 1 ? ' · 🔒🇮🇷 ✓' : (e.ir_tls_at > 0 && e.ir_tls !== 1 ? ' · 🇮🇷 ✗ حذف شد' : '')}</span>`).join('') : '<p style="font-size:11px;color:#8d8d8d;margin-top:6px">هنوز اسکنی انجام نشده — دکمه بالا را بزنید.</p>'}<p style="font-size:10.5px;color:#8d8d8d;margin:6px 0 0;line-height:1.9">🔒 = TLS واقعی از نود‌های ایرانی پاس گرفته — <b>فقط</b> این لبه‌ها داخل اشتراک‌ها می‌روند؛ لبه‌ای که از ایران TLS ندهد (✗) <b>خودکار حذف می‌شود</b> تا هیچ کانفیگی منفی یک ندهد.</p></div>
-      ${irBanner}
-      ${frontBox}
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <label class="field sel" style="max-width:200px;margin:0"><select id="as-front-sel">
-          <option value="auto" selected>جلوی SNI: خودکار</option>
-          <option value="off">جلوی SNI: خاموش</option>
-          <option value="custom">جلوی SNI: سفارشی…</option>
-        </select></label>
-        <label class="field" style="flex:1;min-width:180px;margin:0"><input id="as-front-custom" dir="ltr" placeholder="دامنه جلو (مثلاً myzone.b-cdn.net)"></label>
-        <button class="btn" id="as-front-apply">اعمال جلو</button>
-      </div>
-      <div style="margin-top:14px;padding-top:12px;border-top:1px dashed rgba(255,255,255,.08)">
-        <b style="font-size:12.5px;color:#cfcfcf">🩺 تست سلامت کانفیگ‌ها (دکتر)</b>
-        <p style="font-size:11px;color:#9d9d9d;margin:5px 0 8px;line-height:1.9">بعد از هر اسکن، پنل <b>واقعاً</b> هر پروتکل را با همان پارامترهایی که کاربران می‌گیرند تست می‌کند (کلاینت xray واقعی + تونل کامل) — اگر کانفیگی خراب باشد قبل از کاربران معلوم می‌شود.</p>
-        <div id="as-doc">${docChips || '<p style="font-size:11px;color:#8d8d8d">هنوز تستی انجام نشده.</p>'}</div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
-          <button class="btn" id="as-doc">🩺 تست فوری همه کانفیگ‌ها</button>
-          <p id="as-doc-status" style="font-size:11px;color:#8d8d8d;flex:1;margin:0">آخرین تست: <b>${doctor.running ? 'در حال اجرا…' : docRelTxt}</b>${docRes && Object.keys(docRes).length ? ' — از طریق ' + esc((docRes['vless-ws'] || {}).edge || '') : ''}</p>
-        </div>
-      </div>
-      </section>
+  function show(id) {
+    ['setup', 'login', 'dash'].forEach(v => { const el = $('#' + v); if (el) el.hidden = (v !== id); });
+    if (id === 'dash') { mountDashFX(); }
+    else mountLoginFX();
+  }
+  function showSetup() { show('setup'); }
+  function showLogin(user) {
+    show('login');
+    if (user) $('#f-user').value = user;
+    setTimeout(() => { try { $('#f-pass').focus(); } catch { } }, 60);
+  }
+  function showDash() {
+    show('dash');
+    S.ready = true;
+    startLoops();
+    paintState();
+    mountDashCanvases();
+    $('#hd-avatar-img').src = '/panel/avatar.png?v=' + Math.floor(Date.now() / 60000);
+  }
 
-      <section class="info-sec" style="margin-top:20px">
-      <h3>بهینه‌ساز هوشمند — بهترین و سریع‌ترین تنظیمات برای شبکه گوشی شما</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">فقط <b>یک دکمه</b> بزنید؛ سنجش از داخل مرورگر گوشی شما (یعنی دقیقاً روی اینترنت خودتان) انجام می‌شود: اپراتور تشخیص داده می‌شود، همه لبه‌های نزدیک ایران (IPv4 و IPv6) چند بار پینگ می‌شوند، <b>سریع‌ترین و کم‌نوسان‌ترین</b> لبه انتخاب و روی همه کانفیگ‌ها اعمال می‌شود، پروفایل ضد فیلتر اپراتور شما (FinalMask) و <b>بسته سرعت (Mux + KeepAlive)</b> هم خودکار فعال می‌گردد.</p>
-      <label class="field sel" style="max-width:280px;margin-bottom:10px"><select id="scan-fam">
-        <option value="auto" selected>خانواده IP: خودکار (IPv4 + IPv6)</option>
-        <option value="4">فقط IPv4</option>
-        <option value="6">فقط IPv6</option>
-      </select></label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn primary" id="opt-all" style="box-shadow:0 0 0 1px #7fb98a inset">🌐 بهینه‌سازی همه‌اپراتوره — پکت‌لاست ۰ · پینگ پایین · سرعت بالا</button>
-        <button class="btn primary" id="opt-run">بهینه‌سازی حداکثری (بهترین IP + سریع‌ترین تنظیمات)</button>
-        <button class="btn" id="opt-speed">فقط تنظیمات پرسرعت (بدون اسکن)</button>
-        <button class="btn" id="opt-stab">تست پایداری مسیر فعلی</button>
-        <button class="btn" id="opt-stop" hidden>توقف</button>
-      </div>
-      <p style="font-size:11px;color:#8d8d8d;margin:8px 0 0;line-height:1.9">🌐 <b>همه‌اپراتوره:</b> برای وقتی که کانفیگ‌ها برای بعضی اپراتورها (مثلاً همراه اول یا ایرانسل) کند یا قطع است. هر لبه از <b>دو طرف</b> سنجیده می‌شود — پینگ و <b>پکت‌لاست</b> از گوشی شما، سرعت و مسیر تا سرور از خود سرور — و لبه‌های با <b>پکت‌لاست ۰ و کم‌ترین پینگ کل</b> انتخاب می‌شوند. بعد از آن، اشتراک همه کاربران به‌جای یک IP، <b>چند مسیر برتر + مسیر DNS خودکار</b> را حمل می‌کند؛ کلاینت هر کاربر (روی هر اپراتوری) خودش سریع‌ترین را برمی‌گزیند.</p>
-      ${curAddr ? `<p style="font-size:11px;color:#7fb98a;margin-top:10px">مسیر فعلی: <b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(curAddr)}</b> — برای برگشت به مسیر دامنه، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>` : ''}
-      ${(S.state && S.state.settings.multi_edge && S.state.settings.top_edges && S.state.settings.top_edges.length) ? `<p style="font-size:11px;color:#7fb98a;margin-top:6px">✓ حالت همه‌اپراتوره فعال است: اشتراک‌ها شامل <b>${S.state.settings.top_edges.length} مسیر برتر</b> + مسیر DNS خودکار هستند — روی هر اپراتوری کار می‌کند.</p>` : ''}
-      <div class="progress" hidden id="opt-prog"><i></i></div>
-      <p id="opt-status" style="font-size:11.5px;color:#8d8d8d;margin:8px 0 0;line-height:1.9"></p>
-      <div id="opt-result"></div>
-      <div id="opt-cands" style="margin-top:6px"></div>
-      </section>
-      <section class="info-sec" style="margin-top:20px">
-      <h3>اسکن دستی لبه‌ها</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">پینگ لبه‌های bunny.net (CDN خود Lucity) از <b>مرورگر خودتان</b> سنجیده می‌شود تا دقیقاً مطابق مسیر اینترنت شما باشد. لبه‌های نزدیک ایران (ترکیه، قفقاز، عراق، اروپا) اولویت دارند. با گزینه «خانواده IP» می‌توانید فقط IPv6 یا هر دو را اسکن کنید. روی «اعمال» بزنید تا همه کانفیگ‌ها از آن IP سرو شوند؛ برای برگشت، در «تنظیمات ← آدرس» مقدار را خالی کنید.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn primary" id="scan-bunny">اسکن لبه‌های CDN</button>
-        <button class="btn" id="scan-custom">اسکن IP های دلخواه (IPv4 / IPv6)</button>
-        <button class="btn" id="scan-stop" hidden>توقف اسکن</button>
-      </div>
-      <div class="progress" hidden id="scan-prog"><i></i></div>
-      <p id="scan-status" style="font-size:11.5px;color:#8d8d8d;margin:8px 0 0;line-height:1.9"></p>
-      <div class="scan-list" id="scan-out"></div>
-      </section>`;
-    },
-    stats() {
-      const st = S.stats || {};
-      const memStr = (st.mem_total || 0) >= 1024 ? ((st.mem_used || 0) / 1024).toFixed(1) + ' / ' + ((st.mem_total || 0) / 1024).toFixed(1) + ' GB' : (st.mem_used || 0) + ' / ' + (st.mem_total || 0) + ' MB';
-      // v3.6: sv-* ids → statLoop refreshes these IN PLACE every second
-      // (paintStats) instead of re-rendering the whole view every 5s.
-      return `<section class="info-sec" style="margin-top:20px">
-      <h3>آمار زنده سرور</h3>
-      <ul class="kv">
-      <li><span>پردازنده</span><b>${esc(st.cpu_model || '—')}</b></li>
-      <li><span>مصرف CPU</span><b id="sv-cpu">${(st.cpu || 0).toFixed(1)}%</b></li>
-      <li><span>حافظه</span><b id="sv-mem">${memStr} (${(Number(st.mem) || 0).toFixed(1)}%)</b></li>
-      <li><span>دیسک</span><b id="sv-disk">${(st.disk && st.disk.used || 0)} / ${(st.disk && st.disk.total || 0)} GB</b></li>
-      <li><span>دانلود کل</span><b id="sv-dl">${fmtGB(st.rx_total || 0)}</b></li>
-      <li><span>آپلود کل</span><b id="sv-ul">${fmtGB(st.tx_total || 0)}</b></li>
-      <li><span>ترافیک ۳۰ روز</span><b id="sv-t30">${st.traffic30 && st.traffic30.bytes ? fmtGB(st.traffic30.bytes) : '—'}</b></li>
-      <li><span>کانال‌های فعال</span><b id="sv-online">${st.online || 0}</b></li>
-      <li><span>کاربران آنلاین</span><b id="sv-onl-users">${st.online_users || 0}</b></li>
-      <li><span>زمان روشن</span><b id="sv-up">${fmtUptime(st.uptime || 0)}</b></li>
-      <li><span>نسخه</span><b>v${VER}</b></li></ul></section>`;
-    },
-    tools() {
-      return `<section class="info-sec" style="margin-top:20px">
-      <h3>ابزارها</h3>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
-      <button class="btn" id="t-restart">ری‌استارت Xray</button>
-      <button class="btn" id="t-config">دانلود کانفیگ سرور</button>
-      <button class="btn" id="t-log">لاگ Xray</button>
-      <button class="btn" id="t-restore">بازیابی پشتیبان</button>
-      <button class="btn" id="t-reset">صفر کردن ترافیک همه</button>
-      </div>
-      <pre id="t-out" style="display:none;margin-top:14px;background:#0d0d0d;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:10.5px;max-height:340px;overflow:auto;direction:ltr;text-align:left;white-space:pre-wrap"></pre>
-      </section>`;
-    },
-    // v3.11: national-internet survival kit — keeps configs alive when
-    // international transit is cut in Iran (relay inside the country).
-    localmode() {
-      const s = (S.state && S.state.settings.local_mode) || {};
-      const on = !!s.enabled;
-      return `<section class="info-sec" style="margin-top:20px">
-      <h3>🇮🇷 کیت شبکه ملی — بقا در قطع بین‌الملل</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 14px;line-height:2">وقتی اینترنت بین‌الملل در ایران قطع شود (حالت شبکه ملی)، لبه‌های CDN و خود پنل از دسترس کاربران خارج می‌شوند و کانفیگ‌های معمولی همه با هم می‌میرند. این کیت سه <b>واریانت بقا</b> به اشتراک همه کاربران اضافه می‌کند تا کلاینت‌ها (با «تست همه کانفیگ‌ها») اولین مسیر سالم را خودکار پیدا کنند. <b>پیش از هر قطعی کیت آفلاین را ذخیره کنید</b> — در حالت قطعی، خود پنل هم در دسترس نیست.</p>
-      <div style="background:rgba(127,185,138,.07);border:1px solid rgba(127,185,138,.3);border-radius:12px;padding:11px 14px;margin-bottom:10px">
-        <b style="font-size:12.5px;color:#9fd8aa">🔍 چرا همه کانفیگ‌ها -1 می‌دادند؟ (ریشه واقعی، دو مرحله‌ای)</b>
-        <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9"><b>مرحله ۱ (v3.15):</b> دامنه پنل از داخل ایران DNS-پویزن بود و SNI همه کانفیگ‌ها اسم دامنه پنل را حمل می‌کرد — فیلتر handshake را می‌کشت. جلوی SNI روی <span dir="ltr" style="font-family:var(--mono)">*.b-cdn.net</span> فعال شد و مشکل حل شد. <b>مرحله ۲ (v3.17):</b> ایران بعداً خودِ <span dir="ltr" style="font-family:var(--mono)">b-cdn.net</span> را هم فیلتر کرد (تست از ۶ نود ایرانی: ۰/۶ پاس، timeout) — چون همه لینک‌ها همان یک جلو را داشتند، <b>همه دوباره -1 شدند</b>: dns، karbala، bucharest، مستقیم — همه. <b>مرحله ۳ (v3.19):</b> حتی با جلوی سالم، بعضی ISPها لبه‌ها یا جلوهای خاصی را می‌بُرند که ۶ نود تست نمی‌بینند (مثال زنده: استکهلم و bunny.net برای شما -1 ولی برای هر ۶ نود سالم). راه‌حل: <b>حذف لبه‌های</b> (تنظیمات ← اتصال — IPهایی که برای شما -1 می‌دهند)، <b>۵ کاندیدای جلو</b> (۳ تای آن به‌صورت 🎭 داخل اشتراک) و <b>XHTTP اول لیست</b> — چون ترافیکش مثل آپلود عادی وب به نظر می‌رسد و DPI آن را مثل WS کند نمی‌کند. <b>رفع قطعی:</b> هر اسکن هر کاندیدا را از ۶ نود ایرانی تست می‌کند و اولینِ سالم فعال می‌شود؛ اگر جلوی فعال وسط روز فیلتر شود، پنل هر ۱۵ دقیقه چک می‌کند و خودش عوضش می‌کند. <b>حالا اشتراک را در کلاینت آپدیت کنید</b> (دکمه آپدیت اشتراک — یا صبر کنید؛ هر ۱ ساعت خودکار آپدیت می‌شود) و بعد «تست همه کانفیگ‌ها» را بزنید.</p>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
-        <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🛡️ مستقیم (کار می‌کند — بدون ثبت‌نام)</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل + مسیرهای لبه 🥈🥉 از اسکن خودکار — بدون نیاز به DNS و بدون هیچ ثبت‌نامی. <b>تست‌شده و در حال کار.</b></p>
-        </div>
-        <div style="background:rgba(240,160,90,.07);border:1px solid rgba(240,160,90,.3);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#f0b48a">🇮🇷 رله داخلی / CDN ایرانی <span style="font-size:9.5px;color:#d8a8a8">[نیازمند ثبت هویت — قانونی، برای همه سرویس‌های ایرانی]</span></b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">نقطه ورود داخل ایران — <b>راه‌حل واقعی قطع بین‌الملل.</b> با VPS (یک خط) یا بدون VPS با CDN ایرانی. راهنما پایین صفحه.</p>
-        </div>
-      </div>
-      <p style="font-size:11px;color:#8d8d8d;margin-top:10px;line-height:1.9">ℹ️ گزینه قبلی «SNI سفید» حذف شد — قابلیت AllowInsecure که آن کانفیگ‌ها به آن وابسته بودند از هسته‌های جدید xray (۲۵ به بعد) به‌طور رسمی حذف شده و کانفیگ‌ها در کلاینت‌های جدید اصلاً لود نمی‌شدند. به‌جای آن <b>اسکن خودکار + جلوی SNI</b> (منوی «بهینه‌ساز و اسکنر») بهترین لبه‌های پکت‌لاست ۰ را با certificate معتبر در کانفیگ‌ها جایگزاری می‌کند — بدون AllowInsecure.</p>
-      <div style="margin-top:12px;background:rgba(248,180,180,.05);border:1px solid rgba(248,180,180,.18);border-radius:12px;padding:11px 14px">
-        <p style="font-size:11px;color:#d8a8a8;line-height:1.9"><b>صادقانه:</b> در «حالت شبکه ملی» دیتاسنترهای ایرانی تا امروز ترانزیت بین‌الملل خود را حفظ کرده‌اند، پس رله داخلی کار می‌کند؛ اما در خاموشی مطلق (مثل آبان ۹۸ که حتی دیتاسنترها قطع شدند) هیچ کانفیگ و نرم‌افزاری نمی‌تواند کار کند — فقط مسیر فیزیکی جایگزین. وعده‌ای بیشتر از این نمی‌دهیم که واقعیت باشد.</p>
-      </div>
-      </section>
+  // ═══════════════ SETUP WIZARD ═══════════════
+  const wiz = { photo: null, first: '', last: '' };
 
-      <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.4)">
-      <h3>🆓 بدون ثبت هویت، بدون دامنه، بدون سرور</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 10px;line-height:2">مسیرهای IP مستقیم <b>همین حالا بدون هیچ ثبت‌نام و هزینه‌ای</b> در اشتراک همه کاربران فعال‌اند و در فیلتر DNS و بلاک‌شدن لبه‌ها (شایع‌ترین اختلال‌ها) کار می‌کنند — و <b>اسکن خودکار</b> هر ساعت بهترین لبه‌های پکت‌لاست ۰ و <b>قابل‌اتصال از ایران</b> را جایگزاری می‌کند:</p>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">
-        <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🛡️ مستقیم + مسیرهای لبه</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">آیپی واقعی پنل بدون نیاز به DNS + چند مسیر لبه از اسکن/بهینه‌سازی — <b>بدون هیچ تنظیمی، خودکار فعال و تست‌شده.</b></p>
-        </div>
-        <div style="background:rgba(127,185,138,.06);border:1px solid rgba(127,185,138,.25);border-radius:12px;padding:12px 14px">
-          <b style="font-size:12.5px;color:#9fd8aa">🤖 اسکن خودکار هر ۱ ساعت + تست سلامت</b>
-          <p style="font-size:11px;color:#a9a9a9;margin-top:6px;line-height:1.9">پنل خودش هر ساعت لبه‌های سالم (پکت‌لاست ۰، پینگ پایین، پرسرعت) را می‌یابد، در کانفیگ‌ها جایگزاری می‌کند، هر پروتکل را <b>واقعاً تست</b> می‌کند (دکتر) و دسترسی آیپی‌ها را از <b>نودهای داخل ایران</b> چک می‌کند.</p>
-        </div>
-      </div>
-      <p id="lm-nokyc-status" style="font-size:11.5px;color:#7fb98a;margin-top:10px;line-height:2"></p>
-      </section>
+  function suStep(n) {
+    $('#su-form-1').hidden = n !== 1;
+    $('#su-form-2').hidden = n !== 2;
+    $('#su-done').hidden = n !== 3;
+    $('#su-d1').className = n >= 1 ? 'on' : '';
+    $('#su-d2').className = n >= 2 ? 'on' : '';
+    $('#su-d3').className = n >= 3 ? 'on' : '';
+    $('#su-sub').textContent = n === 1 ? 'به شبکه‌ات خوش آمدی' : n === 2 ? 'یک قدم مانده' : 'آماده‌ای';
+    mountLoginFX();
+  }
 
-      <section class="info-sec" style="margin-top:20px;max-width:720px">
-      <h3>تنظیمات کیت ${on ? '<span class="badge badge-ok" style="font-size:10px">فعال</span>' : ''}</h3>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:10px 2px"><input type="checkbox" id="lm-on" ${on ? 'checked' : ''}><span class="cbx"></span><b>فعال‌سازی کانفیگ‌های بقا</b> — واریانت‌ها به اشتراک همه کاربران اضافه می‌شوند</label>
-      <div class="row2" style="margin-top:10px">
-        <label class="field"><input id="lm-relay" value="${esc(s.relay_host || '')}" placeholder="آدرس رله داخلی (IP یا دامنه سرور داخل ایران)"></label>
-        <label class="field"><input id="lm-port" type="number" min="1" max="65535" value="${s.relay_port || 443}" placeholder="پورت رله (پیش‌فرض 443)"></label>
-      </div>
-      <div class="row2" style="margin-top:10px">
-        <label class="field"><input id="lm-direct" dir="ltr" value="${esc(s.direct_ip || '')}" placeholder="IP مستقیم (خالی = خودکار، بهترین آیپی اثبات‌شده)"></label>
-      </div>
-      <div class="btns" style="margin-top:12px"><button class="btn primary" id="lm-save">ذخیره تنظیمات کیت</button></div>
-      <p id="lm-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
-      <div id="lm-variants"></div>
-      </section>
+  function initSetup() {
+    suStep(1);
 
-      <section class="info-sec" style="margin-top:20px;border-color:rgba(127,185,138,.35)">
-      <h3>بدون VPS — با CDN ایرانی <span style="font-size:10px;color:#d8a8a8">(نیازمند ثبت هویت در پنل CDN + یک دامنه)</span></h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">سرور و هزینه ماهانه لازم نیست: یک <b>CDN داخل ایران</b> (آروان‌کلاد یا دراک) جلوی پنل می‌نشیند، داخل شبکه ملی همیشه در دسترس است و ترانزیت بین‌الملل خود را در قطعی‌ها حفظ کرده است. فقط یک دامنه لازم دارید (ارزان‌ترین دامنه ایرانی کافی است) و دامنه را <b>از همین حالا</b> تنظیم کنید — در روز قطعی تغییر DNS ممکن نیست:</p>
-      <div id="lm-freecdn">در حال دریافت راهنما…</div>
-      </section>
-
-      <section class="info-sec" style="margin-top:20px">
-      <h3>راه‌اندازی رله داخلی (روی سرور ایرانی — فقط یک بار)</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">هر VPS ابری داخل ایران (آروان‌کلاد، پارس‌پک، هامروشن و…) که پورت 443 از بیرون باز باشد کافی است؛ CPU و رم تقریباً هیچ نمی‌خواهد چون فقط بایت‌ها را لوله‌کشی می‌کند. یکی از دستورهای زیر را اجرا کنید — بعد آدرس همین سرور را در کادر «آدرس رله داخلی» بالا وارد کنید:</p>
-      <div id="lm-guide">در حال دریافت دستورها…</div>
-      </section>
-
-      <section class="info-sec" style="margin-top:20px">
-      <h3>کیت آفلاین — حتماً ذخیره کنید</h3>
-      <p style="font-size:12px;color:#9d9d9d;margin:6px 0 12px;line-height:2">یک فایل متنی شامل همه کانفیگ‌های بقا همه کاربران + راهنمای رله + راهنمای سناریوها. <b>قبل از اینکه بین‌الملل قطع شود</b> دانلودش کنید و جایی نگه دارید (خود پنل در حالت قطعی در دسترس نیست). کانفیگ‌ها را از قبل در v2rayNG / Hiddify اضافه و ذخیره کنید تا موقع نیاز فقط تست بزنید.</p>
-      <div class="btns"><button class="btn primary" id="lm-kit">⬇ دانلود کیت آفلاین</button></div>
-      </section>`;
-    },
-    settings() {
-      const st = S.state; if (!st) return '<p>در حال بارگذاری…</p>';
-      const s = st.settings, ops = s.operators || {}, t = s.tuning || {};
-      const cps = st.cipher_presets || {}, fps = st.fps || [];
-      return `<section class="info-sec" style="margin-top:20px;max-width:720px">
-      <h3>تنظیمات</h3>
-      <h4 style="margin:16px 0 8px;font-size:12.5px;color:#cfcfcf">مدیریت</h4>
-      <div class="row2">
-      <label class="field"><input id="se-user" value="${esc(s.user || '')}" placeholder="نام کاربری"></label>
-      <label class="field"><input id="se-pass" type="password" placeholder="رمز عبور جدید (خالی = بدون تغییر)"></label>
-      </div>
-      <div class="row2">
-      <label class="field"><input id="se-session" type="number" min="1" max="336" value="${s.session_hours || 12}" placeholder="مدت نشست (ساعت ۱-۳۳۶)"></label>
-      <label class="field"><input id="se-sni-ov" value="${esc(s.sni_override || '')}" placeholder="SNI جایگزین (اختیاری)"></label>
-      </div>
-      <h4 style="margin:16px 0 8px;font-size:12.5px;color:#cfcfcf">اتصال</h4>
-      <div class="row2">
-      <label class="field"><input id="se-address" value="${esc(s.address || '')}" placeholder="آدرس تمیز (IP یا دامنه)"></label>
-      <label class="field"><input id="se-sni" value="${esc(s.reality_sni || '')}" placeholder="SNI برای Reality"></label>
-      </div>
-      <label class="field" style="margin:10px 0"><input id="se-fmt" value="${esc(s.cfg_fmt || '')}" placeholder="⟦ {user} • {proto} • {net} • {geo} ⟧ (پیش‌فرض)"></label>
-      <label class="field" style="margin:10px 0"><input id="se-edgeblock" style="direction:ltr;font-family:var(--mono)" value="${esc((s.edge_block || []).join(', '))}" placeholder="حذف لبه‌ها (IP با کاما) — کانفیگ‌های -1 شما"></label>
-      <p style="font-size:11px;color:#8d8d8d;margin:6px 2px 0;line-height:1.9">🗑 <b>حذف لبه‌ها:</b> اگر کانفیگی با برچسب یک شهر (مثل استکهلم) در کلاینت شما <b>منفی یک (-1)</b> می‌دهد ولی برای اسکنر سالم است، IP آن لبه را اینجا وارد کنید — دیگر هیچ‌وقت در اشتراک نمی‌آید. جعبه‌ابزار دقیق: در v2rayNG روی کانفیگ بزنید تا IP را ببینید.</p>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="se-randsni" ${s.random_sni ? 'checked' : ''}><span class="cbx"></span>SNI تصادفی ضد فیلتر (فقط *.lucity.app)</label>
-
-      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">ربات تلگرام — اجرای پنل داخل تلگرام</h4>
-      <p style="font-size:11px;color:#8d8d8d;margin-bottom:10px;line-height:2">در تلگرام به <b>@BotFather</b> بفرستید <code style="font-family:var(--mono)">/newbot</code>، اسم و یوزرنیم بدهید و <b>توکن</b> را کپی کنید. شناسه عددی خود را هم از <b>@userinfobot</b> بگیرید. بعد از «اتصال ربات»، دکمه منوی ربات و دستور <code style="font-family:var(--mono)">/start</code> خودکار ساخته می‌شوند و پنل مستقیم داخل تلگرام باز می‌شود — بدون نیاز به رمز.</p>
-      <div class="row2">
-      <label class="field"><input id="se-tg-token" type="password" placeholder="توکن ربات (123456789:AAF...)" autocomplete="off"></label>
-      <label class="field"><input id="se-tg-admin" inputmode="numeric" placeholder="شناسه عددی تلگرام شما" autocomplete="off"></label>
-      </div>
-      <div class="btns" style="margin-top:6px">
-        <button class="btn" id="tg-connect">اتصال ربات</button>
-        <button class="btn" id="tg-disconnect" style="display:none">قطع اتصال</button>
-      </div>
-      <p id="tg-status" style="font-size:11.5px;color:#9d9d9d;margin-top:10px;line-height:2"></p>
-
-      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">پروتکل‌ها</h4>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px">
-      ${st.protocols.map(p => `<label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:10px;padding:9px 12px">
-        <input type="checkbox" class="se-proto" data-k="${p.key}" ${(s.protocols || {})[p.key] ? 'checked' : ''}><span class="cbx"></span>${esc(p.name)}</label>`).join('')}
-      </div>
-
-      <h4 style="margin:18px 0 8px;font-size:12.5px;color:#cfcfcf">FinalMask &amp; Cipher Suites — بهینه‌سازی و پایداری برای اپراتور شما</h4>
-      <p style="font-size:11px;color:#8d8d8d;margin-bottom:10px;line-height:1.9"><b>FinalMask</b> دست دادن TLS را تکه‌تکه می‌کند (فرگمنت) و اثر انگشت TLS را شبیه مرورگر واقعی می‌کند تا DPI اپراتور نتواند پروکسی را تشخیص دهد و سرعت را نکَند. <b>Cipher Suites و ALPN</b> هم امضای رمزنگاری اتصال را عوض می‌کنند. کافی است فقط <b>Enable</b> را روشن کنید و اپراتور خود را انتخاب کنید — بقیه مقادیر بهترین حالت را می‌گیرند.</p>
-      <label style="display:flex;gap:9px;align-items:center;font-size:12.5px;color:#e4e4e4;margin:10px 2px"><input type="checkbox" id="se-fm-on" ${t.enabled !== false ? 'checked' : ''}><span class="cbx"></span><b>Enable — فعال‌سازی FinalMask &amp; Cipher Suites</b></label>
-      <div class="row2" style="margin-top:10px">
-      <label class="field sel"><select id="se-opprof">
-        ${Object.entries(ops).map(([k, o]) => `<option value="${k}" ${k === (t.profile || 'auto') ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
-      </select></label>
-      <label class="field sel"><select id="se-fp">
-        ${(fps.length ? fps : ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', 'random', 'randomized']).map(f => `<option value="${f}" ${f === (t.fp || 'chrome') ? 'selected' : ''}>${esc(fpLabels[f] || f)}</option>`).join('')}
-      </select></label>
-      </div>
-      <p id="se-opnote" style="font-size:11px;color:#8d8d8d;margin:8px 2px;line-height:1.9">${esc((ops[t.profile || 'auto'] || {}).note || '')}</p>
-
-      <div id="fm-block">
-        <h4 style="margin:16px 0 8px;font-size:12px;color:#cfcfcf">فرگمنت TLS (FinalMask)</h4>
-        <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:6px 2px"><input type="checkbox" id="se-fragon" ${t.frag_on ? 'checked' : ''}><span class="cbx"></span>فرگمنت TLS فعال (پروفایل «خودکار» بدون فرگمنت کم‌ترین پینگ را دارد)</label>
-        <div class="row2">
-        <label class="field"><input id="se-fraglen" value="${esc(t.frag_lengths || '100-200')}" placeholder="طول فرگمنت (مثلاً 40-100)"></label>
-        <label class="field"><input id="se-fragdelay" value="${esc(t.frag_delays || '10-20')}" placeholder="تأخیر فرگمنت به میلی‌ثانیه"></label>
-        </div>
-        <div class="row2">
-        <label class="field sel"><select id="se-fragpackets">
-          <option value="tlshello" ${(t.frag_packets || 'tlshello') === 'tlshello' ? 'selected' : ''}>تکه‌تکه کردن دست‌دادن TLS (توصیه‌شده)</option>
-          <option value="1-3" ${t.frag_packets === '1-3' ? 'selected' : ''}>بسته‌های ۱ تا ۳</option>
-        </select></label>
-        <label class="field"><input id="se-fragmaxsplit" value="${esc(t.frag_maxsplit || '3-6')}" placeholder="بیشینه تکه (3-6)"></label>
-        </div>
-
-        <h4 style="margin:16px 0 8px;font-size:12px;color:#cfcfcf">Cipher Suites &amp; ALPN</h4>
-        <div class="row2">
-        <label class="field sel"><select id="se-alpn">
-          ${['', 'http/1.1', 'h2', 'h2,http/1.1', 'http/1.1,h2'].map(m => `<option value="${m}" ${m === (t.alpn || '') ? 'selected' : ''}>${esc(alpnLabels[m] !== undefined ? alpnLabels[m] : m)}</option>`).join('')}
-        </select></label>
-        <label class="field sel"><select id="se-cipher">
-          <option value="" ${!t.cipher_suites ? 'selected' : ''}>Cipher پیش‌فرض امن (توصیه‌شده)</option>
-          ${Object.entries(cps).map(([k, v]) => `<option value="${esc(v)}" ${v === t.cipher_suites ? 'selected' : ''}>${esc(cipherLabels[k] || k)}</option>`).join('')}
-          <option value="__custom__" ${t.cipher_suites && !Object.values(cps).includes(t.cipher_suites) ? 'selected' : ''}>اختصاصی…</option>
-        </select></label>
-        </div>
-        <label class="field" id="se-cipher-wrap" style="display:none"><input id="se-cipher-custom" value="${esc(t.cipher_suites || '')}" placeholder="TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256"></label>
-
-        <h4 style="margin:16px 0 8px;font-size:12px;color:#cfcfcf">نویز تصادفی (اختیاری — ضد تشخیص الگو)</h4>
-        <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:6px 2px"><input type="checkbox" id="se-noiseon" ${t.noise_on ? 'checked' : ''}><span class="cbx"></span>افزودن بسته‌های نویز تصادفی به اتصال</label>
-        <div class="row2">
-        <label class="field"><input id="se-noiserand" value="${esc(t.noise_rand || '1-64')}" placeholder="اندازه بسته نویز (1-64)"></label>
-        <label class="field"><input id="se-noisedelay" value="${esc(t.noise_delay || '10-20')}" placeholder="فاصله نویز به میلی‌ثانیه"></label>
-        </div>
-      </div>
-      <div class="btns"><button class="btn primary" id="se-save">ذخیره تنظیمات</button></div>
-      </section>`;
-    },
-    support() {
-      return `<section class="info-sec" style="margin-top:20px;max-width:640px">
-      <h3>پشتیبانی</h3>
-      <p style="font-size:12.5px;color:#bbb;line-height:2.2;margin-top:8px">
-      DEEP NETWORK روی Lucity اجرا می‌شود؛ همه‌ی تنظیمات از متغیرهای محیطی سرویس خوانده می‌شود:<br>
-      <code style="font-family:var(--mono);direction:ltr;display:inline-block">ADMIN_PASSWORD</code> — رمز ورود به پنل (در غیر این صورت خودکار ساخته و در لاگ دیپلوی چاپ می‌شود)<br>
-      <code style="font-family:var(--mono);direction:ltr;display:inline-block">DOMAIN</code> — دامنه سرویس (برای لینک‌های درست و اسکنر CDN)<br>
-      <code style="font-family:var(--mono);direction:ltr;display:inline-block">UUID / SECRET</code> — ثابت نگه‌داشتن شناسه‌ها بین دیپلوی‌ها<br>
-      <b style="color:#e8e8e8">مهم:</b> یک Volume روی مسیر <code style="font-family:var(--mono);direction:ltr;display:inline-block">/data</code> متصل کنید تا کاربران و لینک‌ها بعد از دیپلوی دوباره از بین نروند.</p>
-      </section>`;
-    },
-  };
-
-  const viewsInit = {
-    users() {
-      $('#add-user').addEventListener('click', () => renderView('create'));
-      $('#export-backup').addEventListener('click', () => location.href = '/panel/api/backup');
-      $$('#all-users .u-act button').forEach(b => b.addEventListener('click', async () => {
-        const id = b.closest('.tr').dataset.id, act = b.dataset.act;
-        const c = S.state.clients.find(x => x.id === id);
-        if (act === 'sub') {
-          modal(`<h3>اشتراک ${esc(c.name)} <button>✕</button></h3>
-          <div class="linkbox"><span>${esc(c.sub_url)}</span><button id="m-copy"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button></div>
-          <div class="qr-box"><img src="/panel/api/qr?data=${encodeURIComponent(c.sub_url)}" alt="QR"></div>
-          <p style="font-size:11px;color:#8d8d8d">در v2rayNG: Import from clipboard — در Hiddify: + و سپس Paste</p>
-          <div style="margin-top:12px"><small style="font-size:10.5px;color:#7fb98a">JSON بهینه — پرسرعت‌ترین (Mux فعال)</small>
-          <div class="linkbox" style="margin-top:4px"><span>${esc(c.sub_url)}?fmt=xray</span><button id="m-copy-json"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button></div>
-          <p style="font-size:11px;color:#8d8d8d">لینک را در مرورگر باز کنید، JSON را کپی کنید و در v2rayNG: + ← «Import config from clipboard»</p></div>`);
-          $('#m-copy').addEventListener('click', () => copy(c.sub_url));
-          $('#m-copy-json').addEventListener('click', () => copy(c.sub_url + '?fmt=xray'));
-        } else if (act === 'edit') {
-          const p = c.protocols || [];
-          modal(`<h3>ویرایش ${esc(c.name)} <button>✕</button></h3>
-          <label class="field"><input id="eu-name" value="${esc(c.name)}" placeholder="نام"></label>
-          <div class="row2">
-            <label class="field"><input id="eu-days" type="number" min="0" placeholder="روز (۰ = نامحدود)" value="${c.days_left || 0}"></label>
-            <label class="field"><input id="eu-quota" type="number" min="0" placeholder="حجم GB" value="${c.quota ? Math.round(c.quota / 1073741824) : 0}"></label>
-          </div>
-          <label class="field"><input id="eu-note" value="${esc(c.note || '')}" placeholder="یادداشت"></label>
-          <label style="display:flex;gap:9px;align-items:center;font-size:12px;color:#c9c9c9;margin:8px 2px"><input type="checkbox" id="eu-reset"><span class="cbx"></span>صفر کردن مصرف</label>
-          <div class="btns"><button class="btn primary" id="eu-save">ذخیره</button></div>`);
-          $('#eu-save').addEventListener('click', async () => {
-            try {
-              await api('clients/edit', { id, name: $('#eu-name').value, note: $('#eu-note').value,
-                days: +$('#eu-days').value || 0, quota: (+$('#eu-quota').value || 0) * 1073741824, reset_usage: $('#eu-reset').checked });
-              $('#modal-root').innerHTML = ''; toast('ذخیره شد ✓', 'ok'); refreshAll();
-            } catch (ex) { toast(ex.message, 'err'); }
-          });
-        } else if (act === 'del') {
-          if (!confirm('کاربر «' + c.name + '» حذف شود؟')) return;
-          try { await api('clients/delete', { id }); toast('حذف شد', 'ok'); refreshAll(); } catch (ex) { toast(ex.message, 'err'); }
-        }
-      }));
-    },
-    create() {
-      $('#nu-go').addEventListener('click', async () => {
-        try {
-          const r = await api('clients', { name: $('#nu-name').value, days: +$('#nu-days').value || 0, quota: (+$('#nu-quota').value || 0) * 1073741824, note: $('#nu-note').value });
-          toast('کاربر ساخته شد ✓', 'ok'); refreshAll(); renderView('users');
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-    },
-    subs() {
-      $$('[data-copy]').forEach(b => b.addEventListener('click', () => copy(b.dataset.copy)));
-      $$('[data-qr]').forEach(b => b.addEventListener('click', () => {
-        modal(`<h3>QR اشتراک <button>✕</button></h3><div class="qr-box"><img src="/panel/api/qr?data=${encodeURIComponent(b.dataset.qr)}" alt="QR"></div>`);
-      }));
-    },
-    scanner() {
-      // ── shared probe helper (used by optimizer, stability test and manual scan) ──
-      const TIMEOUT = 3500;
-      const timedFetch = (url, ms) => new Promise(resolve => {
-        let ctl;
-        try { ctl = new AbortController(); } catch { resolve(); return; }
-        const t = setTimeout(() => { try { ctl.abort(); } catch { } }, ms);
-        fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal })
-          .catch(() => { })
-          .finally(() => { clearTimeout(t); resolve(); });
-      });
-      const probe = async (host, ms) => {
-        const t0 = performance.now();
-        // IPv6 literals must be bracketed in URLs (https://[2400:52e0::1]/)
-        const h = (String(host).includes(':') && !String(host).startsWith('[')) ? '[' + host + ']' : host;
-        await timedFetch('https://' + h + '/', ms || TIMEOUT);
-        return Math.round(performance.now() - t0);
+    // photo picker — canvas-downscale to 256, base64 PNG
+    $('#su-file').addEventListener('change', ev => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      const img = new Image();
+      img.onload = () => {
+        const side = Math.min(img.width, img.height);
+        const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 256, 256);
+        const b64 = cv.toDataURL('image/png');
+        wiz.photo = b64;
+        $('#su-photo-img').src = b64;
       };
-      const median = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
-      const jitter = a => a.length < 2 ? 0 : Math.max(...a) - Math.min(...a);
-      const jitterVerdict = j => j <= 25 ? '<b style="color:var(--ok)">بسیار پایدار</b>' : j <= 60 ? '<b style="color:#d6c96b">پایدار</b>' : '<b style="color:#f8b4b4">نوسان بالا</b>';
+      img.onerror = () => toast('تصویر قابل خواندن نبود', 'err');
+      img.src = URL.createObjectURL(f);
+    });
 
-      // IP family selector (v3.7): "auto" = IPv4 + IPv6 merged, "6" = IPv6 only
-      const famVal = () => { const s = $('#scan-fam'); return s ? s.value : 'auto'; };
-      const loadEdges = async () => {
-        const fam = famVal();
-        const geo = {};
-        let edges = [];
-        const grab = async f => {
-          try {
-            const r = await api('bunnyedges?family=' + f, {});
-            (r.edges || []).forEach(e => edges.push(e));
-            Object.assign(geo, r.geo || {});
-          } catch { /* family unavailable on this deploy */ }
-        };
-        if (fam === '6') { await grab('6'); }
-        else {
-          await grab('4');
-          if (fam === 'auto') {
-            // only sweep v6 if this phone actually has IPv6 — quick 1-edge probe
-            try {
-              const probe6 = await api('bunnyedges?family=6', {});
-              const cand = (probe6.edges || [])[0];
-              if (cand) { const ms = await probe(cand, 1800); if (ms < 1700) await grab('6'); }
-            } catch { }
-          }
-        }
-        return { edges, geo };
-      };
+    $('#su-form-1').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const first = $('#su-first').value.trim(), last = $('#su-last').value.trim();
+      const err = $('#su-error-1');
+      if (!first || !last) { err.textContent = 'نام و نام خانوادگی را کامل وارد کن'; err.hidden = false; return; }
+      err.hidden = true;
+      wiz.first = first; wiz.last = last;
+      suStep(2);
+      setTimeout(() => { try { $('#su-user').focus(); } catch { } }, 60);
+    });
 
-      // ─────────── SMART OPTIMIZER — one button: best IP + operator tuning ───────────
-      const oStatus = $('#opt-status'), oProg = $('#opt-prog'), oRes = $('#opt-result'),
-        oCands = $('#opt-cands'), oStop = $('#opt-stop'), oRun = $('#opt-run');
-      // guard: placeholder render (state not yet arrived) has none of these elements
-      if (!oRun || !oStatus || !oStop || !$('#scan-bunny')) return;
+    $('#su-back-2').addEventListener('click', () => suStep(1));
 
-      // ── v3.14: auto-scan card wiring ──
-      const asToggle = $('#as-on'), asRun = $('#as-run'), asStatus = $('#as-status');
-      const asEvery = $('#as-every'), asFrontSel = $('#as-front-sel'),
-        asFrontCustom = $('#as-front-custom'), asFrontApply = $('#as-front-apply'),
-        asDoc = $('#as-doc'), asDocStatus = $('#as-doc-status');
-      if (asEvery) asEvery.addEventListener('change', async () => {
-        try {
-          const h = parseInt(asEvery.value, 10) || 1;
-          await api('autoscan', { every_hours: h });
-          if (S.state && S.state.settings && S.state.settings.auto_scan) S.state.settings.auto_scan.every_hours = h;
-          toast('بازه اسکن خودکار: هر ' + (h === 1 ? '۱ ساعت' : h + ' ساعت') + ' ✓', 'ok');
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-      if (asFrontApply) asFrontApply.addEventListener('click', async () => {
-        const sel = asFrontSel ? asFrontSel.value : 'auto';
-        let val = 'auto';
-        if (sel === 'off') val = 'off';
-        else if (sel === 'custom') {
-          val = (asFrontCustom ? asFrontCustom.value.trim() : '');
-          if (!val) { toast('دامنه جلو را وارد کنید یا حالت خودکار را انتخاب کنید', 'err'); return; }
-        }
-        try {
-          asFrontApply.disabled = true;
-          await api('autoscan', { front_sni: val });
-          toast('جلوی SNI اعمال شد — در حال اثبات از طریق لبه… چند لحظه بعد وضعیت را رفرش کنید ✓', 'ok');
-          setTimeout(async () => { try { await refreshAll(); renderView('scanner'); } catch {} }, 4000);
-        } catch (ex) { toast(ex.message, 'err'); }
-        finally { asFrontApply.disabled = false; }
-      });
-      if (asDoc) asDoc.addEventListener('click', async () => {
-        if (asDoc.dataset.busy === '1') return;
-        asDoc.dataset.busy = '1'; asDoc.disabled = true;
-        if (asDocStatus) asDocStatus.innerHTML = 'در حال تست واقعی همه پروتکل‌ها از طریق بهترین لبه… (تا ۴۵ ثانیه)';
-        try {
-          await api('autoscan', { doctor: true });
-          for (let i = 0; i < 22; i++) {
-            await new Promise(rr => setTimeout(rr, 2000));
-            let st; try { st = await api('autoscan', {}); } catch { continue; }
-            if (st && st.doctor && !st.doctor.running) {
-              await refreshAll(); renderView('scanner');
-              const okc = Object.values(st.doctor.results || {}).filter(r => r.ok).length;
-              toast('تست سلامت انجام شد — ' + okc + '/' + Object.keys(st.doctor.results || {}).length + ' کانفیگ سالم ✓', okc ? 'ok' : 'err');
-              return;
-            }
-            if (asDocStatus) asDocStatus.innerHTML = 'در حال تست… ' + ((i + 1) * 2) + ' ثانیه گذشته';
-          }
-          if (asDocStatus) asDocStatus.textContent = 'تست هنوز در جریان است — چند لحظه بعد رفرش کنید.';
-        } catch (ex) { if (asDocStatus) asDocStatus.textContent = 'خطا: ' + ex.message; }
-        finally { asDoc.dataset.busy = ''; asDoc.disabled = false; }
-      });
-      if (asToggle) asToggle.addEventListener('change', async () => {
-        try {
-          await api('autoscan', { enabled: asToggle.checked });
-          if (S.state && S.state.settings) S.state.settings.auto_scan = Object.assign(S.state.settings.auto_scan || {}, { enabled: asToggle.checked });
-          toast(asToggle.checked ? 'اسکن خودکار فعال شد ✓ — هر ساعت بهترین لبه‌ها جایگزاری می‌شوند' : 'اسکن خودکار خاموش شد', 'ok');
-        } catch (ex) { toast(ex.message, 'err'); asToggle.checked = !asToggle.checked; }
-      });
-      if (asRun) asRun.addEventListener('click', async () => {
-        if (asRun.dataset.busy === '1') return;
-        asRun.dataset.busy = '1'; asRun.disabled = true;
-        if (asStatus) asStatus.innerHTML = 'در حال اسکن… لبه‌ها از همه مناطق سنجیده می‌شوند و در پایان فقط لبه‌های قابل‌اتصال از ایران (تست TLS واقعی از ۶ نود) در کانفیگ‌ها می‌مانند (تا ۵ دقیقه)';
-        try {
-          await api('autoscan', { run: true });
-          // poll until finished (max ~6 min — the IR-TLS gate adds real
-          // handshake probes from 6 Iranian nodes to every candidate edge)
-          for (let i = 0; i < 180; i++) {
-            await new Promise(rr => setTimeout(rr, 2000));
-            let st; try { st = await api('autoscan', {}); } catch { continue; }
-            if (!st.running) {
-              await refreshAll(); renderView('scanner');
-              toast('اسکن خودکار انجام شد — لبه‌های قابل‌اتصال از ایران در کانفیگ‌ها هستند ✓', 'ok');
-              return;
-            }
-            if (asStatus) asStatus.innerHTML = 'در حال اسکن و تست TLS از ۶ نود ایرانی… ' + ((i + 1) * 2) + ' ثانیه گذشته';
-          }
-          if (asStatus) asStatus.textContent = 'اسکن هنوز در جریان است — چند لحظه بعد وضعیت را رفرش کنید.';
-        } catch (ex) { if (asStatus) asStatus.textContent = 'خطا: ' + ex.message; }
-        finally { asRun.dataset.busy = ''; asRun.disabled = false; }
-      });
-      let optStop = false;
-      oStop.addEventListener('click', () => { optStop = true; });
-      const setStep = (txt, pct) => {
-        oStatus.innerHTML = txt;
-        if (pct == null) { oProg.hidden = true; } else { oProg.hidden = false; const b = $('i', oProg); if (b) b.style.width = pct + '%'; }
-      };
-      const runMap = async (list, fn, conc, onOne) => {
-        const q = list.slice(); let done = 0;
-        await Promise.all(Array.from({ length: conc }, async () => {
-          while (!optStop) {
-            const it = q.shift(); if (!it) return;
-            await fn(it); done++;
-            if (onOne) onOne(it, done);
-          }
-        }));
-      };
+    const suEye = $('#su-eye'), suPass = $('#su-pass');
+    suEye.addEventListener('click', () => {
+      suPass.type = suPass.type === 'password' ? 'text' : 'password';
+    });
 
-      $('#opt-run').addEventListener('click', async () => {
-        if (oRun.dataset.busy === '1') return;
-        oRun.dataset.busy = '1'; oRun.disabled = true; optStop = false;
-        oStop.hidden = false; oRes.innerHTML = ''; oCands.innerHTML = '';
-        try {
-          // 1) operator detect (server reads the request IP → ASN)
-          setStep('۱/۵ — تشخیص اپراتور اینترنت شما…', 5);
-          let w; try { w = await api('whoami'); } catch { w = { operator: 'auto', label: 'خودکار' }; }
-          const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
-          const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
+    suPass.addEventListener('input', () => {
+      const v = suPass.value;
+      let score = 0;
+      if (v.length >= 8) score++;
+      if (v.length >= 12) score++;
+      if (/[A-Z]/.test(v) && /[a-z]/.test(v)) score++;
+      if (/\d/.test(v) && /[^A-Za-z0-9]/.test(v)) score++;
+      const m = $('#su-meter-bar').parentElement;
+      m.className = 'su-meter' + (v ? ' w' + Math.max(1, score) : '');
+    });
 
-          // 2) verified geo-balanced edges (IPv4 + IPv6 per family selector)
-          setStep('۲/۵ — دریافت لبه‌های تأییدشده نزدیک ایران… (اولین بار ممکن است تا ۳۰ ثانیه طول بکشد)', 15);
-          const { edges: allEdges, geo } = await loadEdges();
-          const edges = allEdges.slice(0, famVal() === 'auto' ? 60 : 40);
-          if (!edges.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>'; return; }
-          const r = { geo };
-
-          // 3) round 1 — first RTT sweep from THIS phone
-          setStep('۳/۵ — سنجش پینگ ' + edges.length + ' لبه از مرورگر شما…', 20);
-          const first = new Map();
-          await runMap(edges, async ip => { first.set(ip, await probe(ip)); }, 6,
-            (ip, done) => setStep('۳/۵ — سنجش پینگ ' + done + ' از ' + edges.length + ' لبه…', 20 + done / edges.length * 40));
-          const alive = edges.filter(ip => (first.get(ip) || TIMEOUT) < TIMEOUT - 50)
-            .sort((a, b) => first.get(a) - first.get(b)).slice(0, 12);
-          if (!alive.length) {
-            setStep('');
-            const noV6 = famVal() === '6';
-            oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + (noV6
-              ? 'هیچ لبه IPv6 از اینترنت شما پاسخ نداد — به نظر می‌رسد شبکه شما IPv6 ندارد؛ گزینه «فقط IPv4» را انتخاب کنید.'
-              : 'هیچ لبه‌ای از اینترنت شما پاسخ نداد — بعداً دوباره تلاش کنید.') + '</p>';
-            return;
-          }
-
-          // 4) rounds 2-3 on the top 12 → median + jitter (stability!)
-          setStep('۴/۵ — سنجش پایداری ۱۲ لبه برتر (هرکدام ۳ بار)…', 65);
-          const samples = new Map(alive.map(ip => [ip, [first.get(ip)]]));
-          for (let round = 0; round < 2 && !optStop; round++) {
-            await runMap(alive, async ip => { samples.get(ip).push(await probe(ip)); }, 6);
-          }
-          const cands = alive.map(ip => {
-            const s = samples.get(ip);
-            return { ip, geo: (r.geo || {})[ip] || null, med: median(s), jit: jitter(s) };
-          }).map(c => ({ ...c, score: c.med + c.jit * 0.6 })).sort((a, b) => a.score - b.score);
-          oCands.innerHTML = '<p style="font-size:11px;color:#8d8d8d;margin:2px 0 6px">برترین گزینه‌ها (پینگ میانه + نوسان):</p>' +
-            cands.slice(0, 5).map((c, i) => `<div class="scan-row"><span>${i === 0 ? '🏆 ' : ''}${c.ip}</span>
-              <span class="ok">${c.med} ms</span><span class="geo">نوسان ${c.jit} ms · ${c.geo ? esc(c.geo.city + '، ' + c.geo.cc) : '—'}</span>
-              <span class="geo">${i === 0 ? 'انتخاب شد' : 'رزرو'}</span></div>`).join('');
-
-          // 5) confirm the winner (2 extra probes), fall back if it died
-          setStep('۵/۵ — تأیید نهایی و اعمال روی همه کانفیگ‌ها…', 88);
-          let best = null;
-          for (const c of cands) {
-            const c1 = await probe(c.ip), c2 = await probe(c.ip);
-            if (c1 < TIMEOUT - 50 && c2 < TIMEOUT - 50) { best = { ...c, med: median([c.med, c1, c2]) }; break; }
-          }
-          if (optStop) { setStep('بهینه‌سازی متوقف شد.'); return; }
-          if (!best) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای پایدار پاسخ نداد — دوباره تلاش کنید.</p>'; return; }
-
-          // apply: best edge IP + operator FinalMask profile + SPEED PACK in one shot
-          const tuning = { enabled: true, profile: opKey, frag_on: opKey !== 'auto', mux_off: false, noise_on: false };
-          await api('settings', { address: best.ip, tuning });
-          await refreshAll();
-          setStep('انجام شد ✓', null);
-          oRes.innerHTML = `<div class="opt-ok">
-            <b style="font-size:13px">بهترین مسیر و سریع‌ترین تنظیمات برای شبکه شما فعال شد ✓</b>
-            <ul class="kv" style="margin-top:8px">
-            <li><span>اپراتور شناسایی‌شده</span><b>${esc(opLabel)}</b></li>
-            <li><span>پروفایل FinalMask اعمال‌شده</span><b>${opKey === 'auto' ? 'خودکار (بدون فرگمنت — کم‌ترین پینگ)' : esc(opLabel)}</b></li>
-            <li><span>بهترین لبه</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${best.ip}</b>${best.ip.includes(':') ? ' <span class="badge" style="font-size:10px">IPv6</span>' : ''}</li>
-            <li><span>موقعیت</span><b>${best.geo ? esc(best.geo.city + '، ' + best.geo.cc) : '—'}</b></li>
-            <li><span>پینگ میانه</span><b style="color:var(--ok)">${best.med} ms</b></li>
-            <li><span>نوسان (پایداری)</span><b>${best.jit} ms — ${jitterVerdict(best.jit)}</b></li>
-            <li><span>بسته سرعت</span><b style="color:var(--ok)">Mux فعال + KeepAlive سریع ✓</b></li>
-            </ul>
-            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">همه کانفیگ‌ها حالا از این لبه با سریع‌ترین تنظیمات سرو می‌شوند. در کلاینت خود (v2rayNG / Hiddify) اشتراک را <b>به‌روزرسانی (Update)</b> کنید تا لینک‌های جدید گرفته شود. برای بیشترین سرعت، از بخش «اشتراک‌ها» لینک <b>JSON بهینه</b> را هم می‌توانید مستقیم وارد کلاینت کنید. اگر باز هم قطع و وصل شد، دوباره همین دکمه را بزنید تا لبه تازه‌ای انتخاب شود.</p></div>`;
-        } catch (ex) {
-          setStep('');
-          oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
-        } finally {
-          oRun.dataset.busy = '0'; oRun.disabled = false; oStop.hidden = true;
-        }
-      });
-
-      // ─────────── SPEED-ONLY BUTTON: apply the fastest settings without scanning ───────────
-      $('#opt-speed').addEventListener('click', async () => {
-        const btn = $('#opt-speed');
-        if (btn.dataset.busy === '1') return;
-        btn.dataset.busy = '1'; btn.disabled = true;
-        try {
-          setStep('تشخیص اپراتور و اعمال بسته سرعت روی همه کانفیگ‌ها…', 40);
-          let w; try { w = await api('whoami'); } catch { w = { operator: 'auto' }; }
-          const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
-          const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
-          await api('settings', { tuning: { enabled: true, profile: opKey, frag_on: opKey !== 'auto', mux_off: false, noise_on: false } });
-          await refreshAll();
-          setStep('بسته سرعت اعمال شد ✓', null);
-          oRes.innerHTML = `<div class="opt-ok">
-            <b style="font-size:13px">سریع‌ترین تنظیمات روی همه کانفیگ‌ها اعمال شد ✓</b>
-            <ul class="kv" style="margin-top:8px">
-            <li><span>اپراتور شناسایی‌شده</span><b>${esc(opLabel)}</b></li>
-            <li><span>Mux (چند جریان روی یک اتصال)</span><b style="color:var(--ok)">فعال — concurrency 8 ✓</b></li>
-            <li><span>KeepAlive تهاجمی + NoDelay</span><b style="color:var(--ok)">فعال ✓</b></li>
-            <li><span>فرگمنت TLS</span><b>${opKey !== 'auto' ? 'روشن (مطابق پروفایل ' + esc(opLabel) + ')' : 'خاموش (کم‌ترین پینگ)'}</b></li>
-            <li><span>نویز تصادفی</span><b>خاموش</b></li>
-            </ul>
-            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">این دکمه مسیر (IP) فعلی را نگه می‌دارد و فقط تنظیمات سرعت را بهینه می‌کند. اگر پینگ هم بالاست، دکمه «بهینه‌سازی حداکثری» را بزنید. برای استفاده از Mux، لینک <b>JSON بهینه</b> را از بخش «اشتراک‌ها» در کلاینت وارد کنید یا اشتراک استاندارد را Update کنید.</p></div>`;
-        } catch (ex) {
-          setStep(''); toast(ex.message, 'err');
-        } finally { btn.dataset.busy = '0'; btn.disabled = false; }
-      });
-
-      // ─────────── ALL-OPERATOR OPTIMIZER — 0 packet loss · low ping · high speed ───────────
-      // Grades every edge from BOTH ends: browser (RTT + jitter + packet loss
-      // over 6 probes) and server (edge→origin handshake + throughput via
-      // /panel/api/edgespeed). Applies the winner as primary AND stores the
-      // top-5 as fallback routes — the subscription then carries one entry per
-      // edge + a DNS-auto entry, so every operator's clients pick their best.
-      $('#opt-all').addEventListener('click', async () => {
-        if (oRun.dataset.busy === '1') return;
-        oRun.dataset.busy = '1'; oRun.disabled = true; optStop = false;
-        oStop.hidden = false; oRes.innerHTML = ''; oCands.innerHTML = '';
-        const medal = i => ['🥇', '🥈', '🥉'][i] || 'E' + (i + 1);
-        try {
-          // 1) operator detect (informational — this mode serves ALL operators)
-          setStep('۱/۶ — تشخیص اپراتور شما (فقط برای گزارش)…', 3);
-          let w; try { w = await api('whoami'); } catch { w = { operator: 'auto', label: 'خودکار' }; }
-          const opKey = (w.operator && w.operator !== 'auto') ? w.operator : 'auto';
-          const opLabel = opKey === 'auto' ? 'خودکار' : (w.label || opKey);
-
-          // 2) verified geo-balanced edges
-          setStep('۲/۶ — دریافت لبه‌های تأییدشده نزدیک ایران… (اولین بار تا ۳۰ ثانیه)', 8);
-          const { edges: allEdges, geo } = await loadEdges();
-          const edges = allEdges.slice(0, famVal() === 'auto' ? 60 : 40);
-          if (!edges.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه‌ای تأیید نشد — DOMAIN را چک کنید.</p>'; return; }
-
-          // 3) round 1 — RTT sweep from THIS device
-          setStep('۳/۶ — پینگ اولیه ' + edges.length + ' لبه از دستگاه شما…', 12);
-          const first = new Map();
-          await runMap(edges, async ip => { first.set(ip, await probe(ip)); }, 6,
-            (ip, done) => setStep('۳/۶ — پینگ ' + done + ' از ' + edges.length + '…', 12 + done / edges.length * 22));
-          const alive = edges.filter(ip => (first.get(ip) || TIMEOUT) < TIMEOUT - 50)
-            .sort((a, b) => first.get(a) - first.get(b)).slice(0, 14);
-          if (!alive.length) {
-            setStep('');
-            oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + (famVal() === '6'
-              ? 'هیچ لبه IPv6 پاسخ نداد — شبکه شما احتمالاً IPv6 ندارد؛ «فقط IPv4» را انتخاب کنید.'
-              : 'هیچ لبه‌ای از اینترنت شما پاسخ نداد — بعداً دوباره تلاش کنید.') + '</p>';
-            return;
-          }
-
-          // 4) deep quality probe — 5 more rounds each → median, jitter, PACKET LOSS
-          setStep('۴/۶ — سنجش دقیق پکت‌لاست و نوسان (' + alive.length + ' لبه برتر × ۶ پینگ)…', 36);
-          const lost = ms => ms >= TIMEOUT - 50;
-          const samples = new Map(alive.map(ip => [ip, [first.get(ip)]]));
-          for (let round = 0; round < 5 && !optStop; round++) {
-            await runMap(alive, async ip => { samples.get(ip).push(await probe(ip)); }, 6);
-            setStep('۴/۶ — سنجش پکت‌لاست — دور ' + (round + 1) + ' از ۵…', 36 + (round + 1) / 5 * 20);
-          }
-          const graded = alive.map(ip => {
-            const s = samples.get(ip);
-            const ok = s.filter(x => !lost(x));
-            const l = s.length ? Math.round((s.length - ok.length) / s.length * 1000) / 10 : 100;
-            return { ip, geo: geo[ip] || null, med: ok.length ? median(ok) : TIMEOUT,
-              jit: ok.length > 1 ? Math.max(...ok) - Math.min(...ok) : 0, loss: l };
-          }).filter(c => c.loss < 80 && c.med < TIMEOUT);
-
-          // 5) server-side: edge→origin handshake + real throughput through each edge
-          setStep('۵/۶ — سنجش سرعت و مسیر هر لبه تا سرور (سمت سرور، از طریق همان لبه)…', 58);
-          const spd = new Map();
-          try {
-            const r2 = await api('edgespeed', { targets: graded.map(c => c.ip), kb: 64 });
-            (r2.results || []).forEach(x => { if (x.ok) spd.set(x.ip, x); });
-          } catch { /* server-side leg unavailable — rank on browser data only */ }
-          const rows = graded.map(c => {
-            const sp = spd.get(c.ip) || {};
-            const org = sp.hs_ms || 0, kbps = sp.kbps || 0;
-            return { ...c, org, kbps, score: c.med + org * 0.35 + c.jit * 0.5 + c.loss * 8 };
-          }).sort((a, b) => a.score - b.score);
-          oCands.innerHTML = '<p style="font-size:11px;color:#8d8d8d;margin:2px 0 6px">جدول کیفیت لبه‌ها (پینگ شما + مسیر تا سرور + پکت‌لاست + سرعت):</p>' +
-            rows.slice(0, 8).map((c, i) => `<div class="scan-row"><span>${medal(i)} ${c.ip}</span>
-              <span class="ok">${Math.round(c.med)}ms</span>
-              <span class="geo">کل ≈ ${Math.round(c.med + c.org)}ms${c.org ? ' · لبه→سرور ' + Math.round(c.org) + 'ms' : ''}</span>
-              <span class="geo">${c.loss === 0 ? '<b style="color:var(--ok)">پکت‌لاست ۰</b>' : 'پکت‌لاست ' + c.loss + '٪'}${c.kbps ? ' · ' + c.kbps + ' KB/s' : ''} · نوسان ' + Math.round(c.jit) + 'ms</span>
-              <span class="geo">${c.geo ? esc(c.geo.city + '، ' + c.geo.cc) : '—'}</span></div>`).join('');
-
-          // 6) strict 0-loss gate, then apply
-          const zeroLoss = rows.filter(r => r.loss === 0);
-          const ranked = (zeroLoss.length >= 3 ? zeroLoss : rows).slice(0, 5);
-          if (optStop) { setStep('بهینه‌سازی متوقف شد.'); return; }
-          if (!ranked.length) { setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">هیچ لبه سالمی پیدا نشد — دوباره تلاش کنید.</p>'; return; }
-          setStep('۶/۶ — اعمال بهینه‌سازی همه‌اپراتوره روی همه کانفیگ‌ها…', 92);
-          await api('settings', {
-            address: ranked[0].ip,
-            random_sni: true, // SNI تصادفی زیر دامنه پلتفرم — فیلتر SNI همه اپراتورها را دور می‌زند
-            top_edges: ranked.map(c => ({ ip: c.ip, med: c.med, jit: c.jit, loss: c.loss,
-              origin_ms: c.org, kbps: c.kbps, score: c.score,
-              cc: c.geo ? (c.geo.cc || '') : '', city: c.geo ? (c.geo.city || '') : '' })),
-            multi_edge: true,
-            tuning: { enabled: true, profile: opKey, frag_on: false, mux_off: false, noise_on: false }
-          });
-          await refreshAll();
-          setStep('انجام شد ✓', null);
-          const perfect = ranked.filter(r => r.loss === 0).length;
-          oRes.innerHTML = `<div class="opt-ok">
-            <b style="font-size:13px">بهینه‌سازی همه‌اپراتوره اعمال شد ✓ — ${perfect ? perfect + ' لبه با پکت‌لاست ۰' : 'بهترین لبه‌های موجود'} انتخاب شدند</b>
-            <ul class="kv" style="margin-top:8px">
-            <li><span>اپراتور شما (تشخیص‌داده‌شده)</span><b>${esc(opLabel)}</b></li>
-            <li><span>مسیر اصلی (سریع‌ترین)</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${ranked[0].ip}</b>${ranked[0].ip.includes(':') ? ' <span class="badge" style="font-size:10px">IPv6</span>' : ''}</li>
-            <li><span>پینگ شما تا مسیر اصلی</span><b style="color:var(--ok)">${Math.round(ranked[0].med)} ms</b></li>
-            <li><span>مسیر کامل (لبه + سرور)</span><b>≈ ${Math.round(ranked[0].med + ranked[0].org)} ms</b></li>
-            <li><span>پکت‌لاست مسیر اصلی</span><b style="color:${ranked[0].loss === 0 ? 'var(--ok)' : '#d6c96b'}">${ranked[0].loss}٪</b></li>
-            <li><span>سرعت لبه تا سرور</span><b>${ranked[0].kbps ? Math.round(ranked[0].kbps) + ' KB/s' : '—'}</b></li>
-            <li><span>مسیرهای پشتیبان در اشتراک</span><b>${ranked.length} مسیر + ۱ مسیر DNS خودکار</b></li>
-            <li><span>SNI تصادفی (ضد فیلتر SNI)</span><b style="color:var(--ok)">روشن ✓</b></li>
-            <li><span>فرگمنت (افزایش پینگ)</span><b style="color:var(--ok)">خاموش — کم‌ترین پینگ ✓</b></li>
-            <li><span>بسته سرعت (Mux + KeepAlive)</span><b style="color:var(--ok)">فعال ✓</b></li>
-            </ul>
-            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">حالا اشتراک هر کاربر به‌جای یک IP، <b>${ranked.length} مسیر برتر (🥇🥈🥉 با شهر و پینگ) + مسیر DNS خودکار</b> را شامل می‌شود؛ کلاینت روی <b>هر اپراتوری</b> (همراه اول، ایرانسل، رایتل، مخابرات، شاتل و…) خودش سریع‌ترین مسیر را پیدا می‌کند. در کلاینت خود (v2rayNG / Hiddify) اشتراک را <b>Update</b> کنید و اگر چند کانفیگ دیدید، عادی است — همه سالم‌اند؛ با «Real-delay test» سریع‌ترین را انتخاب کنید.</p></div>`;
-        } catch (ex) {
-          setStep('');
-          oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
-        } finally {
-          oRun.dataset.busy = '0'; oRun.disabled = false; oStop.hidden = true;
-        }
-      });
-
-      // ─────────── STABILITY TEST of the current route ───────────
-      $('#opt-stab').addEventListener('click', async () => {
-        const btn = $('#opt-stab');
-        if (btn.dataset.busy === '1') return;
-        btn.dataset.busy = '1'; btn.disabled = true; optStop = false; oStop.hidden = false;
-        try {
-          const target = (S.state && S.state.settings.address) || location.host;
-          setStep('سنجش پایداری مسیر فعلی (<b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(target) + '</b>) — ۱۰ پینگ متوالی…', 10);
-          const s = [];
-          for (let i = 0; i < 10 && !optStop; i++) { s.push(await probe(target)); setStep('سنجش پایداری مسیر فعلی — ' + (i + 1) + ' از ۱۰…', (i + 1) / 10 * 100); }
-          const lostN = s.filter(x => x >= TIMEOUT - 50).length;
-          const okS = s.filter(x => x < TIMEOUT - 50);
-          const med = okS.length ? median(okS) : TIMEOUT, jit = okS.length > 1 ? jitter(okS) : 0;
-          const lossPct = Math.round(lostN / s.length * 1000) / 10;
-          const lossVerdict = l => l === 0 ? '<b style="color:var(--ok)">پکت‌لاست ۰ ✓</b>' : l < 10 ? '<b style="color:#d6c96b">' + l + '٪</b>' : '<b style="color:#f8b4b4">' + l + '٪ — ناپایدار</b>';
-          setStep('تست پایداری تمام شد', null);
-          oRes.innerHTML = `<div class="opt-ok">
-            <b style="font-size:13px">نتیجه تست مسیر فعلی</b>
-            <ul class="kv" style="margin-top:8px">
-            <li><span>مقصد</span><b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(target)}</b></li>
-            <li><span>پینگ میانه</span><b>${Math.round(med)} ms</b></li>
-            <li><span>کمترین / بیشترین</span><b>${okS.length ? Math.min(...okS) + ' / ' + Math.max(...okS) + ' ms' : '—'}</b></li>
-            <li><span>نوسان</span><b>${Math.round(jit)} ms — ${jitterVerdict(jit)}</b></li>
-            <li><span>پکت‌لاست (${s.length} پینگ)</span><b>${lossVerdict(lossPct)}</b></li>
-            </ul>
-            <p style="font-size:11px;color:#8d8d8d;line-height:2;margin-top:8px">${lossPct > 0 || jit > 60 || med > 400
-              ? 'پکت‌لاست، نوسان یا پینگ بالاست — دکمه «🌐 بهینه‌سازی همه‌اپراتوره» را بزنید تا مسیرهای سالم (پکت‌لاست ۰) به اشتراک اضافه شوند.'
-              : 'مسیر فعلی سالم است؛ اگر باز هم قطع و وصل می‌شود، «🌐 بهینه‌سازی همه‌اپراتوره» را اجرا کنید و اشتراک را در کلاینت به‌روزرسانی کنید.'}</p></div>`;
-        } catch (ex) {
-          setStep(''); oRes.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
-        } finally { btn.dataset.busy = '0'; btn.disabled = false; oStop.hidden = true; }
-      });
-
-      // ─────────── MANUAL SCAN (unchanged behavior) ───────────
-      const out = $('#scan-out'), prog = $('#scan-prog'), statusEl = $('#scan-status'), stopBtn = $('#scan-stop');
-      let stopped = false;
-      stopBtn.addEventListener('click', () => { stopped = true; });
-
-      // event delegation: ONE listener for every «اعمال» button (no re-attach churn)
-      out.addEventListener('click', async e => {
-        const b = e.target.closest('[data-ip]');
-        if (!b) return;
-        try {
-          await api('settings', { address: b.dataset.ip });
-          toast('IP روی همه کانفیگ‌ها اعمال شد ✓', 'ok'); refreshAll();
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-
-      $('#scan-bunny').addEventListener('click', async () => {
-        if (out.dataset.busy === '1') return;
-        out.dataset.busy = '1'; stopped = false; stopBtn.hidden = false;
-        const fam = famVal();
-        statusEl.textContent = 'در حال دریافت لبه‌های تأییدشده' + (fam === '6' ? ' (IPv6)' : fam === 'auto' ? ' (IPv4 + IPv6)' : '') + '… (اولین اسکن ممکن است تا ۳۰ ثانیه طول بکشد؛ دفعات بعد سریع است)';
-        out.innerHTML = '';
-        try {
-          const { edges: allE, geo } = await loadEdges();
-          if (!allE.length) {
-            statusEl.textContent = '';
-            out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">لبه‌ای تأیید نشد — DOMAIN را چک کنید.' + (fam === '6' ? ' یا شبکه شما IPv6 ندارد.' : '') + '</p>';
-            return;
-          }
-          const CONC = 6; // capped parallelism — 40 hanging fetches used to saturate mobile links
-          const edges = allE.slice(0, fam === 'auto' ? 70 : 60);
-          const rows = edges.map(ip => ({ ip, geo: geo[ip] || null, ms: null }));
-          const byIp = new Map(rows.map(x => [x.ip, x]));
-          const renderRows = () => {
-            const fin = rows.filter(x => x.ms != null).sort((a, b) => a.ms - b.ms);
-            const pend = rows.filter(x => x.ms == null);
-            const row = w => `<div class="scan-row"><span>${w.ip}</span>
-            <span class="${w.ms == null ? '' : (w.ms < TIMEOUT - 50 ? 'ok' : 'bad')}">${w.ms == null ? '…' : (w.ms < TIMEOUT - 50 ? w.ms + ' ms' : 'بدون پاسخ')}</span>
-            <span class="geo">${w.geo ? esc(w.geo.city + '، ' + w.geo.cc) : '—'}</span>
-            <button class="mini-btn" data-ip="${w.ip}">اعمال</button></div>`;
-            out.innerHTML = fin.map(row).join('') + pend.map(row).join('');
-          };
-          renderRows();
-          prog.hidden = false;
-          statusEl.textContent = '۰ از ' + rows.length + ' لبه بررسی شد…';
-          let doneN = 0, okN = 0;
-          const queue = edges.slice();
-          await Promise.all(Array.from({ length: CONC }, async () => {
-            while (!stopped) {
-              const ip = queue.shift();
-              if (!ip) return;
-              const ms = await probe(ip);
-              const rw = byIp.get(ip);
-              if (rw) {
-                rw.ms = Math.min(ms, TIMEOUT);
-                if (ms < TIMEOUT - 50) okN++;
-              }
-              doneN++;
-              const bar = $('i', prog); if (bar) bar.style.width = (doneN / rows.length * 100) + '%';
-              statusEl.textContent = doneN + ' از ' + rows.length + ' لبه بررسی شد — ' + okN + ' لبه پاسخ داد';
-              renderRows();
-            }
-          }));
-          prog.hidden = true;
-          statusEl.textContent = stopped
-            ? 'اسکن متوقف شد — ' + doneN + ' لبه بررسی شد'
-            : 'تمام شد ✓ سریع‌ترین لبه در بالای فهرست است — روی «اعمال» بزنید';
-        } catch (ex) {
-          statusEl.textContent = '';
-          out.innerHTML = '<p style="color:#f8b4b4;font-size:12px">' + esc(ex.message) + '</p>';
-        } finally {
-          out.dataset.busy = '0'; stopBtn.hidden = true; prog.hidden = true;
-        }
-      });
-      $('#scan-custom').addEventListener('click', () => {
-        modal(`<h3>اسکن IP های دلخواه <button>✕</button></h3>
-        <label class="field"><textarea id="sc-list" rows="4" style="width:100%;background:none;border:0;outline:0;color:#eee;font-family:var(--mono);font-size:11px" placeholder="1.2.3.4&#10;2400:52e0:1500::714:1&#10;5.6.7.8"></textarea>
-        <div class="btns"><button class="btn primary" id="sc-go">اسکن (سمت سرور)</button></div>`);
-        $('#sc-go').addEventListener('click', async () => {
-          const targets = $('#sc-list').value.split('\n').map(s => s.trim()).filter(Boolean);
-          if (!targets.length) return toast('حداقل یک IP وارد کنید', 'err');
-          try {
-            const r = await api('ipscan', { targets, port: 443 });
-            $('#modal-root').innerHTML = '';
-            const box = $('#scan-out'); // query AFTER the modal closes — the old `out` may be detached
-            if (box) box.innerHTML = r.results.map(x => `<div class="scan-row"><span>${esc(x.target)}</span>
-              <span class="${x.ok ? 'ok' : 'bad'}">${x.ok ? x.ms.toFixed(1) + ' ms' : 'غیرقابل دسترس'}</span><span></span><span></span></div>`).join('') || '<p style="color:#8d8d8d;font-size:12px">نتیجه‌ای نبود</p>';
-          } catch (ex) { toast(ex.message, 'err'); }
-        });
-      });
-    },
-    tools() {
-      $('#t-restart').addEventListener('click', async () => { try { await api('restart'); toast('Xray ری‌استارت شد ✓', 'ok'); } catch (ex) { toast(ex.message, 'err'); } });
-      $('#t-config').addEventListener('click', () => location.href = '/panel/api/server-config');
-      $('#t-log').addEventListener('click', async () => {
-        try {
-          const r = await api('log');
-          const el = $('#t-out'); el.hidden = false; el.style.display = 'block';
-          el.textContent = (r.lines || []).join('\n') || '(خالی)';
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-      $('#t-reset').addEventListener('click', async () => {
-        if (!confirm('مصرف همه کاربران صفر شود؟')) return;
-        try { await api('reset-traffic-all'); toast('صفر شد ✓', 'ok'); refreshAll(); } catch (ex) { toast(ex.message, 'err'); }
-      });
-      $('#t-restore').addEventListener('click', () => {
-        const i = document.createElement('input'); i.type = 'file'; i.accept = '.json';
-        i.addEventListener('change', async () => {
-          try {
-            const txt = await i.files[0].text();
-            await api('restore', { state: JSON.parse(txt).state });
-            toast('بازیابی شد ✓', 'ok'); refreshAll();
-          } catch (ex) { toast(ex.message, 'err'); }
-        });
-        i.click();
-      });
-    },
-    settings() {
-      // guard: when state hasn't arrived yet the view renders a placeholder that
-      // has none of these elements — bail and let viewStale re-render + re-bind
-      // once stateLoop delivers data (was: rare "textContent of null" race).
-      if (!$('#tg-status') || !$('#se-save')) return;
-      // ── Telegram bot section (v3.4) ──
-      const stEl = $('#tg-status'), connBtn = $('#tg-connect'), discBtn = $('#tg-disconnect');
-      const paintTg = () => {
-        const tg = (S.state && S.state.settings && S.state.settings.telegram) || {};
-        if (tg.connected) {
-          stEl.innerHTML = '<b style="color:var(--ok)">متصل: @' + esc(tg.bot_username || '') + '</b> — حالا در تلگرام ربات را باز کنید و <b>/start</b> بزنید؛ پنل با دکمه منو یا دکمه داخل گفتگو باز می‌شود.';
-          connBtn.style.display = 'none'; discBtn.style.display = '';
-        } else {
-          stEl.textContent = 'ربات متصل نیست.';
-          connBtn.style.display = ''; discBtn.style.display = 'none';
-        }
-      };
-      paintTg();
-      connBtn.addEventListener('click', async () => {
-        const token = ($('#se-tg-token') || {}).value || '';
-        const admin_id = ($('#se-tg-admin') || {}).value || '';
-        if (!token.trim() || !admin_id.trim()) return toast('توکن ربات و شناسه تلگرام را وارد کنید', 'err');
-        connBtn.disabled = true; connBtn.textContent = 'در حال اتصال…';
-        try {
-          const r = await api('telegram', { token: token.trim(), admin_id: admin_id.trim() });
-          toast('ربات @' + (r.bot_username || '') + ' متصل شد ✓ حالا در تلگرام /start بزنید', 'ok');
-          await stateLoop(); renderView('settings');
-        } catch (ex) { toast(ex.message, 'err'); }
-        connBtn.disabled = false; connBtn.textContent = 'اتصال ربات';
-      });
-      discBtn.addEventListener('click', async () => {
-        if (!confirm('ربات تلگرام قطع شود؟')) return;
-        try {
-          await api('telegram', null, 'DELETE');
-          toast('ربات قطع شد', 'ok');
-          await stateLoop(); renderView('settings');
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-
-      // ── FinalMask & Cipher Suites section (v3.6) ──
-      // guard: when state hasn't arrived yet the view renders a placeholder —
-      // re-binding happens automatically via viewStale once data lands.
-      const fmOn = $('#se-fm-on'), opSel = $('#se-opprof'), fpSel = $('#se-fp'), cipherSel = $('#se-cipher');
-      if (!fmOn || !opSel || !fpSel || !cipherSel) return;
-      const fmBlock = $('#fm-block'), opNote = $('#se-opnote'), fragOn = $('#se-fragon'),
-        cipherWrap = $('#se-cipher-wrap');
-      const ops = (S.state && S.state.settings.operators) || {};
-      const paintFm = () => {
-        fmBlock.style.display = fmOn.checked ? '' : 'none';
-        const prof = ops[opSel.value];
-        opNote.textContent = prof ? (prof.note || '') : '';
-      };
-      const initCipherCustom = () => {
-        cipherWrap.style.display = cipherSel.value === '__custom__' ? '' : 'none';
-      };
-      fmOn.addEventListener('change', paintFm);
-      opSel.addEventListener('change', () => {
-        const prof = ops[opSel.value];
-        // switching operator → refill fragment presets + fingerprint + sensible frag default
-        if (prof) {
-          const fl = $('#se-fraglen'); if (fl) fl.value = prof.frag_lengths || fl.value;
-          const fd = $('#se-fragdelay'); if (fd) fd.value = prof.frag_delays || fd.value;
-          if (prof.fp) fpSel.value = prof.fp;
-        }
-        if (fragOn) fragOn.checked = opSel.value !== 'auto';
-        paintFm();
-      });
-      cipherSel.addEventListener('change', initCipherCustom);
-      paintFm(); initCipherCustom();
-
-      $('#se-save').addEventListener('click', async () => {
-        const protocols = {};
-        $$('.se-proto').forEach(p => protocols[p.dataset.k] = p.checked);
-        const profV = opSel.value;
-        const profDefault = ops[profV];
-        const cipherSelV = cipherSel.value;
-        // explicit custom lengths only apply on the custom profile — otherwise keep the preset
-        const tune = {
-          enabled: fmOn.checked,
-          profile: profV,
-          fp: fpSel.value,
-          alpn: $('#se-alpn').value,
-          cipher_suites: cipherSelV === '__custom__' ? (($('#se-cipher-custom') || {}).value || '') : cipherSelV,
-          frag_on: fragOn && fragOn.checked,
-          frag_packets: $('#se-fragpackets').value,
-          frag_lengths: profV === 'custom' ? (($('#se-fraglen') || {}).value || '') : (profDefault ? profDefault.frag_lengths : undefined),
-          frag_delays: profV === 'custom' ? (($('#se-fragdelay') || {}).value || '') : (profDefault ? profDefault.frag_delays : undefined),
-          frag_maxsplit: ($('#se-fragmaxsplit') || {}).value || '',
-          noise_on: $('#se-noiseon') && $('#se-noiseon').checked,
-          noise_rand: ($('#se-noiserand') || {}).value || '',
-          noise_delay: ($('#se-noisedelay') || {}).value || '',
-        };
-        if (tune.frag_lengths === undefined) delete tune.frag_lengths;
-        if (tune.frag_delays === undefined) delete tune.frag_delays;
-        try {
-          const payload = {
-            user: $('#se-user').value, address: $('#se-address').value,
-            reality_sni: $('#se-sni').value, cfg_fmt: $('#se-fmt').value,
-            random_sni: $('#se-randsni').checked, protocols,
-            tuning: tune,
-          };
-          if ($('#se-sni-ov') && $('#se-sni-ov').value.trim() !== '') payload.sni_override = $('#se-sni-ov').value.trim();
-          if ($('#se-edgeblock')) payload.edge_block = $('#se-edgeblock').value.trim();
-          if ($('#se-session')) payload.session_hours = +$('#se-session').value || 12;
-          if ($('#se-pass') && $('#se-pass').value) payload.pass = $('#se-pass').value;
-          await api('settings', payload);
-          toast('تنظیمات ذخیره شد ✓', 'ok'); refreshAll();
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-    },
-    // v3.10: starts the 2s live poller while the view is open
-    online() { startOnlineLoop(); },
-    // v3.11: national-internet kit — live settings + relay guide + kit download
-    async localmode() {
-      const st = $('#lm-status');
-      // ── fill the form from state (already rendered) and keep it in sync
+    $('#su-form-2').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const err = $('#su-error-2');
+      const user = $('#su-user').value.trim(), pass = suPass.value, pass2 = $('#su-pass2').value;
+      if (!/^[a-zA-Z0-9_.-]{2,32}$/.test(user)) { err.textContent = 'نام کاربری باید ۲ تا ۳۲ حرف انگلیسی، عدد، نقطه یا خط تیره باشد'; err.hidden = false; return; }
+      if (pass.length < 8) { err.textContent = 'رمز عبور باید حداقل ۸ کاراکتر باشد'; err.hidden = false; return; }
+      if (pass !== pass2) { err.textContent = 'رمز و تکرار آن یکسان نیستند'; err.hidden = false; return; }
+      err.hidden = true;
       try {
-        const lm = await api('localmode');
-        if (lm.resolved_ip && $('#lm-direct') && !$('#lm-direct').value) {
-          $('#lm-direct').placeholder = 'IP مستقیم (خودکار: ' + (lm.direct_addr || lm.resolved_ip) + ')';
-        }
-        // v3.14: no-KYC status line — direct routes only (white-SNI removed)
-        const stBox = $('#lm-nokyc-status');
-        if (stBox) {
-          const dr = lm.direct_routes != null ? lm.direct_routes : '?';
-          stBox.innerHTML = '✓ وضعیت فعلی: <b>' + dr + '</b> مسیر IP مستقیم (بدون DNS، بدون ثبت‌نام) در اشتراک‌ها فعال است' +
-            (lm.relay_host ? ' — رله داخلی: <b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(lm.relay_host) + ':' + (lm.relay_port || 443) + '</b>' : '');
-        }
-        const freeBox = $('#lm-freecdn');
-        if (freeBox && lm.guide && lm.guide.freecdn) {
-          freeBox.innerHTML = '<pre style="background:#0d0d0d;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:11px;overflow:auto;white-space:pre-wrap;line-height:2">' + esc(lm.guide.freecdn) + '</pre>';
-        }
-        const guideBox = $('#lm-guide');
-        if (guideBox && lm.guide) {
-          const cmd = (title, body, note) => `<div style="margin:10px 0">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-              <b style="font-size:11.5px;color:#cfcfcf">${title}</b>
-              <button class="mini-btn lm-copy" data-cmd="${esc(body)}">کپی</button>
-            </div>
-            <pre style="background:#0d0d0d;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:10.5px;overflow:auto;direction:ltr;text-align:left;white-space:pre-wrap">${esc(body)}</pre>
-            ${note ? '<p style="font-size:10.5px;color:#8d8d8d;margin-top:3px">' + note + '</p>' : ''}</div>`;
-          guideBox.innerHTML =
-            cmd('① ساده‌ترین — socat (پیشنهادی)', lm.guide.socat, 'نصب: apt-get install -y socat — روی اکثر سرورها از قبل هست') +
-            cmd('② با Docker', lm.guide.docker) +
-            cmd('③ پایدار — systemd (بعد از ری‌استارت هم بالا می‌آید)', lm.guide.systemd) +
-            cmd('④ بدون نصب برنامه — iptables', lm.guide.iptables, 'اگر هیچ‌کدام از موارد بالا در دسترس نبود') +
-            `<p style="font-size:11px;color:#8d8d8d;margin-top:10px;line-height:1.9">بعد از اجرا، صحت رله را تست کنید: از داخل ایران به <b style="font-family:var(--mono);direction:ltr;display:inline-block">${esc(lm.panel_host || '')}</b> وصل شوید — اگر صفحه پنل از مسیر رله باز شد، همه‌چیز درست است. سپس آدرس رله را در تنظیمات بالا وارد و ذخیره کنید.</p>`;
-          $$('.lm-copy').forEach(b => b.addEventListener('click', () => copy(b.dataset.cmd)));
-        }
-        if (lm.variants && lm.variants.length) {
-          const vb = $('#lm-variants');
-          if (vb) vb.innerHTML = `<p style="font-size:11.5px;color:#7fb98a;margin-top:8px">✓ واریانت‌های فعال در اشتراک‌ها: <b>${lm.variants.length}</b> مورد (${lm.variants.map(esc).join(' · ')})${lm.relay_host ? ' — رله: <b style="font-family:var(--mono);direction:ltr;display:inline-block">' + esc(lm.relay_host) + ':' + (lm.relay_port || 443) + '</b>' : ''}</p>`;
-        }
-      } catch (ex) { if (st) st.textContent = 'دریافت اطلاعات کیت ناموفق بود: ' + ex.message; }
-      // ── save
-      $('#lm-save').addEventListener('click', async () => {
-        const lmPayload = {
-          enabled: $('#lm-on').checked,
-          relay_host: $('#lm-relay').value.trim(),
-          relay_port: +$('#lm-port').value || 443,
-          direct_ip: $('#lm-direct').value.trim(),
-        };
-        try {
-          await api('settings', { local_mode: lmPayload });
-          if (S.state && S.state.settings) S.state.settings.local_mode = lmPayload; // instant UI truth
-          toast('تنظیمات کیت شبکه ملی ذخیره شد ✓', 'ok');
-          refreshAll(); renderView('localmode');
-        } catch (ex) { toast(ex.message, 'err'); }
-      });
-      // ── kit download
-      $('#lm-kit').addEventListener('click', () => { location.href = '/panel/api/localmode/kit'; });
-    },
-  };
+        await api('setup', { first: wiz.first, last: wiz.last, user, pass, avatar: wiz.photo || '' });
+        $('#su-done-name').textContent = wiz.first + ' ' + wiz.last + ' — خوش آمدی';
+        suStep(3);
+      } catch (e) { err.textContent = e.message; err.hidden = false; }
+    });
 
-  // ─────────── v3.10: live online-users loop ───────────
-  let onlTimer = null, onlDurTimer = null;
-  function stopOnlineLoop() {
-    if (onlTimer) { clearInterval(onlTimer); onlTimer = null; }
-    if (onlDurTimer) { clearInterval(onlDurTimer); onlDurTimer = null; }
-  }
-  function startOnlineLoop() {
-    stopOnlineLoop();
-    pollOnline(); // immediate first paint
-    onlTimer = setInterval(() => { if (!document.hidden && S.view === 'online') pollOnline(); }, 2000);
-    // durations glide every second WITHOUT re-requesting anything
-    onlDurTimer = setInterval(() => { if (S.view === 'online' && !document.hidden) tickOnlineDurs(); }, 1000);
-  }
-  async function pollOnline() {
-    let d; try { d = await api('online'); } catch { return; }
-    S.online = d;
-    paintOnlineBadge(d.count || 0);
-    if (S.view === 'online') paintOnline(d);
-  }
-  function paintOnlineBadge(n) {
-    const sb = $('#sb-online-count');
-    if (sb) { sb.textContent = n; sb.classList.toggle('none', !n); }
-    const del = $('#st-users-delta');
-    if (del) del.textContent = n ? n + ' آنلاین' : '';
-  }
-  function onlRow(o) {
-    const idle = o.status === 'idle';
-    return `<div class="tr onl-row">
-      <span class="u-name"><i class="u-ava">${esc((o.name || '·')[0] || '·').toUpperCase()}</i><b>${esc(o.name)}</b></span>
-      <span class="u-status on ${idle ? 'idle' : ''}"><i class="dot"></i>${idle ? 'بی‌تحرک' : 'در حال استفاده'}</span>
-      <span class="onl-mono onl-dur" data-since="${o.since}">${fmtDur(o.dur_s)}</span>
-      <span class="onl-mono">↓ ${fmtRate(o.down_bps)} · ↑ ${fmtRate(o.up_bps)}</span>
-      <span class="onl-mono" style="color:#b9b9b9">↓${fmtGB(o.down)} · ↑${fmtGB(o.up)}</span>
-    </div>`;
-  }
-  function offRow(e) {
-    return `<div class="tr onl-row off">
-      <span class="u-name"><i class="u-ava">${esc((e.name || '·')[0] || '·').toUpperCase()}</i><b>${esc(e.name)}</b></span>
-      <span class="onl-mono">${fmtDur(e.dur_s)}</span>
-      <span class="onl-mono"><b>${clockTime(e.offline_at)}</b> <small style="color:#8d8d8d">(${relTime(e.offline_at)})</small></span>
-      <span class="onl-mono" style="color:#b9b9b9">${fmtGB((e.up || 0) + (e.down || 0))}</span>
-    </div>`;
-  }
-  function paintOnline(d) {
-    const pill = $('#onl-count'); if (!pill) return;
-    const c = d.count || 0;
-    pill.textContent = c ? c + ' کاربر' : 'هیچ‌کس';
-    pill.classList.toggle('zero', !c);
-    const onl = d.online || [], off = d.offline || [];
-    const tbl = $('#onl-users');
-    if (tbl) tbl.innerHTML = '<div class="tr th"><span>کاربر</span><span>وضعیت</span><span>مدت اتصال</span><span>سرعت لحظه‌ای</span><span>مصرف این نشست</span></div>' + onl.map(onlRow).join('');
-    const emp = $('#onl-empty'); if (emp) emp.hidden = !!c;
-    const ftbl = $('#off-users');
-    if (ftbl) ftbl.innerHTML = '<div class="tr th"><span>کاربر</span><span>مدت استفاده</span><span>زمان آفلاین شدن</span><span>مصرف نشست</span></div>' + off.map(offRow).join('');
-    const femp = $('#off-empty'); if (femp) femp.hidden = !!off.length;
-  }
-  function tickOnlineDurs() {
-    $$('.onl-dur[data-since]').forEach(el => {
-      el.textContent = fmtDur(Math.floor(Date.now() / 1000 - (+el.dataset.since)));
+    $('#su-enter').addEventListener('click', () => {
+      const u = $('#su-user').value.trim();
+      showLogin(u);
     });
   }
 
-  // ─────────── sidebar / header wiring ───────────
+  // ═══════════════ LOGIN ═══════════════
+  function initLogin() {
+    const eye = $('#eye'), pass = $('#f-pass');
+    eye.addEventListener('click', () => { pass.type = pass.type === 'password' ? 'text' : 'password'; });
+    $('#login-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const err = $('#login-error');
+      err.hidden = true;
+      const btn = $('.lc-submit', $('#login'));
+      btn.disabled = true;
+      try {
+        const user = $('#f-user').value.trim();
+        await api('login', { user, pass: pass.value });
+        if ($('#f-remember').checked) { try { localStorage.setItem('dn-user', user); } catch { } }
+        else { try { localStorage.removeItem('dn-user'); } catch { } }
+        showDash();
+      } catch (e) {
+        err.textContent = e.message; err.hidden = false;
+        if (/حسابی ساخته نشده/.test(e.message)) showSetup();
+      } finally { btn.disabled = false; }
+    });
+    try { const u = localStorage.getItem('dn-user'); if (u) { $('#f-user').value = u; } } catch { }
+  }
+
+  // ═══════════════ DASH SHELL ═══════════════
   function initDash() {
-    $$('#sb-nav button').forEach(b => b.addEventListener('click', () => {
-      renderView(b.dataset.view);
-      $('#sidebar').classList.remove('open');
-      $('#sb-backdrop').classList.remove('show');
-    }));
+    // sidebar nav
+    $$('#sb-nav button').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
     $('#burger').addEventListener('click', () => {
       $('#sidebar').classList.toggle('open');
       $('#sb-backdrop').classList.toggle('show');
@@ -1654,104 +257,543 @@
       $('#sidebar').classList.remove('open');
       $('#sb-backdrop').classList.remove('show');
     });
-    $('#hero-close').addEventListener('click', () => { $('#hero').style.display = 'none'; });
-    $('#view-all').addEventListener('click', () => renderView('users'));
-    $('#hd-avatar-wrap').addEventListener('click', pickAvatar);
-    $('#hd-avatar-wrap').addEventListener('keydown', e => { if (e.key === 'Enter') pickAvatar(); });
-    $('#theme-toggle').addEventListener('click', () => toast('حالت روشن در این نسخه فعال نیست — تم سینمایی تیره 🙂'));
-    $('#bell').addEventListener('click', () => toast(S.stats && S.stats.online_users ? S.stats.online_users + ' کاربر در همین لحظه در حال استفاده است' : 'در این لحظه کاربر آنلاینی نیست'));
-    $('#tg-dl').addEventListener('change', e => S.fx.wave && S.fx.wave.set('rx', e.target.checked));
-    $('#tg-ul').addEventListener('change', e => S.fx.wave && S.fx.wave.set('tx', e.target.checked));
-    // v3.6 FIX: the دانلود/آپلود radios in the globe section were wired to an
-    // EMPTY handler — a visible control that did nothing. They now filter the
-    // live chart to the selected direction (chart checkboxes stay in sync).
-    $$('#globe-tog input').forEach(r => r.addEventListener('change', () => {
-      if (!r.checked || !S.fx.wave) return;
-      const rx = r.value === 'rx';
-      S.fx.wave.set('rx', rx); S.fx.wave.set('tx', !rx);
-      const dl = $('#tg-dl'), ul = $('#tg-ul');
-      if (dl) dl.checked = rx;
-      if (ul) ul.checked = !rx;
-    }));
-    let searchT; // v3.6: debounce — re-rendering the users view on EVERY keystroke was janky
-    $('#search').addEventListener('input', e => {
-      clearTimeout(searchT);
-      const q = e.target.value.trim().toLowerCase();
-      if (!q || !S.state) return;
-      searchT = setTimeout(() => {
-        const hit = S.state.clients.find(c => c.name.toLowerCase().includes(q));
-        if (hit) { renderView('users'); }
-      }, 300);
+    $('#search').addEventListener('input', () => {
+      const q = $('#search').value.trim().toLowerCase();
+      $$('#users-table .tr:not(.th)').forEach(r => { r.style.display = !q || r.textContent.toLowerCase().includes(q) ? '' : 'none'; });
     });
-    // live FPS display (real)
-    FX.onFps = f => {
-      const a = $('#fps-chip'), b = $('#si-fps');
-      if (a) a.textContent = f;
-      if (b) b.textContent = f + ' fps';
-    };
+    document.addEventListener('keydown', e => {
+      if (e.key === '/' && document.activeElement !== $('#search')) { e.preventDefault(); $('#search').focus(); }
+    });
+    $('#view-all').addEventListener('click', () => switchView('users'));
+    $('#hd-avatar-wrap').addEventListener('click', () => avatarModal());
   }
 
-  // ─────────── operator auto-detect (real) ───────────
-  async function detectOperator() {
+  function switchView(v) {
+    S.view = v;
+    $$('#sb-nav button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+    const host = $('#view-host'), dv = $('#dash-views');
+    if (v === 'dashboard') { host.hidden = true; host.innerHTML = ''; dv.hidden = false; mountDashCanvases(); }
+    else {
+      dv.hidden = true; host.hidden = false;
+      host.innerHTML = views[v] ? views[v]() : '<p class="pad">در حال بارگذاری…</p>';
+      if (hooks[v]) hooks[v]();
+    }
+    $('#sidebar').classList.remove('open');
+    $('#sb-backdrop').classList.remove('show');
+    window.scrollTo({ top: 0 });
+  }
+
+  // ═══════════════ LOOPS ═══════════════
+  function stopLoops() { S.timers.forEach(clearInterval); S.timers = []; }
+  function startLoops() {
+    stopLoops();
+    S.timers.push(setInterval(statLoop, 2000));
+    S.timers.push(setInterval(stateLoop, 8000));
+    S.timers.push(setInterval(pingLoop, 6000));
+    statLoop(); stateLoop(); pingLoop();
+  }
+
+  let pingHist = [];
+  async function pingLoop() {
     try {
-      const w = await api('whoami');
-      S.whoami = w;
-      applyGlobeNodes();
-      if (w.operator && w.operator !== 'auto') {
-        const strip = $('#op-strip');
-        strip.hidden = false;
-        $('#op-strip-text').textContent = 'اپراتور شما شناسایی شد: ' + (w.label || w.operator) + ' — اعمال تنظیمات بهینه (فرگمنت مناسب DPI این اپراتور) روی همه کانفیگ‌ها؟';
-        $('#op-apply').addEventListener('click', async () => {
-          try {
-            await api('settings', { tuning: { enabled: true, profile: w.operator, frag_on: true } });
-            toast('تنظیمات ' + (w.label || w.operator) + ' اعمال شد ✓', 'ok');
-            strip.hidden = true;
-          } catch (ex) { toast(ex.message, 'err'); }
-        }, { once: true });
-      }
+      const t0 = performance.now();
+      await api('ping');
+      const ms = Math.round(performance.now() - t0);
+      pingHist.push(ms); if (pingHist.length > 10) pingHist.shift();
+      const med = pingHist.slice().sort((a, b) => a - b)[Math.floor(pingHist.length / 2)];
+      FX.data.ping = med;
+      const gp = $('#g-ping'); if (gp) gp.textContent = med + ' ms';
+    } catch { }
+    try { S.whoami = await api('whoami'); applyGlobeNodes(); } catch { }
+  }
+
+  async function statLoop() {
+    try {
+      const st = await api('stats');
+      S.stats = st;
+      paintStats(st);
+      if (S.view === 'stats' || S.view === 'tools' || S.view === 'online') paintLiveView(st);
     } catch { }
   }
 
-  // ─────────── loops ───────────
-  function stopTimers() { S.timers.forEach(clearInterval); S.timers = []; }
-  function startLoops() {
-    stopTimers();
-    statLoop(); stateLoop(); pingLoop();
-    // FIX(v3.3): gentler polling — 2s full-stats + 5s pings over a filtered
-    // Iranian mobile link made the whole panel feel laggy; also everything
-    // pauses while the tab is hidden (bandwidth + battery).
-    // v3.6: 1s polling — matches the server's 1s sampler tick exactly, so the
-    // 60fps chart engine receives a fresh sample every second and interpolates
-    // in between (payload is gzipped, ~1.5KB/s). Stats view refreshes in place
-    // via paintStats (sv-* ids) — no more full re-render every 5s.
-    S.timers.push(setInterval(() => { if (!document.hidden) statLoop(); }, 1000));
-    S.timers.push(setInterval(() => { if (!document.hidden) pingLoop(); }, 6000));
-    S.timers.push(setInterval(() => { if (!document.hidden) stateLoop(); }, 45000));
+  async function stateLoop() {
+    try {
+      const st = await api('state');
+      S.state = st;
+      paintState();
+      if (S.view !== 'dashboard') paintLiveView(st);
+    } catch { }
   }
-  async function refreshAll() { await stateLoop(); if (S.view === 'online') { startOnlineLoop(); return; } if (S.view !== 'dashboard') renderView(S.view); }
 
-  // ─────────── boot ───────────
-  async function boot() {
+  // ═══════════════ PAINT: dashboard ═══════════════
+  function paintStats(st) {
+    if (S.view !== 'dashboard') return;
+    const ts = st.hist && st.hist.t ? st.hist.t : [];
+    FX.data.serverT = st.t || (ts.length ? ts[ts.length - 1] : 0);
+    FX.data.hist = ts.map((t, i) => ({ t, rx: st.hist.rx[i], tx: st.hist.tx[i] }));
+    FX.data.rx = st.rx; FX.data.tx = st.tx;
+    FX.tweenNum($('#g-dl'), st.rx || 0, fmtRate);
+    FX.tweenNum($('#g-ul'), st.tx || 0, fmtRate);
+    FX.tweenNum($('#r-up'), st.tx || 0, fmtRate);
+    FX.tweenNum($('#r-down'), st.rx || 0, fmtRate);
+    $('#g-dl-tot').textContent = '(' + fmtGB(st.rx_total || 0) + ')';
+    $('#g-ul-tot').textContent = '(' + fmtGB(st.tx_total || 0) + ')';
+
+    // rings
+    const setRing = (name, pct) => {
+      const el = $('.ring[data-ring="' + name + '"]');
+      if (!el) return;
+      const fg = $('circle.fg', el), len = 2 * Math.PI * 34;
+      fg.style.strokeDashoffset = String(len * (1 - Math.min(100, pct) / 100));
+      FX.tweenNum($('b', el), pct, v => Math.round(v) + '%');
+    };
+    setRing('cpu', st.cpu || 0);
+    setRing('ram', st.mem || 0);
+    setRing('disk', (st.disk && st.disk.percent) || 0);
+    $('#r-cpu-model').textContent = (st.cpu_model || 'CPU').split('(')[0].trim().slice(0, 28);
+    $('#r-ram').textContent = fmtGB((st.mem_used || 0) * 1048576) + ' / ' + fmtGB((st.mem_total || 0) * 1048576);
+    $('#r-disk').textContent = ((st.disk && st.disk.used) || 0).toFixed(1) + ' / ' + ((st.disk && st.disk.total) || 0).toFixed(1) + ' GB';
+
+    // server info
+    $('#si-os').textContent = st.os || '—';
+    $('#si-uptime').textContent = fmtUptime(st.uptime || 0);
+    const geo = st.geo;
+    $('#si-loc').textContent = geo ? (geo.city + ', ' + geo.country) : '—';
+    $('#si-addr').textContent = (S.state && S.state.settings && S.state.settings.server) || (geo && geo.ip) || '—';
+    const ports = S.state && S.state.settings && S.state.settings.ports;
+    $('#si-ports').textContent = ports ? ('Vision ' + ports.vision + ' · XHTTP ' + ports.xhttp + ' · gRPC ' + ports.grpc) : '—';
+    applyGlobeNodes();
+  }
+
+  function paintState() {
+    const st = S.state; if (!st) return;
+    const set = st.settings || {};
+    if (set.first) {
+      $('#hd-user-name').textContent = set.user || 'admin';
+      $('#sb-owner-name').textContent = set.first + ' ' + set.last;
+    }
+    const clients = st.clients || [];
+    const active = clients.filter(c => c.status === 'active');
+    $('#st-users').textContent = String(active.length);
+    $('#sb-users-count').textContent = String(clients.length);
+    let tot = 0; clients.forEach(c => tot += (c.up || 0) + (c.down || 0));
+    $('#st-traffic').textContent = fmtGB(tot);
+    // hero net badge
+    const w = S.whoami;
+    $('#hero-net').textContent = w && w.label ? w.label : 'DEEP NETWORK';
+    // chip
+    $('#chip-proto-label').textContent = 'Reality · Vision';
+    // mini users table
+    const tbl = $('#users-table');
+    tbl.innerHTML = '<div class="tr th"><span>نام کاربری</span><span>وضعیت</span><span>حجم مصرف</span><span>عملیات</span></div>';
+    const onl = clients.filter(c => c.online).slice(0, 5);
+    if (!onl.length) {
+      tbl.innerHTML += '<div class="tr"><span style="color:var(--tx3)">کاربری آنلاین نیست</span><span></span><span></span><span></span></div>';
+    } else {
+      onl.forEach(c => {
+        tbl.innerHTML += '<div class="tr"><span>' + esc(c.name) + '</span>' +
+          '<span><i class="dot"></i> آنلاین</span>' +
+          '<span>' + fmtGB((c.up || 0) + (c.down || 0)) + '</span>' +
+          '<span><button class="mini-btn" data-sub="' + esc(c.id) + '">اشتراک</button></span></div>';
+      });
+      $$('button[data-sub]', tbl).forEach(b => b.addEventListener('click', () => subModal(b.dataset.sub)));
+    }
+    const onlineCount = clients.filter(c => c.online).length;
+    $('#sb-online-count').textContent = String(onlineCount);
+  }
+
+  // ═══════════════ VIEWS ═══════════════
+  const views = {
+    users: () => {
+      const st = S.state || { clients: [] };
+      let rows = '';
+      (st.clients || []).forEach(c => {
+        const stCls = c.status === 'active' ? 'ok' : (c.status === 'expired' ? 'err' : 'warn');
+        const stTxt = c.status === 'active' ? (c.online ? 'آنلاین' : 'فعال') : (c.status === 'expired' ? 'منقضی' : 'پر شده');
+        rows += '<div class="tr">' +
+          '<span><b>' + esc(c.name) + '</b>' + (c.main ? ' <em class="tag">اصلی</em>' : '') + '</span>' +
+          '<span><i class="dot ' + (c.online ? '' : 'off') + '"></i><span class="st ' + stCls + '">' + stTxt + '</span></span>' +
+          '<span>↓ ' + fmtGB(c.down || 0) + ' · ↑ ' + fmtGB(c.up || 0) + '</span>' +
+          '<span>' + (c.quota ? fmtGB(c.quota) : 'نامحدود') + (c.days_left ? ' · ' + c.days_left + ' روز' : '') + '</span>' +
+          '<span class="ops">' +
+          '<button class="mini-btn" data-act="sub" data-id="' + esc(c.id) + '">کانفیگ</button>' +
+          '<button class="mini-btn" data-act="edit" data-id="' + esc(c.id) + '">ویرایش</button>' +
+          (c.main ? '' : '<button class="mini-btn danger" data-act="del" data-id="' + esc(c.id) + '">حذف</button>') +
+          '</span></div>';
+      });
+      return '<section class="vwrap"><h3 class="vtitle">کاربران</h3>' +
+        '<div class="tbl wide"><div class="tr th"><span>نام</span><span>وضعیت</span><span>مصرف</span><span>حجم / انقضا</span><span>عملیات</span></div>' + rows + '</div></section>';
+    },
+
+    online: () => {
+      return '<section class="vwrap"><h3 class="vtitle">کاربران آنلاین</h3>' +
+        '<div id="online-live">در حال دریافت…</div>' +
+        '<h3 class="vtitle" style="margin-top:22px">آخرین اتصال‌ها</h3>' +
+        '<div id="online-off">در حال دریافت…</div></section>';
+    },
+
+    create: () => {
+      return '<section class="vwrap narrow"><h3 class="vtitle">ساخت کاربر جدید</h3>' +
+        '<label class="field"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="nu-name" type="text" placeholder="نام کاربر (مثلاً سارا)"></label>' +
+        '<div class="duo-mini">' +
+        '<label class="field"><svg viewBox="0 0 24 24"><path d="M4 7V5h13v2M9 5v2M6 12h9M12 9.5v5M17 12h3v8H4v-8h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><input id="nu-quota" type="number" min="0" placeholder="حجم (GB، ۰=نامحدود)"></label>' +
+        '<label class="field"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 3v4M16 3v4M4 10h16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="nu-days" type="number" min="0" placeholder="انقضا (روز، ۰=نامحدود)"></label>' +
+        '</div>' +
+        '<label class="field"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="nu-note" type="text" placeholder="یادداشت (اختیاری)"></label>' +
+        '<button class="lc-submit" id="nu-go" style="width:100%"><span>ساخت کاربر</span><i class="lc-arrow">←</i></button>' +
+        '<p class="hint-line">شناسه (UUID) به‌صورت خودکار ساخته می‌شود و هر سه ترنسپورت برایش فعال است.</p></section>';
+    },
+
+    subs: () => {
+      const st = S.state || { clients: [] };
+      const clients = st.clients || [];
+      if (!clients.length) return '<section class="vwrap"><p class="hint-line">کاربری وجود ندارد.</p></section>';
+      let sel = S.subUser && clients.find(c => c.id === S.subUser) ? S.subUser : clients[0].id;
+      const opts = clients.map(c => '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.name) + (c.main ? ' (اصلی)' : '') + '</option>').join('');
+      return '<section class="vwrap"><h3 class="vtitle">کانفیگ‌ها و اشتراک</h3>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><select id="sub-user">' + opts + '</select></label>' +
+        '<div id="sub-box">در حال دریافت…</div>' +
+        '<div class="guide"><b>افزودن به v2rayNG</b>' +
+        '<ol><li>اپ v2rayNG را باز کن → تب <b>اشتراک‌ها</b> (Subscriptions) → آیکن ＋</li>' +
+        '<li>لینک اشتراک بالا را در قسمت URL بگذار و ذخیره کن</li>' +
+        '<li>منوی سه‌نقطه → <b>به‌روزرسانی اشتراک</b> — هر ۳ کانفیگ می‌آیند</li></ol>' +
+        '<b>اگر همه کانفیگ‌ها -۱ شدند</b>' +
+        '<ol><li>تنظیمات → آدرس تست اتصال → <code>http://www.gstatic.com/generate_204</code> (آدرس پیش‌فرض جواب نمی‌دهد)</li>' +
+        '<li>ترتیب امتحان: Vision (سریع‌ترین) → XHTTP → gRPC</li></ol></div></section>';
+    },
+
+    stats: () => {
+      return '<section class="vwrap"><h3 class="vtitle">آمار</h3><div id="stats-body">در حال دریافت…</div></section>';
+    },
+
+    tools: () => {
+      return '<section class="vwrap narrow"><h3 class="vtitle">ابزارها</h3>' +
+        '<div class="tool-card"><b>تست سلامت (Doctor)</b><p>اتصال واقعی از خود سرور از هر سه ترنسپورت — اگر سبز بود کانفیگ‌ها سالم‌اند.</p>' +
+        '<button class="mini-btn" id="tl-doctor">اجرای تست</button><div id="tl-doctor-out" class="doc-out"></div></div>' +
+        '<div class="tool-card"><b>ری‌استارت سرویس پروکسی</b><p>اگر کانفیگ‌ها وصل نمی‌شوند اول این را بزن.</p><button class="mini-btn" id="tl-restart">ری‌استارت</button></div>' +
+        '<div class="tool-card"><b>پشتیبان‌گیری</b><p>دانلود فایل پشتیبان کاربران و تنظیمات.</p><a class="mini-btn" href="/panel/api/backup" download>دانلود پشتیبان</a></div>' +
+        '<div class="tool-card"><b>راهنما (RAHNAMA)</b><p>راهنمای کامل فارسی برای کانفیگ‌ها.</p><a class="mini-btn" href="/panel/api/rahnama" download>دانلود راهنما</a></div>' +
+        '<div class="tool-card"><b>لاگ سرور</b><p>آخرین رخدادهای سرویس.</p><button class="mini-btn" id="tl-log">نمایش لاگ</button><pre id="tl-log-out" class="log-out" hidden></pre></div>' +
+        '</section>';
+    },
+
+    settings: () => {
+      const set = (S.state && S.state.settings) || {};
+      return '<section class="vwrap narrow"><h3 class="vtitle">تنظیمات</h3>' +
+        '<div class="tool-card"><b>پروفایل</b>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="se-first" value="' + esc(set.first || '') + '" placeholder="نام"></label>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5M3 4h6M15 4h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="se-last" value="' + esc(set.last || '') + '" placeholder="نام خانوادگی"></label>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="se-user" value="' + esc(set.user || '') + '" placeholder="نام کاربری"></label>' +
+        '<div class="duo-mini">' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><input id="se-curpass" type="password" placeholder="رمز فعلی"></label>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><input id="se-newpass" type="password" placeholder="رمز جدید (خالی=بدون تغییر)"></label>' +
+        '</div>' +
+        '<button class="mini-btn" id="se-profile-save">ذخیره پروفایل</button></div>' +
+
+        '<div class="tool-card"><b>سرور — جبهه‌های Reality (پیشرفته)</b>' +
+        '<p>هر ترنسپورت با یک جبهه (SNI) متفاوت کار می‌کند. فقط اگر اپراتورت یکی را بسته عوض کن.</p>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><input id="se-sni-vision" value="' + esc((set.snis && set.snis.vision) || '') + '" placeholder="SNI ترنسپورت Vision"></label>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><input id="se-sni-xhttp" value="' + esc((set.snis && set.snis.xhttp) || '') + '" placeholder="SNI ترنسپورت XHTTP"></label>' +
+        '<label class="field slim"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><input id="se-sni-grpc" value="' + esc((set.snis && set.snis.grpc) || '') + '" placeholder="SNI ترنسپورت gRPC"></label>' +
+        '<button class="mini-btn" id="se-server-save">ذخیره و ری‌استارت</button></div>' +
+
+        '<div class="tool-card"><b>خروج</b><p>از حساب خود خارج شو.</p><button class="mini-btn danger" id="se-logout">خروج از حساب</button></div>' +
+        '</section>';
+    },
+
+    support: () => {
+      return '<section class="vwrap narrow"><h3 class="vtitle">راهنمای سریع</h3>' +
+        '<div class="guide"><b>کانفیگ‌ها کار نمی‌کنند؟ (نمایش -۱)</b>' +
+        '<ol><li>در v2rayNG: تنظیمات ← <b>آدرس تست اتصال</b> ← <code>http://www.gstatic.com/generate_204</code></li>' +
+        '<li>کانفیگ <b>Vision</b> را امتحان کن (سریع‌ترین)، بعد XHTTP و gRPC</li>' +
+        '<li>از ابزارها ← <b>تست سلامت</b> بزن — اگر همه سبز بودند مشکل از سرور نیست و اپراتور آن پورت/SNI را محدود کرده؛ جبهه SNI را در تنظیمات عوض کن</li></ol>' +
+        '<b>بیشترین سرعت</b>' +
+        '<ol><li>برای دانلود از <b>Vision</b> استفاده کن</li>' +
+        '<li>Mux را در کلاینت خاموش نگه‌دار (پیش‌فرض خاموش است)</li></ol>' +
+        '<b>رمز را فراموش کردی؟</b><p>در ترمینال سرور: <code>sudo /opt/deep-network/out --reset-pass</code> — صفحه ثبت‌نام دوباره می‌آید.</p></div>' +
+        '<div class="tool-card"><b>وضعیت سرویس</b><div id="sup-health">در حال بررسی…</div></div>' +
+        '</section>';
+    },
+  };
+
+  // ─────────── view hooks (bind after render) ───────────
+  const hooks = {
+    users: () => {
+      $$('#view-host button[data-act]').forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.id, act = b.dataset.act;
+        if (act === 'sub') { subModal(id); return; }
+        if (act === 'edit') { editModal(id); return; }
+        if (act === 'del') {
+          if (!confirm('این کاربر حذف شود؟')) return;
+          try { await api('clients/delete', { id }); toast('حذف شد ✓', 'ok'); await stateLoop(); switchView('users'); } catch (e) { toast(e.message, 'err'); }
+        }
+      }));
+    },
+    online: () => onlinePaint(),
+    create: () => {
+      $('#nu-go').addEventListener('click', async () => {
+        const name = $('#nu-name').value.trim();
+        if (!name) { toast('نام را وارد کن', 'err'); return; }
+        const quotaGB = parseInt($('#nu-quota').value || '0', 10);
+        const days = parseInt($('#nu-days').value || '0', 10);
+        try {
+          await api('clients', { name, quota: quotaGB > 0 ? quotaGB * 1073741824 : 0, days, note: $('#nu-note').value.trim() });
+          toast('کاربر ساخته شد ✓', 'ok');
+          await stateLoop();
+          switchView('users');
+        } catch (e) { toast(e.message, 'err'); }
+      });
+    },
+    subs: () => {
+      $('#sub-user').addEventListener('change', e => { S.subUser = e.target.value; subPaint(); });
+      S.subUser = $('#sub-user').value;
+      subPaint();
+    },
+    stats: () => statsPaint(),
+    tools: () => {
+      $('#tl-doctor').addEventListener('click', async () => {
+        const out = $('#tl-doctor-out');
+        out.innerHTML = '<p>در حال اجرا… (تا ۳۰ ثانیه)</p>';
+        try { await api('doctor', {}); } catch { }
+        let n = 0;
+        const t = setInterval(async () => {
+          n++;
+          try {
+            const d = await api('doctor');
+            if (d && d.results && d.at) {
+              clearInterval(t);
+              out.innerHTML = d.results.map(r =>
+                '<div class="doc-row ' + (r.ok ? 'ok' : 'bad') + '"><b>' + esc(r.name) + '</b><span>' +
+                (r.ok ? ('✓ سالم — ' + r.ms + 'ms') : ('✗ ' + esc(r.err || 'ناموفق'))) + '</span></div>').join('');
+            }
+          } catch { }
+          if (n > 20) { clearInterval(t); out.innerHTML += '<p class="hint-line">زمان تمام شد — دوباره امتحان کن.</p>'; }
+        }, 2500);
+      });
+      $('#tl-restart').addEventListener('click', async () => {
+        try { await api('restart', {}); toast('ری‌استارت شد ✓', 'ok'); } catch (e) { toast(e.message, 'err'); }
+      });
+      $('#tl-log').addEventListener('click', async () => {
+        const el = $('#tl-log-out');
+        el.hidden = false;
+        try { const l = await api('log'); el.textContent = (l.lines || []).join('\n').slice(-3000) || '— خالی —'; } catch (e) { el.textContent = e.message; }
+      });
+      doctorResultsPaint();
+    },
+    settings: () => {
+      $('#se-profile-save').addEventListener('click', async () => {
+        try {
+          await api('profile', {
+            first: $('#se-first').value.trim(), last: $('#se-last').value.trim(),
+            user: $('#se-user').value.trim(),
+            current_pass: $('#se-curpass').value, pass: $('#se-newpass').value,
+          });
+          toast('ذخیره شد ✓', 'ok');
+          $('#se-curpass').value = ''; $('#se-newpass').value = '';
+          await stateLoop();
+        } catch (e) { toast(e.message, 'err'); }
+      });
+      $('#se-server-save').addEventListener('click', async () => {
+        try {
+          await api('settings', {
+            sni_vision: $('#se-sni-vision').value.trim(), sni_xhttp: $('#se-sni-xhttp').value.trim(),
+            sni_grpc: $('#se-sni-grpc').value.trim(),
+          });
+          toast('ذخیره شد — سرویس ری‌استارت می‌شود ✓', 'ok');
+          await stateLoop();
+        } catch (e) { toast(e.message, 'err'); }
+      });
+      $('#se-logout').addEventListener('click', async () => {
+        try { await api('logout', {}); } catch { }
+        stopLoops();
+        showLogin();
+      });
+    },
+    support: () => {
+      api('health').then(h => {
+        const el = $('#sup-health');
+        if (!el) return;
+        el.innerHTML = '<p>سرویس پروکسی: <b class="' + (h.xray ? 'ok-t' : 'err-t') + '">' + (h.xray ? 'فعال ✓' : 'غیرفعال ✗') + '</b></p>' +
+          '<p class="hint-line">نسخه ' + esc(h.version || '') + ' · آپ‌تایم ' + fmtUptime(h.uptime || 0) + '</p>';
+      }).catch(() => { });
+    },
+  };
+
+  function paintLiveView() {
+    if (S.view === 'stats') statsPaint();
+    if (S.view === 'online') onlinePaint();
+    if (S.view === 'subs') subPaint();
+    if (S.view === 'tools') doctorResultsPaint();
+  }
+
+  // ─────────── subs view paint ───────────
+  function subPaint() {
+    const box = $('#sub-box'); if (!box) return;
+    const st = S.state || {}; const id = S.subUser;
+    const c = (st.clients || []).find(x => x.id === id);
+    if (!c) { box.innerHTML = '<p class="hint-line">کاربر پیدا نشد.</p>'; return; }
+    let linksHtml = '';
+    (c.links || []).forEach(l => {
+      linksHtml += '<div class="cfg-row">' +
+        '<div class="cfg-name"><b>' + esc(l.net) + '</b><small>پورت ' + l.port + '</small></div>' +
+        '<div class="cfg-url">' + esc(l.url) + '</div>' +
+        '<div class="cfg-ops">' +
+        '<button class="mini-btn" data-copy="' + esc(l.url) + '">کپی</button>' +
+        '<button class="mini-btn" data-qr="' + esc(l.url) + '" data-qrname="' + esc(l.name) + '">QR</button>' +
+        '</div></div>';
+    });
+    box.innerHTML =
+      '<div class="sub-line"><span>لینک اشتراک (همه ۳ کانفیگ):</span></div>' +
+      '<div class="linkbox"><span style="flex:1;direction:ltr;text-align:left">' + esc(c.sub_url) + '</span>' +
+      '<button data-copy="' + esc(c.sub_url) + '" title="کپی"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>' +
+      '<button data-qr="' + esc(c.sub_url) + '" title="QR"><svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 14h2v2h-2zm4 0h2v2h-2zm-4 4h2v2h-2zm4 0h2v2h-2z" fill="currentColor"/></svg></button></div>' +
+      '<div class="sub-line" style="margin-top:10px"><span>کانفیگ تک‌تک:</span></div>' + linksHtml;
+    $$('[data-copy]', box).forEach(b => b.addEventListener('click', () => copy(b.dataset.copy)));
+    $$('[data-qr]', box).forEach(b => b.addEventListener('click', () => qrModal(b.dataset.qr, b.dataset.qrname || 'QR')));
+  }
+
+  // ─────────── modals ───────────
+  function qrModal(data, name) {
+    modal('<h3>' + esc(name || 'QR') + '<button>×</button></h3>' +
+      '<div class="qr-box"><img src="/panel/api/qr?data=' + encodeURIComponent(data) + '" alt="QR"></div>' +
+      '<p class="hint-line">با دوربین v2rayNG اسکن کن (تب اشتراک‌ها → آیکن اسکنر)</p>');
+  }
+
+  function subModal(id) {
+    const c = (S.state && S.state.clients || []).find(x => x.id === id);
+    if (!c) return;
+    let links = '';
+    (c.links || []).forEach(l => {
+      links += '<div class="cfg-row"><div class="cfg-name"><b>' + esc(l.net) + '</b></div>' +
+        '<div class="cfg-url">' + esc(l.url) + '</div>' +
+        '<div class="cfg-ops"><button class="mini-btn" data-copy="' + esc(l.url) + '">کپی</button></div></div>';
+    });
+    const root = modal('<h3>کانفیگ‌های ' + esc(c.name) + '<button>×</button></h3>' +
+      '<div class="linkbox"><span style="flex:1;direction:ltr;text-align:left;font-size:11px">' + esc(c.sub_url) + '</span>' +
+      '<button id="m-copy" title="کپی"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button></div>' +
+      '<div class="qr-box"><img src="/panel/api/qr?data=' + encodeURIComponent(c.sub_url) + '" alt="QR"></div>' + links);
+    $('#m-copy', root).addEventListener('click', () => copy(c.sub_url));
+    $$('[data-copy]', root).forEach(b => b.addEventListener('click', () => copy(b.dataset.copy)));
+  }
+
+  function editModal(id) {
+    const c = (S.state && S.state.clients || []).find(x => x.id === id);
+    if (!c) return;
+    const root = modal('<h3>ویرایش ' + esc(c.name) + '<button>×</button></h3>' +
+      '<label class="field slim"><input id="eu-name" value="' + esc(c.name) + '" placeholder="نام"></label>' +
+      '<label class="field slim"><input id="eu-note" value="' + esc(c.note || '') + '" placeholder="یادداشت"></label>' +
+      '<div class="duo-mini">' +
+      '<label class="field slim"><input id="eu-quota" type="number" min="0" value="' + (c.quota ? Math.round(c.quota / 1073741824) : 0) + '" placeholder="حجم GB"></label>' +
+      '<label class="field slim"><input id="eu-days" type="number" min="0" value="' + (c.days_left || 0) + '" placeholder="روز تا انقضا"></label></div>' +
+      '<button class="mini-btn" id="eu-save">ذخیره</button> ' +
+      (c.main ? '' : '<button class="mini-btn" id="eu-regen">تعویض UUID</button>'));
+    $('#eu-save', root).addEventListener('click', async () => {
+      try {
+        await api('clients/edit', {
+          id, name: $('#eu-name', root).value.trim(), note: $('#eu-note', root).value.trim(),
+          quota: parseInt($('#eu-quota', root).value || '0', 10) * 1073741824,
+          days: parseInt($('#eu-days', root).value || '0', 10),
+        });
+        toast('ذخیره شد ✓', 'ok'); closeModal(); await stateLoop(); switchView('users');
+      } catch (e) { toast(e.message, 'err'); }
+    });
+    const reg = $('#eu-regen', root);
+    if (reg) reg.addEventListener('click', async () => {
+      if (!confirm('UUID عوض شود؟ لینک‌های قبلی این کاربر از کار می‌افتند.')) return;
+      try { await api('clients/regen', { id }); toast('UUID جدید ساخته شد ✓', 'ok'); closeModal(); await stateLoop(); switchView('users'); } catch (e) { toast(e.message, 'err'); }
+    });
+  }
+
+  function avatarModal() {
+    const root = modal('<h3>تصویر پروفایل<button>×</button></h3>' +
+      '<div class="av-edit"><img src="/panel/avatar.png?v=' + Date.now() + '" alt=""></div>' +
+      '<label class="mini-btn file-btn">انتخاب عکس<input type="file" id="av-file" accept="image/png,image/jpeg,image/gif" hidden></label> ' +
+      '<button class="mini-btn danger" id="av-del">حذف عکس</button>');
+    $('#av-file', root).addEventListener('change', ev => {
+      const f = ev.target.files && ev.target.files[0]; if (!f) return;
+      const fd = new FormData(); fd.append('file', f);
+      fetch('/panel/api/avatar', { method: 'POST', body: fd }).then(r => r.json()).then(j => {
+        if (j.ok) { toast('عکس ذخیره شد ✓', 'ok'); closeModal(); $('#hd-avatar-img').src = '/panel/avatar.png?v=' + Date.now(); }
+        else toast(j.error || 'خطا', 'err');
+      }).catch(() => toast('خطا در ارسال', 'err'));
+    });
+    $('#av-del', root).addEventListener('click', async () => {
+      try { await api('avatar/delete', {}); toast('حذف شد ✓', 'ok'); $('#hd-avatar-img').src = '/panel/avatar.png?v=' + Date.now(); closeModal(); } catch (e) { toast(e.message, 'err'); }
+    });
+  }
+
+  // ─────────── online view ───────────
+  async function onlinePaint() {
+    const live = $('#online-live'); if (!live) return;
+    try {
+      const d = await api('online');
+      let html = '<div class="tbl wide"><div class="tr th"><span>کاربر</span><span>مدت</span><span>سرعت</span><span>مصرف نشست</span></div>';
+      if (!d.online || !d.online.length) html += '<div class="tr"><span style="color:var(--tx3)">کاربری آنلاین نیست</span><span></span><span></span><span></span></div>';
+      else d.online.forEach(u => {
+        html += '<div class="tr"><span><b>' + esc(u.name) + '</b> ' + (u.status === 'idle' ? '<em class="tag">آرام</em>' : '') + '</span>' +
+          '<span>' + fmtDur(u.dur_s || 0) + '</span>' +
+          '<span>↓ ' + fmtRate(u.down_bps || 0) + ' · ↑ ' + fmtRate(u.up_bps || 0) + '</span>' +
+          '<span>↓ ' + fmtGB(u.down || 0) + ' · ↑ ' + fmtGB(u.up || 0) + '</span></div>';
+      });
+      html += '</div>';
+      let off = '<div class="tbl wide"><div class="tr th"><span>کاربر</span><span>مدت اتصال</span><span>زمان قطع</span><span>مصرف</span></div>';
+      if (!d.offline || !d.offline.length) off += '<div class="tr"><span style="color:var(--tx3)">رخدادی ثبت نشده</span><span></span><span></span><span></span></div>';
+      else d.offline.slice(0, 15).forEach(u => {
+        off += '<div class="tr"><span>' + esc(u.name) + '</span>' +
+          '<span>' + fmtDur(u.dur_s || 0) + '</span>' +
+          '<span>' + relTime(u.offline_at) + '</span>' +
+          '<span>' + fmtGB((u.up || 0) + (u.down || 0)) + '</span></div>';
+      });
+      off += '</div>';
+      live.innerHTML = html;
+      const offEl = $('#online-off'); if (offEl) offEl.innerHTML = off;
+    } catch { live.innerHTML = '<p class="hint-line">خطا در دریافت.</p>'; }
+  }
+
+  // ─────────── stats view ───────────
+  function statsPaint() {
+    const el = $('#stats-body'); if (!el) return;
+    const st = S.stats, sst = S.state;
+    if (!st) { el.innerHTML = '<p class="hint-line">در حال دریافت…</p>'; return; }
+    const clients = (sst && sst.clients) || [];
+    let totUp = 0, totDown = 0;
+    clients.forEach(c => { totUp += c.up || 0; totDown += c.down || 0; });
+    const sorted = clients.slice().sort((a, b) => ((b.up + b.down) || 0) - ((a.up + a.down) || 0)).slice(0, 10);
+    let topRows = sorted.map(c => '<div class="tr"><span>' + esc(c.name) + '</span><span>↓ ' + fmtGB(c.down || 0) + '</span><span>↑ ' + fmtGB(c.up || 0) + '</span><span>' + fmtGB((c.up || 0) + (c.down || 0)) + '</span></div>').join('');
+    el.innerHTML =
+      '<div class="cards3">' +
+      '<div class="stat"><div><b>' + fmtGB(totDown) + '</b></div><span>دانلود کل</span><small>مجموع ترافیک کاربران</small></div>' +
+      '<div class="stat"><div><b>' + fmtGB(totUp) + '</b></div><span>آپلود کل</span><small>مجموع ترافیک کاربران</small></div>' +
+      '<div class="stat"><div><b>' + (st.online_users || 0) + '</b></div><span>آنلاین‌ها</span><small>کاربر متصل در همین لحظه</small></div>' +
+      '</div>' +
+      '<div class="info-sec" style="margin-top:18px"><h3>سرور</h3><ul class="kv">' +
+      '<li><span>سیستم عامل</span><b>' + esc(st.os || '—') + '</b></li>' +
+      '<li><span>CPU</span><b>' + esc((st.cpu_model || '—').slice(0, 40)) + ' × ' + (st.cores || 1) + '</b></li>' +
+      '<li><span>رم</span><b>' + fmtGB((st.mem_total || 0) * 1048576) + '</b></li>' +
+      '<li><span>دیسک</span><b>' + ((st.disk && st.disk.total) || 0).toFixed(1) + ' GB</b></li>' +
+      '<li><span>آپ‌تایم</span><b>' + fmtUptime(st.uptime || 0) + '</b></li>' +
+      '<li><span>نسخه پنل</span><b>' + esc(st.version || '') + '</b></li>' +
+      '</ul></div>' +
+      '<div class="users-sec" style="margin-top:18px"><div class="sec-title"><b>بیشترین مصرف</b></div>' +
+      '<div class="tbl wide"><div class="tr th"><span>کاربر</span><span>دانلود</span><span>آپلود</span><span>جمع</span></div>' + topRows + '</div></div>';
+  }
+
+  // ─────────── tools view: doctor results ───────────
+  function doctorResultsPaint() {
+    const out = $('#tl-doctor-out'); if (!out) return;
+    const doc = S.state && S.state.settings && S.state.settings.doctor;
+    if (!doc || !doc.length) { out.innerHTML = '<p class="hint-line">تستی اجرا نشده — دکمه بالا را بزن.</p>'; return; }
+    out.innerHTML = doc.map(r =>
+      '<div class="doc-row ' + (r.ok ? 'ok' : 'bad') + '"><b>' + esc(r.name) + '</b><span>' +
+      (r.ok ? ('✓ سالم — ' + r.ms + 'ms') : ('✗ ' + esc(r.err || 'ناموفق'))) + '</span></div>').join('') +
+      '<p class="hint-line">آخرین تست: ' + relTime(S.state.settings.doctor_at) + '</p>';
+  }
+
+  // ═══════════════ INIT ═══════════════
+  document.addEventListener('DOMContentLoaded', () => {
+    initSetup();
     initLogin();
     initDash();
-    tgInit();
-    // Telegram Mini App: one-tap login via signed initData (bot must be
-    // connected in Settings and the Telegram user id must match the admin id).
-    const tg = tgEnv();
-    if (tg && tg.initData) {
-      try {
-        await api('login', { tg_init_data: tg.initData });
-        toast('ورود با تلگرام ✓', 'ok');
-        showDash();
-        return;
-      } catch (ex) { /* fall through — normal login flow */ }
-    }
-    try {
-      await api('ping');
-      showDash(); // showDash() itself starts loops + detectOperator
-    } catch {
-      showLogin();
-    }
-  }
-  document.addEventListener('DOMContentLoaded', boot);
+    boot();
+  });
 })();

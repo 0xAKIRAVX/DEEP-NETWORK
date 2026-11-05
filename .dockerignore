@@ -1,8 +1,0 @@
-.git
-.github
-*.md
-LICENSE
-scripts
-rust-probe/target
-out
-bin/xray

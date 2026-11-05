@@ -15,14 +15,13 @@ import (
 	"time"
 )
 
-// ─────────── admin profile picture (avatar) ───────────
+// ─────────── profile picture (avatar) ───────────
 // Uploaded images are center-cropped, downscaled to 256×256 PNG and stored in
-// the persistent data dir (survives redeploys on the /data volume).
+// the persistent data dir. Used by the setup wizard and Settings.
 
 func avatarPath() string { return dataDir() + "/avatar.png" }
 
 // serveAvatar GET /panel/avatar.png — public (also shown on the login screen).
-// Falls back to the embedded default avatar when none was uploaded.
 func serveAvatar(w http.ResponseWriter, r *http.Request) {
 	if b, err := os.ReadFile(avatarPath()); err == nil && len(b) > 0 {
 		w.Header().Set("Content-Type", "image/png")
@@ -44,7 +43,7 @@ func serveAvatar(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// handleAvatarUpload POST /panel/api/avatar — multipart "file" field or JSON {"data": "<base64|dataURL>"}.
+// handleAvatarUpload POST /panel/api/avatar — multipart "file" or JSON {"data": base64|dataURL}.
 func handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	var data []byte
 	ct := r.Header.Get("Content-Type")
@@ -80,13 +79,19 @@ func handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		data = b
 	}
-
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
+	if !processAndStoreAvatar(data) {
 		sendJSON(w, 400, map[string]any{"error": "فقط تصویر PNG / JPG / GIF پشتیبانی می‌شود"})
 		return
 	}
+	sendJSON(w, 200, map[string]any{"ok": true, "v": time.Now().Unix()})
+}
 
+// processAndStoreAvatar decodes, center-crops and stores a profile photo.
+func processAndStoreAvatar(data []byte) bool {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
 	const target = 256
 	bd := img.Bounds()
 	side := bd.Dx()
@@ -94,13 +99,11 @@ func handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		side = dy
 	}
 	if side < 1 {
-		sendJSON(w, 400, map[string]any{"error": "تصویر نامعتبر است"})
-		return
+		return false
 	}
 	cx, cy := bd.Min.X+bd.Dx()/2, bd.Min.Y+bd.Dy()/2
 	x0, y0 := cx-side/2, cy-side/2
 
-	// box-average resample (square center-crop → 256×256): smooth and fast enough
 	dst := image.NewRGBA(image.Rect(0, 0, target, target))
 	for y := 0; y < target; y++ {
 		sy0 := y0 + y*side/target
@@ -136,20 +139,14 @@ func handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 			dst.SetRGBA(x, y, color.RGBA{R: uint8(rs / n >> 8), G: uint8(gs / n >> 8), B: uint8(bs / n >> 8), A: a})
 		}
 	}
-
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, dst); err != nil {
-		sendJSON(w, 500, map[string]any{"error": "پردازش تصویر ممکن نشد"})
-		return
+		return false
 	}
-	if err := os.WriteFile(avatarPath(), buf.Bytes(), 0o644); err != nil {
-		sendJSON(w, 500, map[string]any{"error": "ذخیره تصویر ممکن نشد (دیسک پر است؟)"})
-		return
-	}
-	sendJSON(w, 200, map[string]any{"ok": true, "v": time.Now().Unix()})
+	return os.WriteFile(avatarPath(), buf.Bytes(), 0o644) == nil
 }
 
-// handleAvatarDelete POST /panel/api/avatar/delete — reset to the default avatar.
+// handleAvatarDelete POST /panel/api/avatar/delete — reset to default.
 func handleAvatarDelete(w http.ResponseWriter, r *http.Request) {
 	_ = os.Remove(avatarPath())
 	sendJSON(w, 200, map[string]any{"ok": true})

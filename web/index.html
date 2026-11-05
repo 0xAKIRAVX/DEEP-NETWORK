@@ -13,46 +13,116 @@
 </head>
 <body>
 
-<!-- ══════════════════════ LOGIN VIEW ══════════════════════ -->
-<div id="login" class="view">
+<!-- ══════════════════════ SETUP VIEW (first-run wizard) ══════════════════════ -->
+<div id="setup" class="view" hidden>
 
-  <!-- cinematic background stack -->
   <div class="lbg">
-    <canvas id="fx-login"></canvas>
-    <img class="lbg-ribbon" src="/panel/assets/img/ribbon.png" alt="" draggable="false">
-    <img class="lbg-planet" src="/panel/assets/img/planet.png" alt="" draggable="false">
-    <img class="lbg-mountains" src="/panel/assets/img/mountains.png" alt="" draggable="false">
-    <div class="lbg-glow"></div>
-    <div class="reticle reticle-c"></div>
-    <div class="reticle reticle-r"></div>
-    <div class="lbg-vignette"></div>
-    <div class="edge-text edge-tl" aria-hidden="true"><span>FAST</span><span>SECURE</span><span>ANONYMOUS</span><i>+</i></div>
-    <div class="edge-text edge-tr" aria-hidden="true"><span>NO BORDERS</span><span>JUST</span><span>FREEDOM</span></div>
-    <div class="edge-text edge-br" aria-hidden="true"><span>PRIVATE</span><span>SECURE</span><span>GLOBAL</span><i>◇</i></div>
-    <div class="edge-text edge-left" aria-hidden="true"><span>DEEP NETWORK ◇ ＋</span></div>
-    <div class="lbg-footer" aria-hidden="true"><em>v__PANEL_VER__</em><b>DEEP NETWORK</b></div>
+    <canvas id="fx-setup"></canvas>
+    <div class="lbg-aurora lbg-a1" aria-hidden="true"></div>
+    <div class="lbg-aurora lbg-a2" aria-hidden="true"></div>
+    <div class="lbg-grid" aria-hidden="true"></div>
+    <div class="lbg-vignette" aria-hidden="true"></div>
   </div>
 
-  <!-- the login card -->
-  <main class="login-card" role="main">
-    <div class="lc-chrome">
-      <img class="lc-logo" src="/panel/assets/img/wolf-128.png" alt="DEEP NETWORK">
-      <div class="lc-win" aria-hidden="true"><b>−</b><b>▢</b><b>✕</b></div>
-    </div>
+  <main class="login-card su-card" role="main">
+    <div class="lc-aura" aria-hidden="true"></div>
 
-    <div class="lc-avatar-wrap">
-      <svg class="lc-ring" viewBox="0 0 120 120" aria-hidden="true">
-        <circle cx="60" cy="60" r="57" />
-        <circle cx="60" cy="60" r="57" class="spin-ccw" stroke-dasharray="8 5" />
-      </svg>
-      <img class="lc-avatar" id="lc-avatar" data-avatar src="/panel/avatar.png" alt="">
-      <button class="lc-cam" id="lc-cam" type="button" title="تغییر تصویر پروفایل" aria-label="تغییر تصویر پروفایل">
-        <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
-      </button>
+    <div class="lc-head">
+      <span class="lc-halo" aria-hidden="true"></span>
+      <img class="lc-logo" src="/panel/assets/img/wolf-128.png" alt="DEEP NETWORK">
     </div>
 
     <h1 class="lc-title">DEEP NETWORK</h1>
-    <p class="lc-sub">YOUR CONNECTION . YOUR FREEDOM</p>
+    <p class="lc-sub" id="su-sub">به شبکه‌ات خوش آمدی</p>
+
+    <!-- step dots -->
+    <div class="su-dots" aria-hidden="true">
+      <i class="on" id="su-d1"></i><i id="su-d2"></i><i id="su-d3"></i>
+    </div>
+
+    <!-- ── STEP 1: identity ── -->
+    <form id="su-form-1" autocomplete="off" novalidate>
+      <label class="su-photo" for="su-file">
+        <img id="su-photo-img" src="/panel/avatar.png" alt="" draggable="false">
+        <i class="su-cam"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="13" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></i>
+      </label>
+      <input type="file" id="su-file" accept="image/png,image/jpeg,image/gif" hidden>
+      <p class="su-hint">عکس خودت را انتخاب کن</p>
+
+      <label class="field fa">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input id="su-first" type="text" placeholder="نام" autocomplete="given-name" spellcheck="false">
+      </label>
+      <label class="field fa">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5M3 4h6M15 4h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input id="su-last" type="text" placeholder="نام خانوادگی" autocomplete="family-name" spellcheck="false">
+      </label>
+
+      <p class="lc-error" id="su-error-1" hidden></p>
+      <button class="lc-submit" type="submit"><span>ادامه</span><i class="lc-arrow" aria-hidden="true">←</i></button>
+    </form>
+
+    <!-- ── STEP 2: credentials ── -->
+    <form id="su-form-2" autocomplete="off" novalidate hidden>
+      <p class="su-step-title">حساب ورود خودت را بساز</p>
+      <label class="field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input id="su-user" type="text" placeholder="نام کاربری (انگلیسی)" autocomplete="username" spellcheck="false">
+      </label>
+      <label class="field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        <input id="su-pass" type="password" placeholder="رمز عبور (حداقل ۸ کاراکتر)" autocomplete="new-password">
+        <button type="button" class="eye" id="su-eye" aria-label="نمایش رمز">
+          <svg viewBox="0 0 24 24"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 19 19 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </label>
+      <div class="su-meter" aria-hidden="true"><i id="su-meter-bar"></i></div>
+      <label class="field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <input id="su-pass2" type="password" placeholder="تکرار رمز عبور" autocomplete="new-password">
+      </label>
+
+      <p class="lc-error" id="su-error-2" hidden></p>
+      <button class="lc-submit" type="submit"><span>ساخت حساب و ورود</span><i class="lc-arrow" aria-hidden="true">←</i></button>
+      <button class="su-back" type="button" id="su-back-2">بازگشت</button>
+    </form>
+
+    <!-- ── STEP 3: done ── -->
+    <div id="su-done" hidden>
+      <div class="su-done-ring">
+        <svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <p class="su-done-title">همه چیز آماده است</p>
+      <p class="su-done-sub" id="su-done-name"></p>
+      <button class="lc-submit" id="su-enter" type="button"><span>ورود به پنل</span><i class="lc-arrow" aria-hidden="true">←</i></button>
+    </div>
+
+    <div class="lc-foot" aria-hidden="true"><i></i><b>DEEP NETWORK</b><span>v__PANEL_VER__</span><i></i></div>
+  </main>
+</div>
+
+<!-- ══════════════════════ LOGIN VIEW ══════════════════════ -->
+<div id="login" class="view" hidden>
+
+  <div class="lbg">
+    <canvas id="fx-login"></canvas>
+    <div class="lbg-aurora lbg-a1" aria-hidden="true"></div>
+    <div class="lbg-aurora lbg-a2" aria-hidden="true"></div>
+    <div class="lbg-aurora lbg-a3" aria-hidden="true"></div>
+    <div class="lbg-grid" aria-hidden="true"></div>
+    <div class="lbg-vignette" aria-hidden="true"></div>
+  </div>
+
+  <main class="login-card" role="main">
+    <div class="lc-aura" aria-hidden="true"></div>
+
+    <div class="lc-head">
+      <span class="lc-halo" aria-hidden="true"></span>
+      <img class="lc-logo" src="/panel/assets/img/wolf-128.png" alt="DEEP NETWORK">
+    </div>
+
+    <h1 class="lc-title">DEEP NETWORK</h1>
+    <p class="lc-sub">اتصال امن · پرسرعت · بدون مرز</p>
 
     <form id="login-form" autocomplete="off" novalidate>
       <label class="field">
@@ -69,39 +139,20 @@
 
       <div class="lc-row">
         <label class="remember"><input type="checkbox" id="f-remember" checked><span class="cbx"></span>من را به خاطر بسپار</label>
-        <button type="button" class="forgot" id="forgot">رمز عبور را فراموش کرده‌اید؟</button>
       </div>
 
       <p class="lc-error" id="login-error" hidden></p>
 
-      <button class="lc-submit" type="submit"><span aria-hidden="true">→</span> ورود</button>
+      <button class="lc-submit" type="submit"><span>ورود به پنل</span><i class="lc-arrow" aria-hidden="true">←</i></button>
     </form>
 
-    <div class="lc-divider" aria-hidden="true"><i>◇</i></div>
-
-    <div class="lc-actions">
-      <button type="button" class="lc-alt" id="btn-quick">
-        <svg viewBox="0 0 24 24"><path d="M13 2 5 13.5h5L11 22l8-11.5h-5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-        اتصال سریع
-      </button>
-      <button type="button" class="lc-alt" id="btn-secure">
-        <svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        اتصال امن
-      </button>
-    </div>
-
-    <div class="lc-icons" aria-label="ابزارها">
-      <button type="button" class="lc-ico" data-act="settings" title="تنظیمات"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v2.4M12 18.1v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M3.5 12h2.4M18.1 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
-      <button type="button" class="lc-ico" data-act="globe" title="درباره"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 12h17M12 3.5c2.6 2.3 3.9 5.1 3.9 8.5s-1.3 6.2-3.9 8.5c-2.6-2.3-3.9-5.1-3.9-8.5S9.4 5.8 12 3.5z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
-      <button type="button" class="lc-ico" data-act="help" title="راهنما"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.6v.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="16.6" r=".9" fill="currentColor"/></svg></button>
-    </div>
+    <div class="lc-foot" aria-hidden="true"><i></i><b>DEEP NETWORK</b><span>v__PANEL_VER__</span><i></i></div>
   </main>
 </div>
 
 <!-- ══════════════════════ DASHBOARD VIEW ══════════════════════ -->
 <div id="dash" class="view" hidden>
 
-  <!-- dashboard background -->
   <div class="dbg">
     <canvas id="fx-dash"></canvas>
     <img class="dbg-smoke dbg-smoke1" src="/panel/assets/img/smoke.png" alt="" draggable="false">
@@ -123,8 +174,6 @@
       <kbd>/</kbd>
     </label>
     <div class="hd-actions">
-      <button class="hd-ico" id="theme-toggle" title="حالت تاریک/روشن"><svg viewBox="0 0 24 24"><path d="M20.6 14.2A8.5 8.5 0 0 1 9.8 3.4a8.5 8.5 0 1 0 10.8 10.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
-      <button class="hd-ico" id="bell" title="اعلان‌ها"><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 1 1 12 0v5l1.8 2.6H4.2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10.2 20.5a1.9 1.9 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
       <div class="hd-user">
         <div class="hd-user-text"><b id="hd-user-name">admin</b><small id="hd-user-role">مدیر</small></div>
         <button class="hd-avatar" id="hd-avatar-wrap" type="button" title="تغییر تصویر پروفایل" aria-label="تغییر تصویر پروفایل">
@@ -139,24 +188,22 @@
   <aside class="sb" id="sidebar">
     <div class="sb-head">
       <img class="sb-wolf" src="/panel/assets/img/wolf-128.png" alt="">
-      <b>پنل کاربری</b>
-      <small><svg viewBox="0 0 24 24" class="i-ok"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> اکانت شما احراز هویت شده است</small>
+      <b id="sb-owner">پنل کاربری</b>
+      <small><svg viewBox="0 0 24 24" class="i-ok"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> <span id="sb-owner-name">اکانت شما فعال است</span></small>
     </div>
     <nav class="sb-nav" id="sb-nav">
       <button class="on" data-view="dashboard"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9h-5v-6h-6v6H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>داشبورد</span></button>
       <button data-view="users"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 19c.9-3 2.9-4.4 5.5-4.4s4.6 1.4 5.5 4.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="16.5" cy="9.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M15.5 14.6c2.3.1 4 1.5 4.9 4.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>کاربران</span><em class="cnt" id="sb-users-count">0</em></button>
       <button data-view="online"><svg viewBox="0 0 24 24"><path d="M2.5 12.5h4l2.5-7 4.5 14 3-10 1.5 3h3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>آنلاین‌ها</span><em class="cnt live" id="sb-online-count">0</em></button>
+      <button data-view="subs"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>کانفیگ‌ها و اشتراک</span></button>
       <button data-view="create"><svg viewBox="0 0 24 24"><circle cx="10" cy="8.5" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4.5 19c.9-3 2.9-4.4 5.5-4.4 1 0 2 .2 2.8.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M17.5 14v6M14.5 17h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>ساخت کاربر</span></button>
-      <button data-view="subs"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1.2 1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 18.7l1.2-1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>اشتراک‌ها</span></button>
-      <button data-view="scanner"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>بهینه‌ساز و اسکنر</span></button>
-      <button data-view="localmode"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.5 12.8c1.2-1.7 2.4-1.7 3.5 0s2.3 1.7 3.5 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>شبکه ملی</span><em class="cnt live" id="sb-lm-on" hidden>ON</em></button>
       <button data-view="stats"><svg viewBox="0 0 24 24"><path d="M4 20V9M10 20V4M16 20v-8M22 20H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>آمار</span></button>
       <button data-view="tools"><svg viewBox="0 0 24 24"><path d="M14.5 6.5a4 4 0 0 0-5.4 5L4 16.6V20h3.4l5.1-5.1a4 4 0 0 0 5-5.4l-2.6 2.6-2.9-2.9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>ابزارها</span></button>
       <button data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 3.5v2.4M12 18.1v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M3.5 12h2.4M18.1 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>تنظیمات</span></button>
-      <button data-view="support"><svg viewBox="0 0 24 24"><path d="M4 13a8 8 0 0 1 16 0v4.5a2.5 2.5 0 0 1-2.5 2.5H15v-7h5M4 13v4.5A2.5 2.5 0 0 0 6.5 20H9v-7H4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>پشتیبانی</span></button>
+      <button data-view="support"><svg viewBox="0 0 24 24"><path d="M4 13a8 8 0 0 1 16 0v4.5a2.5 2.5 0 0 1-2.5 2.5H15v-7h5M4 13v4.5A2.5 2.5 0 0 0 6.5 20H9v-7H4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>راهنما</span></button>
     </nav>
     <div class="sb-foot">
-      <b id="sb-server">DEEP-NETWORK-01</b>
+      <b id="sb-server">DEEP-NETWORK</b>
       <span id="sb-version">v__PANEL_VER__</span>
       <small id="sb-updated">آخرین به‌روزرسانی: همین الان</small>
     </div>
@@ -166,7 +213,6 @@
   <!-- content -->
   <main class="ct" id="content">
 
-  <!-- dashboard sections (hidden when another view is open) -->
   <div id="dash-views">
 
     <!-- HERO -->
@@ -175,38 +221,29 @@
       <div class="hero-shade"></div>
       <div class="hero-top">
         <span class="badge badge-ok"><i class="dot"></i>اتصال موفق</span>
-        <span class="badge">VLESS • Clean IP : 443</span>
+        <span class="badge" id="hero-net">DEEP NETWORK</span>
       </div>
       <h2>ایران، همیشه آزاد</h2>
       <p>شبکه‌ای پرسرعت و پایدار</p>
       <div class="hero-chips">
         <span class="chip"><svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>v__PANEL_VER__</span>
-        <span class="chip"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v13M16 5v13M3.5 9.5h17M3.5 14h17" stroke="currentColor" stroke-width="1.2"/></svg><b id="fps-chip">60</b>FPS</span>
-        <span class="chip" id="chip-proto"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span id="chip-proto-label">XHTTP</span></span>
-        <button class="chip-close" id="hero-close" aria-label="بستن">✕</button>
+        <span class="chip" id="chip-proto"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span id="chip-proto-label">Reality · Vision</span></span>
       </div>
-    </section>
-
-    <!-- operator recommendation strip -->
-    <section class="op-strip" id="op-strip" hidden>
-      <svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-      <span id="op-strip-text"></span>
-      <button id="op-apply" class="mini-btn">اعمال تنظیمات</button>
     </section>
 
     <!-- stats cards -->
     <section class="cards3">
       <div class="stat">
         <div class="stat-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5 20c1.2-3.6 3.8-5 7-5s5.8 1.4 7 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
-        <div><b id="st-users">0</b><em class="up" id="st-users-delta">+0</em></div>
+        <div><b id="st-users">0</b></div>
         <span>کاربران فعال</span>
         <small>کاربر در حال استفاده</small>
       </div>
       <div class="stat">
         <div class="stat-ico"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="4" y="13" width="16" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 8h.01M7.5 16h.01" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></div>
-        <div><b id="st-proto">0</b></div>
-        <span>پروتکل‌های فعال</span>
-        <small>ترنسپورت‌های روشن روی سرور</small>
+        <div><b id="st-proto">3</b></div>
+        <span>ترنسپورت فعال</span>
+        <small>Vision · XHTTP · gRPC</small>
       </div>
       <div class="stat">
         <div class="stat-ico"><svg viewBox="0 0 24 24"><path d="M12 3l7 2.6v5.2c0 4.6-3 8.4-7 9.9-4-1.5-7-5.3-7-9.9V5.6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m9 12 2.2 2.2L15.5 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -250,12 +287,11 @@
       <div class="info-sec">
         <h3>اطلاعات سرور</h3>
         <ul class="kv" id="server-info">
-          <li><span>نام سرور</span><b>DEEP-NETWORK-01</b></li>
+          <li><span>آدرس سرور</span><b id="si-addr">—</b></li>
           <li><span>موقعیت سرور</span><b id="si-loc">—</b></li>
           <li><span>سیستم عامل</span><b id="si-os">—</b></li>
-          <li><span>مدت روشن بودن سرور</span><b id="si-uptime">—</b></li>
-          <li><span>نرخ فریم (دستگاه شما)</span><b id="si-fps">— fps</b></li>
-          <li><span>نسخه</span><b>v__PANEL_VER__</b></li>
+          <li><span>مدت روشن بودن</span><b id="si-uptime">—</b></li>
+          <li><span>ترنسپورت‌ها</span><b id="si-ports">—</b></li>
         </ul>
       </div>
       <div class="users-sec">
@@ -266,10 +302,10 @@
       </div>
     </section>
 
-    <footer class="ft">DEEP NETWORK · <span id="ft-ver">v__PANEL_VER__</span> · DEEP-NETWORK-01</footer>
+    <footer class="ft">DEEP NETWORK · <span id="ft-ver">v__PANEL_VER__</span></footer>
   </div><!-- /dash-views -->
 
-  <!-- other views render here (same .ct margins — no more hidden-behind-header) -->
+  <!-- other views render here -->
   <div id="view-host" hidden></div>
 
   </main>
@@ -279,9 +315,6 @@
 <div id="toast" class="toast" hidden></div>
 <div id="modal-root"></div>
 
-  <!-- Telegram Mini App SDK — bundled locally: loading it from telegram.org
-       would hang the panel inside Telegram for users in Iran (domain filtered). -->
-  <script src="/panel/tg-webapp.js?v=__PANEL_VER__"></script>
 <script src="/panel/fx.js?v=__PANEL_VER__"></script>
 <script src="/panel/app.js?v=__PANEL_VER__"></script>
 </body>
